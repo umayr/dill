@@ -3,8 +3,8 @@ amends "pkl:Project"
 package {
   name = "dill"
   baseUri = "package://github.com/umayr/dill"
-  version = "0.0.4"
-  packageZipUrl = "https://github.com/umayr/dill/releases/download/v\(version)/dill-\(version).zip"
+  version = "0.0.5"
+  packageZipUrl = "https://github.com/umayr/dill/releases/download/v\(version)/dill@\(version).zip"
   description = "Official schema for the Dill orchestrator"
   authors {
     "Umayr Shahid <umayr.shahid@gmail.com>"
