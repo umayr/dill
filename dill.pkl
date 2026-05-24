@@ -41,7 +41,7 @@ class Service {
 }
 
 class DillConfig {
-  version: String = "0.0.5"
+  version: String = "0.0.6"
   services: Mapping<String, Service>
   /// Specify the container engine to use for this deployment
   engine: "podman" | "docker" = "podman"
