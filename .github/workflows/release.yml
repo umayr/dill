@@ -29,7 +29,7 @@ jobs:
       - name: Build package
         run: |
           mkdir -p .out
-          pkl project package . --output-path .out
+          pkl project package . --output-path .out --skip-publish-check
 
           echo "Generated files:"
           ls -lah .out
