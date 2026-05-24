@@ -1,0 +1,37 @@
+name: Release Pkl Package
+
+on:
+  push:
+    tags:
+      - 'v*.*.*' # Triggers on semantic version tags like v1.0.0
+
+jobs:
+  build-and-publish:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write # Required to create a GitHub Release
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install Pkl
+        # Downloads the official Pkl CLI from Apple
+        run: |
+          curl -L -o pkl https://github.com/apple/pkl/releases/latest/download/pkl-linux-amd64
+          chmod +x pkl
+          sudo mv pkl /usr/local/bin/pkl
+          pkl --version
+
+      - name: Package Schema
+        # The `project package` command generates the .zip and .sha256 files inside the .out directory
+        run: |
+          pkl project package . --output-path .out
+
+      - name: Release to GitHub
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            .out/*.zip
+            .out/*.sha256
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

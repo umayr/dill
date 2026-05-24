@@ -1,0 +1,11 @@
+amends "package://github.com/umayr/dill/releases/download/v1.0.0/dill@1.0.0"
+
+config {
+  engine = "docker"
+  services {
+    ["web"] {
+      image = "nginx:alpine"
+      ports = List("8080:80")
+    }
+  }
+}

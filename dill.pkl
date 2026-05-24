@@ -1,0 +1,50 @@
+module dill
+
+class Port {
+  target: Int
+  published: Int?
+  protocol: "tcp" | "udp" | "sctp" = "tcp"
+  host_ip: String?
+}
+
+class Mount {
+  type: "volume" | "bind" | "tmpfs" = "volume"
+  source: String?
+  target: String
+  read_only: Boolean = false
+}
+
+class HealthCheck {
+  test: List<String> | String
+  interval: Duration?
+  timeout: Duration?
+  retries: Int?
+  start_period: Duration?
+}
+
+class Service {
+  image: String
+  container_name: String?
+  restart: "no" | "always" | "on-failure" | "unless-stopped" = "no"
+  environment: Mapping<String, String>?
+  volumes: List<Mount | String>?
+  ports: List<Port | String>?
+  labels: Mapping<String, String>?
+  depends_on: List<String>?
+  network_mode: String?
+  healthcheck: HealthCheck?
+  user: String?
+  init: Boolean?
+  cap_add: List<String>?
+  devices: List<String>?
+  cpuset: String?
+}
+
+class DillConfig {
+  version: String = "1.0"
+  services: Mapping<String, Service>
+  /// Specify the container engine to use for this deployment
+  engine: "podman" | "docker" = "podman"
+}
+
+config: DillConfig

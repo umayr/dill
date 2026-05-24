@@ -1,0 +1,11 @@
+amends "package://github.com/umayr/dill/releases/download/v1.0.0/dill@1.0.0"
+
+config {
+  engine = "podman"
+  services {
+    ["database"] {
+      image = "postgres:15"
+      volumes = List("db-data:/var/lib/postgresql/data")
+    }
+  }
+}

@@ -1,0 +1,12 @@
+amends "base.pkl"
+
+config {
+  services {
+    ["database"] {
+      environment {
+        ["POSTGRES_USER"] = read("env:DB_USER")
+        ["POSTGRES_PASSWORD"] = read("env:DB_PASSWORD")
+      }
+    }
+  }
+}

@@ -1,0 +1,14 @@
+amends "pkl:Project"
+
+package {
+  name = "dill"
+  baseUri = "github.com/umayr/dill/releases/download/v\\(version)"
+  version = "1.0.0"
+  packageZipUrl = "https://\\(baseUri)/dill-\\(version).zip"
+  description = "Official schema for the Dill orchestrator"
+  authors {
+    "umayr"
+  }
+  license = "MIT"
+  sourceCode = "https://github.com/umayr/dill"
+}
