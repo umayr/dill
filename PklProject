@@ -7,7 +7,7 @@ package {
   packageZipUrl = "https://github.com/umayr/dill/releases/download/v\(version)/dill-\(version).zip"
   description = "Official schema for the Dill orchestrator"
   authors {
-    "umayr"
+    "Umayr Shahid <umayr.shahid@gmail.com>"
   }
   license = "MIT"
   sourceCode = "https://github.com/umayr/dill"
