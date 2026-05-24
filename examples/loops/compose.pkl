@@ -1,4 +1,4 @@
-amends "package://github.com/umayr/dill/releases/download/v1.0.0/dill@1.0.0"
+amends "package://github.com/umayr/dill/releases/download/v0.0.4/dill@0.0.4"
 
 local baseCache = new Service {
   image = "redis:alpine"
@@ -8,7 +8,7 @@ local baseCache = new Service {
 config {
   engine = "podman"
   services {
-    for (i in 1..3) {
+    for (i in IntSeq(1,3)) {
       ["cache-node-\\(i)"] = baseCache(new {
         ports = List("637\\(i):6379")
       })
