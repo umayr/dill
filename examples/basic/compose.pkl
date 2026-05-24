@@ -1,4 +1,4 @@
-amends "package://github.com/umayr/dill@0.0.5#/dill.pkl"
+amends "package://github.com/umayr/dill@0.0.6#/dill.pkl"
 
 config {
   engine = "docker"
