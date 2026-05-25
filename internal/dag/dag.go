@@ -2,6 +2,7 @@ package dag
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"sync"
@@ -147,6 +148,9 @@ func (g *Graph) Run(ctx context.Context, engine orchestrator.Engine, stackName s
 			case ActionStart:
 				emit("starting")
 				if err := engine.StartExisting(egCtx, containerName); err != nil {
+					if errors.Is(err, orchestrator.ErrNotFound) {
+						return fmt.Errorf("service %q: container does not exist, run 'dill up' first", n.name)
+					}
 					logger.Debug("start existing returned error",
 						"service", n.name, "err", err)
 				}
@@ -186,6 +190,8 @@ func (g *Graph) Run(ctx context.Context, engine orchestrator.Engine, stackName s
 
 			// Poll until the container is ready.
 			hasHealthCheck := n.svc.HealthCheck != nil
+			pollStart := time.Now()
+			var lastWaitEmit time.Time
 			for {
 				ready, err := engine.IsReady(egCtx, containerName, hasHealthCheck)
 				if err != nil {
@@ -195,6 +201,11 @@ func (g *Graph) Run(ctx context.Context, engine orchestrator.Engine, stackName s
 					emit("ready")
 					close(n.done)
 					return nil
+				}
+				elapsed := time.Since(pollStart)
+				if elapsed >= 5*time.Second && time.Since(lastWaitEmit) >= 5*time.Second {
+					emit(fmt.Sprintf("waiting (%s)", elapsed.Round(time.Second)))
+					lastWaitEmit = time.Now()
 				}
 				select {
 				case <-time.After(500 * time.Millisecond):
@@ -207,7 +218,9 @@ func (g *Graph) Run(ctx context.Context, engine orchestrator.Engine, stackName s
 
 	if err := eg.Wait(); err != nil {
 		logger.Warn("deployment failed, tearing down started services", "err", err)
-		teardown(context.Background(), engine, started, nil)
+		teardownCtx, teardownCancel := context.WithTimeout(context.Background(), 60*time.Second)
+		defer teardownCancel()
+		teardown(teardownCtx, engine, started, nil)
 		return err
 	}
 	return nil

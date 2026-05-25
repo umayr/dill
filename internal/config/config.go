@@ -7,7 +7,6 @@ package config
 import "encoding/json"
 
 type DillConfig struct {
-	Version  string              `json:"version"`
 	Name     string              `json:"name"`
 	Engine   string              `json:"engine"`
 	Services map[string]*Service `json:"services"`

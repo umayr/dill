@@ -230,6 +230,9 @@ func (d *DockerEngine) StartService(ctx context.Context, name string, svc *confi
 		return "", fmt.Errorf("create %s: %w", name, err)
 	}
 	if err := d.cli.ContainerStart(ctx, resp.ID, container.StartOptions{}); err != nil {
+		if isPortConflict(err) {
+			return "", fmt.Errorf("port conflict: another process is bound to one of the requested host ports (%w)", err)
+		}
 		return "", fmt.Errorf("start %s: %w", name, err)
 	}
 	logger.Debug("container started", "service", name, "id", resp.ID[:12])
@@ -380,7 +383,11 @@ func (d *DockerEngine) InspectConfig(ctx context.Context, name string) (*LiveCon
 }
 
 func (d *DockerEngine) StartExisting(ctx context.Context, name string) error {
-	return d.cli.ContainerStart(ctx, name, container.StartOptions{})
+	err := d.cli.ContainerStart(ctx, name, container.StartOptions{})
+	if err != nil && client.IsErrNotFound(err) {
+		return fmt.Errorf("%w: %s", ErrNotFound, name)
+	}
+	return err
 }
 
 func (d *DockerEngine) ServiceStatus(ctx context.Context, name string) (*ContainerStatus, error) {
@@ -390,7 +397,7 @@ func (d *DockerEngine) ServiceStatus(ctx context.Context, name string) (*Contain
 		return nil, err
 	}
 	if len(list) == 0 {
-		return nil, fmt.Errorf("container %q not found", name)
+		return nil, fmt.Errorf("%w: %s", ErrNotFound, name)
 	}
 	c := list[0]
 	id := c.ID
@@ -498,6 +505,13 @@ func (d *DockerEngine) RemoveVolume(ctx context.Context, name string, force bool
 }
 
 func (d *DockerEngine) Close() error { return d.cli.Close() }
+
+func isPortConflict(err error) bool {
+	msg := err.Error()
+	return strings.Contains(msg, "address already in use") ||
+		strings.Contains(msg, "port is already allocated") ||
+		strings.Contains(msg, "bind: address already in use")
+}
 
 func toDeviceMappings(devices []string) []container.DeviceMapping {
 	out := make([]container.DeviceMapping, 0, len(devices))

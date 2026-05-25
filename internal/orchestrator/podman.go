@@ -161,6 +161,9 @@ func (p *PodmanEngine) StartService(ctx context.Context, name string, svc *confi
 		return "", fmt.Errorf("create %s: %w", name, err)
 	}
 	if err := containers.Start(p.conn, res.ID, nil); err != nil {
+		if isPortConflict(err) {
+			return "", fmt.Errorf("port conflict: another process is bound to one of the requested host ports (%w)", err)
+		}
 		return "", fmt.Errorf("start %s: %w", name, err)
 	}
 	logger.Debug("container started", "service", name, "id", res.ID[:12])
@@ -229,12 +232,19 @@ func (p *PodmanEngine) ListStack(ctx context.Context, stackName string) ([]strin
 }
 
 func (p *PodmanEngine) StartExisting(ctx context.Context, name string) error {
-	return containers.Start(p.conn, name, nil)
+	err := containers.Start(p.conn, name, nil)
+	if err != nil && strings.Contains(err.Error(), "no such container") {
+		return fmt.Errorf("%w: %s", ErrNotFound, name)
+	}
+	return err
 }
 
 func (p *PodmanEngine) ServiceStatus(ctx context.Context, name string) (*ContainerStatus, error) {
 	data, err := containers.Inspect(p.conn, name, nil)
 	if err != nil {
+		if strings.Contains(err.Error(), "no such container") {
+			return nil, fmt.Errorf("%w: %s", ErrNotFound, name)
+		}
 		return nil, err
 	}
 	id := data.ID
@@ -494,3 +504,4 @@ func volumeOptions(vm config.VolumeMount) []string {
 	}
 	return nil
 }
+

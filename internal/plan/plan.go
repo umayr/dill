@@ -2,6 +2,7 @@ package plan
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sort"
 	"strings"
@@ -63,7 +64,10 @@ func Compute(ctx context.Context, cfg *config.DillConfig, engine orchestrator.En
 			return nil, fmt.Errorf("inspect %s: %w", name, err)
 		}
 
-		diffs := diffConfigs(name, d.svc, live)
+		diffs, err := diffConfigs(name, d.svc, live)
+		if err != nil {
+			return nil, fmt.Errorf("diff %s: %w", name, err)
+		}
 		if len(diffs) == 0 {
 			changes = append(changes, Change{Service: name, Kind: KindNoop})
 		} else {
@@ -98,17 +102,12 @@ func Compute(ctx context.Context, cfg *config.DillConfig, engine orchestrator.En
 }
 
 func isNotFound(err error) bool {
-	if err == nil {
-		return false
-	}
-	msg := err.Error()
-	return strings.Contains(msg, orchestrator.ErrNotFound.Error()) ||
-		strings.Contains(msg, "no such container")
+	return errors.Is(err, orchestrator.ErrNotFound)
 }
 
 // diffConfigs compares desired service config against live container config
 // and returns a list of field-level diffs.
-func diffConfigs(name string, svc *config.Service, live *orchestrator.LiveConfig) []FieldDiff {
+func diffConfigs(name string, svc *config.Service, live *orchestrator.LiveConfig) ([]FieldDiff, error) {
 	var diffs []FieldDiff
 
 	// image
@@ -125,11 +124,17 @@ func diffConfigs(name string, svc *config.Service, live *orchestrator.LiveConfig
 	}
 
 	// ports
-	desiredPorts, _ := config.NormalizePorts(svc.Ports)
+	desiredPorts, err := config.NormalizePorts(svc.Ports)
+	if err != nil {
+		return nil, fmt.Errorf("normalizing ports: %w", err)
+	}
 	diffs = append(diffs, diffPorts(desiredPorts, live.Ports)...)
 
 	// volumes
-	desiredVols, _ := config.NormalizeVolumes(svc.Volumes, svc.BaseDir)
+	desiredVols, err := config.NormalizeVolumes(svc.Volumes, svc.BaseDir)
+	if err != nil {
+		return nil, fmt.Errorf("normalizing volumes: %w", err)
+	}
 	diffs = append(diffs, diffVolumes(desiredVols, live.Volumes)...)
 
 	// restart policy
@@ -217,7 +222,7 @@ func diffConfigs(name string, svc *config.Service, live *orchestrator.LiveConfig
 		return diffs[i].Field < diffs[j].Field
 	})
 
-	return diffs
+	return diffs, nil
 }
 
 func normalizeRestart(r string) string {
@@ -335,7 +340,13 @@ func diffVolumes(desired, live []config.VolumeMount) []FieldDiff {
 }
 
 func volStr(v config.VolumeMount) string {
-	s := v.Source + ":" + v.Target
+	// Include Type so that changing a named volume to a bind mount (or vice
+	// versa) is detected even when source and target strings are the same.
+	t := v.Type
+	if t == "" {
+		t = "volume"
+	}
+	s := t + ":" + v.Source + ":" + v.Target
 	if v.ReadOnly {
 		s += ":ro"
 	}
