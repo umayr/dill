@@ -43,7 +43,6 @@ class Service {
 }
 
 class DillConfig {
-  version: String = "0.0.6"
   /// Stack name used for container labels and network naming.
   /// When omitted, a deterministic adjective-animal name is derived from the config file path.
   name: String?
