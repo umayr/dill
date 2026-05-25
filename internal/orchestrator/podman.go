@@ -3,11 +3,20 @@ package orchestrator
 import (
 	"context"
 	"fmt"
+	"io"
+	"strconv"
+	"strings"
+	"sync"
 
+	"github.com/containers/common/libnetwork/types"
+	"github.com/containers/image/v5/manifest"
 	"github.com/containers/podman/v5/pkg/bindings"
 	"github.com/containers/podman/v5/pkg/bindings/containers"
+	"github.com/containers/podman/v5/pkg/bindings/images"
 	"github.com/containers/podman/v5/pkg/specgen"
+	specs "github.com/opencontainers/runtime-spec/specs-go"
 	"github.com/umayr/dill/internal/config"
+	"github.com/umayr/dill/internal/log"
 )
 
 type PodmanEngine struct {
@@ -22,23 +31,274 @@ func NewPodmanEngine(ctx context.Context, socket string) (*PodmanEngine, error) 
 	return &PodmanEngine{conn: conn}, nil
 }
 
-func (p *PodmanEngine) StartService(ctx context.Context, name string, svc *config.Service) error {
-	fmt.Printf("[Podman] Starting %s...\n", name)
-	s := specgen.NewSpecGenerator(svc.Image, false)
-	if svc.ContainerName != "" {
-		s.Name = svc.ContainerName
+func (p *PodmanEngine) PullImage(ctx context.Context, img string) error {
+	logger.Debug("pulling image", "image", img)
+	_, err := images.Pull(p.conn, img, nil)
+	if err != nil {
+		return fmt.Errorf("pull %s: %w", img, err)
 	}
-	s.Labels = map[string]string{"dill.managed": "true", "dill.service": name}
+	return nil
+}
+
+func (p *PodmanEngine) ImageExists(ctx context.Context, img string) (bool, error) {
+	exists, err := images.Exists(p.conn, img, nil)
+	if err != nil {
+		return false, err
+	}
+	return exists, nil
+}
+
+func (p *PodmanEngine) StartService(ctx context.Context, name string, svc *config.Service, stackName string) (string, error) {
+	logger.Info("starting service", "service", name, "image", svc.Image)
+
+	ports, err := config.NormalizePorts(svc.Ports)
+	if err != nil {
+		return "", fmt.Errorf("service %s: %w", name, err)
+	}
+	volumes, err := config.NormalizeVolumes(svc.Volumes)
+	if err != nil {
+		return "", fmt.Errorf("service %s: %w", name, err)
+	}
+
+	s := specgen.NewSpecGenerator(svc.Image, false)
+
+	containerName := svc.ContainerName
+	if containerName == "" {
+		containerName = stackName + "_" + name
+	}
+	s.Name = containerName
+
+	s.Labels = map[string]string{
+		"dill.managed": "true",
+		"dill.service": name,
+		"dill.stack":   stackName,
+	}
+	for k, v := range svc.Labels {
+		s.Labels[k] = v
+	}
+
+	s.Env = svc.Environment
+
+	for _, pb := range ports {
+		pm, err := toSpecPortMapping(pb)
+		if err != nil {
+			logger.Warn("skipping invalid port", "service", name, "err", err)
+			continue
+		}
+		s.PortMappings = append(s.PortMappings, pm)
+	}
+
+
+	for _, vm := range volumes {
+		s.Mounts = append(s.Mounts, specs.Mount{
+			Type:        vm.Type,
+			Source:      vm.Source,
+			Destination: vm.Target,
+			Options:     volumeOptions(vm),
+		})
+	}
+
+	if svc.Restart != "" && svc.Restart != "no" {
+		s.RestartPolicy = svc.Restart
+	}
+	if svc.User != "" {
+		s.User = svc.User
+	}
+	if svc.NetworkMode != "" {
+		s.NetNS = specgen.Namespace{NSMode: specgen.NamespaceMode(svc.NetworkMode)}
+	}
+	if svc.Init != nil {
+		s.Init = svc.Init
+	}
+	s.CapAdd = svc.CapAdd
+	if len(svc.Devices) > 0 {
+		logger.Warn("device mapping in Podman requires host device lookup; devices will be passed as-is",
+			"service", name)
+		for _, d := range svc.Devices {
+			parts := strings.SplitN(d, ":", 2)
+			dev := specs.LinuxDevice{Path: parts[0]}
+			if len(parts) == 2 {
+				dev.Path = parts[1]
+			}
+			s.Devices = append(s.Devices, dev)
+		}
+	}
+	if svc.Cpuset != "" {
+		s.ResourceLimits = &specs.LinuxResources{
+			CPU: &specs.LinuxCPU{Cpus: svc.Cpuset},
+		}
+	}
+	if svc.HealthCheck != nil {
+		test, err := config.NormalizeHealthCheckTest(svc.HealthCheck.Test)
+		if err == nil && len(test) > 0 {
+			s.HealthConfig = &manifest.Schema2HealthConfig{Test: test}
+			if svc.HealthCheck.Retries != nil {
+				s.HealthConfig.Retries = *svc.HealthCheck.Retries
+			}
+		}
+	}
 
 	res, err := containers.CreateWithSpec(p.conn, s, nil)
 	if err != nil {
-		return err
+		return "", fmt.Errorf("create %s: %w", name, err)
 	}
-	return containers.Start(p.conn, res.ID, nil)
+	if err := containers.Start(p.conn, res.ID, nil); err != nil {
+		return "", fmt.Errorf("start %s: %w", name, err)
+	}
+	logger.Debug("container started", "service", name, "id", res.ID[:12])
+	return res.ID, nil
+}
+
+func (p *PodmanEngine) StopService(ctx context.Context, name string) error {
+	logger.Info("stopping service", "service", name)
+	timeout := uint(10)
+	return containers.Stop(p.conn, name, &containers.StopOptions{Timeout: &timeout})
 }
 
 func (p *PodmanEngine) RemoveService(ctx context.Context, name string) error {
-	return nil // Implementation for teardown
+	logger.Debug("removing container", "name", name)
+	force := true
+	_, err := containers.Remove(p.conn, name, &containers.RemoveOptions{Force: &force})
+	return err
+}
+
+func (p *PodmanEngine) IsReady(ctx context.Context, name string, hasHealthCheck bool) (bool, error) {
+	data, err := containers.Inspect(p.conn, name, nil)
+	if err != nil {
+		return false, err
+	}
+	if data.State == nil || !data.State.Running {
+		return false, nil
+	}
+	if hasHealthCheck {
+		if data.State.Health == nil {
+			return false, nil
+		}
+		return data.State.Health.Status == "healthy", nil
+	}
+	return true, nil
+}
+
+func (p *PodmanEngine) ListStack(ctx context.Context, stackName string) ([]string, error) {
+	filter := map[string][]string{
+		"label": {
+			"dill.managed=true",
+			"dill.stack=" + stackName,
+		},
+	}
+	all := true
+	list, err := containers.List(p.conn, &containers.ListOptions{
+		All:     &all,
+		Filters: filter,
+	})
+	if err != nil {
+		return nil, err
+	}
+	names := make([]string, 0, len(list))
+	for _, c := range list {
+		if len(c.Names) > 0 {
+			names = append(names, strings.TrimPrefix(c.Names[0], "/"))
+		}
+	}
+	return names, nil
+}
+
+func (p *PodmanEngine) StartExisting(ctx context.Context, name string) error {
+	return containers.Start(p.conn, name, nil)
+}
+
+func (p *PodmanEngine) ServiceStatus(ctx context.Context, name string) (*ContainerStatus, error) {
+	data, err := containers.Inspect(p.conn, name, nil)
+	if err != nil {
+		return nil, err
+	}
+	id := data.ID
+	if len(id) > 12 {
+		id = id[:12]
+	}
+	state := ""
+	if data.State != nil {
+		state = data.State.Status
+	}
+	var ports []string
+	if data.NetworkSettings != nil {
+		for portProto, binds := range data.NetworkSettings.Ports {
+			for _, b := range binds {
+				ports = append(ports, fmt.Sprintf("%s:%s->%s", b.HostIP, b.HostPort, portProto))
+			}
+		}
+	}
+	return &ContainerStatus{
+		Name:   strings.TrimPrefix(data.Name, "/"),
+		ID:     id,
+		State:  state,
+		Status: state,
+		Image:  data.ImageName,
+		Ports:  ports,
+	}, nil
+}
+
+func (p *PodmanEngine) Logs(ctx context.Context, name string, follow bool, tail int, w io.Writer) error {
+	tailStr := "all"
+	if tail > 0 {
+		tailStr = strconv.Itoa(tail)
+	}
+	opts := new(containers.LogOptions).
+		WithFollow(follow).
+		WithTail(tailStr).
+		WithStdout(true).
+		WithStderr(true)
+
+	stdoutCh := make(chan string, 64)
+	stderrCh := make(chan string, 64)
+
+	var wg sync.WaitGroup
+	wg.Add(2)
+	go func() {
+		defer wg.Done()
+		for line := range stdoutCh {
+			fmt.Fprint(w, line)
+		}
+	}()
+	go func() {
+		defer wg.Done()
+		for line := range stderrCh {
+			fmt.Fprint(w, line)
+		}
+	}()
+
+	err := containers.Logs(p.conn, name, opts, stdoutCh, stderrCh)
+	close(stdoutCh)
+	close(stderrCh)
+	wg.Wait()
+	return err
 }
 
 func (p *PodmanEngine) Close() error { return nil }
+
+func toSpecPortMapping(pb config.PortBinding) (types.PortMapping, error) {
+	var containerPort uint16
+	if _, err := fmt.Sscan(pb.Target, &containerPort); err != nil {
+		return types.PortMapping{}, fmt.Errorf("invalid container port %q", pb.Target)
+	}
+	pm := types.PortMapping{
+		ContainerPort: containerPort,
+		HostIP:        pb.HostIP,
+		Protocol:      pb.Protocol,
+	}
+	if pb.Published != "" {
+		var hostPort uint16
+		if _, err := fmt.Sscan(pb.Published, &hostPort); err != nil {
+			return types.PortMapping{}, fmt.Errorf("invalid host port %q", pb.Published)
+		}
+		pm.HostPort = hostPort
+	}
+	return pm, nil
+}
+
+func volumeOptions(vm config.VolumeMount) []string {
+	if vm.ReadOnly {
+		return []string{"ro"}
+	}
+	return nil
+}

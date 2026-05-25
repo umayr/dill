@@ -26,6 +26,7 @@ class Service {
   image: String
   container_name: String?
   restart: "no" | "always" | "on-failure" | "unless-stopped" = "no"
+  pull_policy: "always" | "missing" | "never" = "missing"
   environment: Mapping<String, String>?
   volumes: List<Mount | String>?
   ports: List<Port | String>?

@@ -1,4 +1,4 @@
-amends "package://github.com/umayr/dill/releases/download/v0.0.5/dill@0.0.5"
+amends "../../dill.pkl"
 
 config {
   engine = "podman"
