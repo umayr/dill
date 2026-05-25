@@ -1,6 +1,6 @@
 BINARY  := bin/dill
 CMD     := ./cmd/dill
-TAGS    := containers_image_openpgp
+TAGS    := containers_image_openpgp,exclude_graphdriver_devicemapper,exclude_graphdriver_btrfs
 DIST    := dist
 
 VERSION := $(shell git describe --tags --always --dirty 2>/dev/null || echo "dev")
