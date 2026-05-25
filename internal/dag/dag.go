@@ -3,6 +3,7 @@ package dag
 import (
 	"context"
 	"fmt"
+	"io"
 	"sync"
 	"time"
 
@@ -12,6 +13,34 @@ import (
 	"github.com/umayr/dill/internal/log"
 	"github.com/umayr/dill/internal/orchestrator"
 )
+
+// Action describes what up should do for a given service.
+type Action int
+
+const (
+	ActionCreate   Action = iota // container does not exist; create fresh
+	ActionRecreate               // container exists but config changed; stop+remove+create
+	ActionNoop                   // container exists, config matches, already running; ensure it stays up
+	ActionStart                  // container exists and is stopped; start it (used by start/restart)
+)
+
+// Progress is called to report user-visible status changes for a service.
+// Pass nil to suppress progress output (e.g. during rollback teardown).
+type Progress func(service, status string)
+
+// PullSink receives streaming download progress for a single image pull.
+// Begin is called immediately before the pull starts so the sink can print
+// an initial status line. Done is called when the pull completes (success
+// or failure) so the sink can finalise the line (e.g. append a newline).
+type PullSink interface {
+	io.Writer
+	Begin()
+	Done()
+}
+
+// MakePullSink constructs a PullSink for a named service. Run receives one
+// from the caller so that main.go owns all terminal/formatting decisions.
+type MakePullSink func(service string) PullSink
 
 type node struct {
 	name string
@@ -64,18 +93,22 @@ func Build(services map[string]*config.Service) (*Graph, error) {
 	return g, nil
 }
 
-// Run starts all services in dependency order. Services with no shared
-// dependencies start concurrently. Each goroutine waits for its dependencies
-// to be UP before starting its own container.
+// Run starts all services according to the provided action map. Services with
+// no shared dependencies start concurrently; each goroutine waits for its
+// dependencies to be ready before acting.
 //
 // If any service fails to become ready within timeout, the entire deployment
-// is aborted and all already-started containers are torn down.
-func (g *Graph) Run(ctx context.Context, engine orchestrator.Engine, stackName string, timeout time.Duration) error {
+// is aborted and all containers started during this run are torn down.
+func (g *Graph) Run(ctx context.Context, engine orchestrator.Engine, stackName string, timeout time.Duration, actions map[string]Action, prog Progress, mkSink MakePullSink) error {
 	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
+	if err := engine.EnsureNetwork(ctx, stackName); err != nil {
+		return fmt.Errorf("creating stack network: %w", err)
+	}
+
 	var mu sync.Mutex
-	var started []string // names of containers that were successfully started
+	var started []string // container names started during this run (for rollback)
 
 	eg, egCtx := errgroup.WithContext(ctx)
 
@@ -92,33 +125,74 @@ func (g *Graph) Run(ctx context.Context, engine orchestrator.Engine, stackName s
 				}
 			}
 
-			// Pull image according to pull_policy.
-			if err := maybePull(egCtx, engine, n.svc); err != nil {
-				return fmt.Errorf("service %q: %w", n.name, err)
-			}
-
-			// Start the container.
-			_, err := engine.StartService(egCtx, n.name, n.svc, stackName)
-			if err != nil {
-				return fmt.Errorf("service %q: %w", n.name, err)
-			}
-			mu.Lock()
-			started = append(started, n.name)
-			mu.Unlock()
-
-			// Poll until the container is ready.
-			hasHealthCheck := n.svc.HealthCheck != nil
 			containerName := n.svc.ContainerName
 			if containerName == "" {
 				containerName = stackName + "_" + n.name
 			}
+
+			emit := func(status string) {
+				if prog != nil {
+					prog(n.name, status)
+				}
+			}
+
+			switch actions[n.name] {
+			case ActionNoop:
+				emit("unchanged")
+				if err := engine.StartExisting(egCtx, containerName); err != nil {
+					logger.Debug("start existing returned error (may already be running)",
+						"service", n.name, "err", err)
+				}
+
+			case ActionStart:
+				emit("starting")
+				if err := engine.StartExisting(egCtx, containerName); err != nil {
+					logger.Debug("start existing returned error",
+						"service", n.name, "err", err)
+				}
+
+			case ActionRecreate:
+				emit("stopping")
+				if err := engine.StopService(egCtx, containerName); err != nil {
+					logger.Debug("stop failed during recreate (may already be stopped)",
+						"service", n.name, "err", err)
+				}
+				if err := engine.RemoveService(egCtx, containerName); err != nil {
+					return fmt.Errorf("service %q: remove before recreate: %w", n.name, err)
+				}
+				if err := maybePull(egCtx, engine, n.svc, mkSink(n.name)); err != nil {
+					return fmt.Errorf("service %q: %w", n.name, err)
+				}
+				emit("recreating")
+				if _, err := engine.StartService(egCtx, n.name, n.svc, stackName); err != nil {
+					return fmt.Errorf("service %q: %w", n.name, err)
+				}
+				mu.Lock()
+				started = append(started, containerName)
+				mu.Unlock()
+
+			default: // ActionCreate
+				if err := maybePull(egCtx, engine, n.svc, mkSink(n.name)); err != nil {
+					return fmt.Errorf("service %q: %w", n.name, err)
+				}
+				emit("creating")
+				if _, err := engine.StartService(egCtx, n.name, n.svc, stackName); err != nil {
+					return fmt.Errorf("service %q: %w", n.name, err)
+				}
+				mu.Lock()
+				started = append(started, containerName)
+				mu.Unlock()
+			}
+
+			// Poll until the container is ready.
+			hasHealthCheck := n.svc.HealthCheck != nil
 			for {
 				ready, err := engine.IsReady(egCtx, containerName, hasHealthCheck)
 				if err != nil {
 					return fmt.Errorf("service %q readiness check: %w", n.name, err)
 				}
 				if ready {
-					logger.Info("service ready", "service", n.name)
+					emit("ready")
 					close(n.done)
 					return nil
 				}
@@ -133,8 +207,7 @@ func (g *Graph) Run(ctx context.Context, engine orchestrator.Engine, stackName s
 
 	if err := eg.Wait(); err != nil {
 		logger.Warn("deployment failed, tearing down started services", "err", err)
-		// Use a fresh context for teardown since the original may be cancelled.
-		teardown(context.Background(), engine, started)
+		teardown(context.Background(), engine, started, nil)
 		return err
 	}
 	return nil
@@ -142,29 +215,36 @@ func (g *Graph) Run(ctx context.Context, engine orchestrator.Engine, stackName s
 
 // Down queries the engine for all containers in the stack and stops + removes them.
 // It does not require the config file — it relies solely on the dill.stack label.
-func Down(ctx context.Context, engine orchestrator.Engine, stackName string) error {
+func Down(ctx context.Context, engine orchestrator.Engine, stackName string, prog Progress) error {
 	names, err := engine.ListStack(ctx, stackName)
 	if err != nil {
 		return fmt.Errorf("listing stack %q: %w", stackName, err)
 	}
 	if len(names) == 0 {
-		logger.Info("no containers found for stack", "stack", stackName)
+		logger.Debug("no containers found for stack", "stack", stackName)
 		return nil
 	}
 
-	logger.Info("tearing down stack", "stack", stackName, "containers", len(names))
-	teardown(ctx, engine, names)
+	teardown(ctx, engine, names, prog)
+
+	if err := engine.RemoveNetwork(ctx, stackName); err != nil {
+		logger.Warn("failed to remove stack network", "stack", stackName, "err", err)
+	}
 	return nil
 }
 
-// teardown stops and removes the named containers, logging but not returning errors.
-func teardown(ctx context.Context, engine orchestrator.Engine, names []string) {
+// teardown stops and removes the named containers concurrently.
+// prog is called with (name, "removing") for each container; pass nil to suppress.
+func teardown(ctx context.Context, engine orchestrator.Engine, names []string, prog Progress) {
 	var wg sync.WaitGroup
 	for _, name := range names {
 		name := name
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
+			if prog != nil {
+				prog(name, "removing")
+			}
 			if err := engine.StopService(ctx, name); err != nil {
 				logger.Debug("stop failed (may already be stopped)", "name", name, "err", err)
 			}
@@ -177,10 +257,16 @@ func teardown(ctx context.Context, engine orchestrator.Engine, names []string) {
 }
 
 // maybePull pulls the image based on the service's pull_policy.
-func maybePull(ctx context.Context, engine orchestrator.Engine, svc *config.Service) error {
+// sink.Begin/Done bracket the pull so the caller can render progress.
+func maybePull(ctx context.Context, engine orchestrator.Engine, svc *config.Service, sink PullSink) error {
+	pull := func() error {
+		sink.Begin()
+		defer sink.Done()
+		return engine.PullImage(ctx, svc.Image, sink)
+	}
 	switch svc.PullPolicy {
 	case "always":
-		return engine.PullImage(ctx, svc.Image)
+		return pull()
 	case "never":
 		return nil
 	default: // "missing" is the default
@@ -189,7 +275,7 @@ func maybePull(ctx context.Context, engine orchestrator.Engine, svc *config.Serv
 			return fmt.Errorf("checking image existence: %w", err)
 		}
 		if !exists {
-			return engine.PullImage(ctx, svc.Image)
+			return pull()
 		}
 		logger.Debug("image already present, skipping pull", "image", svc.Image)
 		return nil

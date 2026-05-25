@@ -6,6 +6,7 @@ local baseCache = new Service {
 }
 
 config {
+  name   = "cache-cluster"
   engine = "podman"
   services {
     for (i in IntSeq(1,3)) {

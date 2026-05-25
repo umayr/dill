@@ -6,7 +6,6 @@ import (
 	"strconv"
 
 	charm "github.com/charmbracelet/log"
-	"github.com/mattn/go-isatty"
 )
 
 var l = charm.New(os.Stderr)
@@ -38,19 +37,14 @@ func ParseVerbosity(args []string) (int, []string) {
 
 // Init configures the global logger based on verbosity level:
 //
-//	0, TTY     → Info   (default: useful output in the terminal)
-//	0, no TTY  → Warn   (default: quiet when piped or scripted)
+//	0          → Warn   (silent stderr; user-facing output goes to stdout via fmt.Printf)
 //	1 (-v)     → Debug
 //	2 (-vv)    → Debug + caller
 //	3+ (-vvv)  → Debug + caller + timestamps
 func Init(verbosity int) {
 	switch {
 	case verbosity <= 0:
-		if isatty.IsTerminal(os.Stderr.Fd()) || isatty.IsCygwinTerminal(os.Stderr.Fd()) {
-			l.SetLevel(charm.InfoLevel)
-		} else {
-			l.SetLevel(charm.WarnLevel)
-		}
+		l.SetLevel(charm.WarnLevel)
 	case verbosity == 1:
 		l.SetLevel(charm.DebugLevel)
 	case verbosity == 2:

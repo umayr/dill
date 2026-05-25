@@ -1,0 +1,104 @@
+/// Full-stack web application example.
+///
+/// Demonstrates: depends_on, healthcheck with all timing fields, shared local
+/// variables for secrets, labels, and multiple services wired together.
+///
+/// Usage:
+///   export DB_PASSWORD=secret DB_USER=app DB_NAME=appdb
+///   dill -f examples/fullstack/compose.pkl up
+amends "../../dill.pkl"
+
+// Shared config read once so every service that references the DB
+// gets consistent values.
+local dbUser     = read?("env:DB_USER")     ?? "app"
+local dbPassword = read?("env:DB_PASSWORD") ?? "devpassword"
+local dbName     = read?("env:DB_NAME")     ?? "appdb"
+local appEnv     = read?("env:APP_ENV")     ?? "development"
+
+config {
+  name   = "fullstack"
+  engine = "docker"
+
+  services {
+    ["postgres"] {
+      image   = "postgres:16-alpine"
+      restart = "unless-stopped"
+      environment {
+        ["POSTGRES_USER"]     = dbUser
+        ["POSTGRES_PASSWORD"] = dbPassword
+        ["POSTGRES_DB"]       = dbName
+      }
+      volumes = List("pg-data:/var/lib/postgresql/data")
+      healthcheck {
+        test         = List("CMD-SHELL", "pg_isready -U \(dbUser) -d \(dbName)")
+        interval     = 5.s
+        timeout      = 3.s
+        retries      = 10
+        start_period = 10.s
+      }
+      labels {
+        ["com.example.tier"] = "data"
+        ["com.example.env"]  = appEnv
+      }
+    }
+
+    ["redis"] {
+      image   = "redis:7-alpine"
+      restart = "unless-stopped"
+      volumes = List("redis-data:/data")
+      healthcheck {
+        test     = List("CMD", "redis-cli", "ping")
+        interval = 5.s
+        timeout  = 3.s
+        retries  = 5
+      }
+      labels {
+        ["com.example.tier"] = "cache"
+        ["com.example.env"]  = appEnv
+      }
+    }
+
+    ["api"] {
+      image       = "node:22-alpine"
+      restart     = "unless-stopped"
+      pull_policy = "missing"
+      depends_on  = List("postgres", "redis")
+      command     = List("node", "-e", """
+        const http = require('http');
+        const port = parseInt(process.env.PORT || '8080');
+        http.createServer((req, res) => {
+          const body = JSON.stringify({ status: 'ok', path: req.url, env: process.env.APP_ENV });
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(body);
+        }).listen(port, '0.0.0.0', () => console.log('API listening on :' + port));
+      """)
+      environment {
+        ["DATABASE_URL"] = "postgres://\(dbUser):\(dbPassword)@postgres:5432/\(dbName)?sslmode=disable"
+        ["REDIS_URL"]    = "redis://redis:6379/0"
+        ["PORT"]         = "8080"
+        ["APP_ENV"]      = appEnv
+      }
+      ports = List("8080:8080")
+      labels {
+        ["com.example.tier"]    = "application"
+        ["com.example.env"]     = appEnv
+        ["com.example.version"] = "1.0.0"
+      }
+    }
+
+    ["nginx"] {
+      image      = "nginx:1.27-alpine"
+      restart    = "unless-stopped"
+      depends_on = List("api")
+      ports      = List("80:80", "443:443")
+      volumes = List(
+        "./nginx.conf:/etc/nginx/conf.d/default.conf:ro",
+        "nginx-logs:/var/log/nginx"
+      )
+      labels {
+        ["com.example.tier"] = "edge"
+        ["com.example.env"]  = appEnv
+      }
+    }
+  }
+}

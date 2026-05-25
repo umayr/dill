@@ -8,11 +8,13 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/containers/common/libnetwork/types"
+	nettypes "github.com/containers/common/libnetwork/types"
 	"github.com/containers/image/v5/manifest"
 	"github.com/containers/podman/v5/pkg/bindings"
 	"github.com/containers/podman/v5/pkg/bindings/containers"
 	"github.com/containers/podman/v5/pkg/bindings/images"
+	podmannetwork "github.com/containers/podman/v5/pkg/bindings/network"
+	podmanvolumes "github.com/containers/podman/v5/pkg/bindings/volumes"
 	"github.com/containers/podman/v5/pkg/specgen"
 	specs "github.com/opencontainers/runtime-spec/specs-go"
 	"github.com/umayr/dill/internal/config"
@@ -31,7 +33,7 @@ func NewPodmanEngine(ctx context.Context, socket string) (*PodmanEngine, error) 
 	return &PodmanEngine{conn: conn}, nil
 }
 
-func (p *PodmanEngine) PullImage(ctx context.Context, img string) error {
+func (p *PodmanEngine) PullImage(ctx context.Context, img string, w io.Writer) error {
 	logger.Debug("pulling image", "image", img)
 	_, err := images.Pull(p.conn, img, nil)
 	if err != nil {
@@ -49,13 +51,13 @@ func (p *PodmanEngine) ImageExists(ctx context.Context, img string) (bool, error
 }
 
 func (p *PodmanEngine) StartService(ctx context.Context, name string, svc *config.Service, stackName string) (string, error) {
-	logger.Info("starting service", "service", name, "image", svc.Image)
+	logger.Debug("starting service", "service", name, "image", svc.Image)
 
 	ports, err := config.NormalizePorts(svc.Ports)
 	if err != nil {
 		return "", fmt.Errorf("service %s: %w", name, err)
 	}
-	volumes, err := config.NormalizeVolumes(svc.Volumes)
+	volumes, err := config.NormalizeVolumes(svc.Volumes, svc.BaseDir)
 	if err != nil {
 		return "", fmt.Errorf("service %s: %w", name, err)
 	}
@@ -98,6 +100,9 @@ func (p *PodmanEngine) StartService(ctx context.Context, name string, svc *confi
 		})
 	}
 
+	if len(svc.Command) > 0 {
+		s.Command = svc.Command
+	}
 	if svc.Restart != "" && svc.Restart != "no" {
 		s.RestartPolicy = svc.Restart
 	}
@@ -106,6 +111,10 @@ func (p *PodmanEngine) StartService(ctx context.Context, name string, svc *confi
 	}
 	if svc.NetworkMode != "" {
 		s.NetNS = specgen.Namespace{NSMode: specgen.NamespaceMode(svc.NetworkMode)}
+	} else {
+		s.Networks = map[string]nettypes.PerNetworkOptions{
+			stackName: {Aliases: []string{name}},
+		}
 	}
 	if svc.Init != nil {
 		s.Init = svc.Init
@@ -135,6 +144,15 @@ func (p *PodmanEngine) StartService(ctx context.Context, name string, svc *confi
 			if svc.HealthCheck.Retries != nil {
 				s.HealthConfig.Retries = *svc.HealthCheck.Retries
 			}
+			if d, err := config.ParsePklDuration(svc.HealthCheck.Interval); err == nil && d > 0 {
+				s.HealthConfig.Interval = d
+			}
+			if d, err := config.ParsePklDuration(svc.HealthCheck.Timeout); err == nil && d > 0 {
+				s.HealthConfig.Timeout = d
+			}
+			if d, err := config.ParsePklDuration(svc.HealthCheck.StartPeriod); err == nil && d > 0 {
+				s.HealthConfig.StartPeriod = d
+			}
 		}
 	}
 
@@ -150,7 +168,7 @@ func (p *PodmanEngine) StartService(ctx context.Context, name string, svc *confi
 }
 
 func (p *PodmanEngine) StopService(ctx context.Context, name string) error {
-	logger.Info("stopping service", "service", name)
+	logger.Debug("stopping service", "service", name)
 	timeout := uint(10)
 	return containers.Stop(p.conn, name, &containers.StopOptions{Timeout: &timeout})
 }
@@ -168,11 +186,18 @@ func (p *PodmanEngine) IsReady(ctx context.Context, name string, hasHealthCheck 
 		return false, err
 	}
 	if data.State == nil || !data.State.Running {
+		if data.State != nil && data.State.ExitCode != 0 && data.RestartCount > 0 {
+			return false, fmt.Errorf("container %s is crash-looping (exit %d, %d restart(s))",
+				name, data.State.ExitCode, data.RestartCount)
+		}
 		return false, nil
 	}
 	if hasHealthCheck {
 		if data.State.Health == nil {
 			return false, nil
+		}
+		if data.State.Health.Status == "unhealthy" {
+			return false, fmt.Errorf("container %s is unhealthy", name)
 		}
 		return data.State.Health.Status == "healthy", nil
 	}
@@ -274,14 +299,181 @@ func (p *PodmanEngine) Logs(ctx context.Context, name string, follow bool, tail 
 	return err
 }
 
+func (p *PodmanEngine) InspectConfig(ctx context.Context, name string) (*LiveConfig, error) {
+	data, err := containers.Inspect(p.conn, name, nil)
+	if err != nil {
+		if strings.Contains(err.Error(), "no such container") {
+			return nil, fmt.Errorf("%w: %s", ErrNotFound, name)
+		}
+		return nil, err
+	}
+
+	// Env: split "KEY=VAL" pairs into a map.
+	env := make(map[string]string)
+	if data.Config != nil {
+		for _, e := range data.Config.Env {
+			if k, v, ok := strings.Cut(e, "="); ok {
+				env[k] = v
+			}
+		}
+	}
+
+	// Ports: map["port/proto"][]InspectHostPort → []config.PortBinding.
+	var ports []config.PortBinding
+	if data.NetworkSettings != nil {
+		for portProto, binds := range data.NetworkSettings.Ports {
+			target, proto, _ := strings.Cut(portProto, "/")
+			if len(binds) == 0 {
+				ports = append(ports, config.PortBinding{Target: target, Protocol: proto})
+				continue
+			}
+			for _, b := range binds {
+				ports = append(ports, config.PortBinding{
+					HostIP:    b.HostIP,
+					Published: b.HostPort,
+					Target:    target,
+					Protocol:  proto,
+				})
+			}
+		}
+	}
+
+	// Mounts → []config.VolumeMount.
+	// Same normalisation as Docker: use Name for named volumes so comparisons
+	// against the desired config (volume name) work correctly.
+	var volumes []config.VolumeMount
+	for _, m := range data.Mounts {
+		source := m.Source
+		if m.Type == "volume" && m.Name != "" {
+			source = m.Name
+		}
+		volumes = append(volumes, config.VolumeMount{
+			Type:     m.Type,
+			Source:   source,
+			Target:   m.Destination,
+			ReadOnly: !m.RW,
+		})
+	}
+
+	// Labels: strip dill.* system labels.
+	userLabels := make(map[string]string)
+	if data.Config != nil {
+		for k, v := range data.Config.Labels {
+			if !strings.HasPrefix(k, "dill.") {
+				userLabels[k] = v
+			}
+		}
+	}
+
+	var healthTest []string
+	if data.Config != nil && data.Config.Healthcheck != nil {
+		healthTest = data.Config.Healthcheck.Test
+	}
+
+	restartPolicy := ""
+	networkMode := ""
+	capAdd := []string(nil)
+	cpuset := ""
+	init := false
+	if data.HostConfig != nil {
+		restartPolicy = data.HostConfig.RestartPolicy.Name
+		networkMode = data.HostConfig.NetworkMode
+		capAdd = data.HostConfig.CapAdd
+		cpuset = data.HostConfig.CpusetCpus
+		init = data.HostConfig.Init
+	}
+	user := ""
+	var command []string
+	if data.Config != nil {
+		user = data.Config.User
+		command = data.Config.Cmd
+	}
+
+	return &LiveConfig{
+		Image:         data.ImageName,
+		Env:           env,
+		Ports:         ports,
+		Volumes:       volumes,
+		RestartPolicy: restartPolicy,
+		UserLabels:    userLabels,
+		NetworkMode:   networkMode,
+		User:          user,
+		HealthTest:    healthTest,
+		Command:       command,
+		CapAdd:        capAdd,
+		Init:          init,
+		Cpuset:        cpuset,
+	}, nil
+}
+
+func (p *PodmanEngine) EnsureNetwork(ctx context.Context, name string) error {
+	exists, err := podmannetwork.Exists(p.conn, name, nil)
+	if err != nil {
+		return fmt.Errorf("checking network: %w", err)
+	}
+	if exists {
+		logger.Debug("network already exists", "name", name)
+		return nil
+	}
+	_, err = podmannetwork.Create(p.conn, &nettypes.Network{
+		Name:   name,
+		Driver: "bridge",
+		Labels: map[string]string{
+			"dill.managed": "true",
+			"dill.stack":   name,
+		},
+	})
+	if err != nil {
+		return fmt.Errorf("creating network %s: %w", name, err)
+	}
+	logger.Debug("network created", "name", name)
+	return nil
+}
+
+func (p *PodmanEngine) RemoveNetwork(ctx context.Context, name string) error {
+	_, err := podmannetwork.Remove(p.conn, name, nil)
+	if err != nil {
+		if strings.Contains(err.Error(), "no such network") {
+			return nil
+		}
+		return fmt.Errorf("removing network %s: %w", name, err)
+	}
+	logger.Debug("network removed", "name", name)
+	return nil
+}
+
+func (p *PodmanEngine) RemoveImage(ctx context.Context, image string, force bool) error {
+	opts := new(images.RemoveOptions).WithForce(force)
+	_, errs := images.Remove(p.conn, []string{image}, opts)
+	for _, err := range errs {
+		if err != nil && !strings.Contains(err.Error(), "image not known") {
+			return fmt.Errorf("removing image %s: %w", image, err)
+		}
+	}
+	logger.Debug("image removed", "image", image)
+	return nil
+}
+
+func (p *PodmanEngine) RemoveVolume(ctx context.Context, name string, force bool) error {
+	opts := new(podmanvolumes.RemoveOptions).WithForce(force)
+	if err := podmanvolumes.Remove(p.conn, name, opts); err != nil {
+		if strings.Contains(err.Error(), "no such volume") {
+			return nil
+		}
+		return fmt.Errorf("removing volume %s: %w", name, err)
+	}
+	logger.Debug("volume removed", "name", name)
+	return nil
+}
+
 func (p *PodmanEngine) Close() error { return nil }
 
-func toSpecPortMapping(pb config.PortBinding) (types.PortMapping, error) {
+func toSpecPortMapping(pb config.PortBinding) (nettypes.PortMapping, error) {
 	var containerPort uint16
 	if _, err := fmt.Sscan(pb.Target, &containerPort); err != nil {
-		return types.PortMapping{}, fmt.Errorf("invalid container port %q", pb.Target)
+		return nettypes.PortMapping{}, fmt.Errorf("invalid container port %q", pb.Target)
 	}
-	pm := types.PortMapping{
+	pm := nettypes.PortMapping{
 		ContainerPort: containerPort,
 		HostIP:        pb.HostIP,
 		Protocol:      pb.Protocol,
@@ -289,7 +481,7 @@ func toSpecPortMapping(pb config.PortBinding) (types.PortMapping, error) {
 	if pb.Published != "" {
 		var hostPort uint16
 		if _, err := fmt.Sscan(pb.Published, &hostPort); err != nil {
-			return types.PortMapping{}, fmt.Errorf("invalid host port %q", pb.Published)
+			return nettypes.PortMapping{}, fmt.Errorf("invalid host port %q", pb.Published)
 		}
 		pm.HostPort = hostPort
 	}

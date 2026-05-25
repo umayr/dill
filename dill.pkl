@@ -32,6 +32,7 @@ class Service {
   ports: List<Port | String>?
   labels: Mapping<String, String>?
   depends_on: List<String>?
+  command: List<String>?
   network_mode: String?
   healthcheck: HealthCheck?
   user: String?
@@ -43,9 +44,22 @@ class Service {
 
 class DillConfig {
   version: String = "0.0.6"
+  /// Stack name used for container labels and network naming.
+  /// When omitted, a deterministic adjective-animal name is derived from the config file path.
+  name: String?
   services: Mapping<String, Service>
   /// Specify the container engine to use for this deployment
   engine: "podman" | "docker" = "podman"
 }
 
 config: DillConfig
+
+output {
+  // Pkl's JSON renderer cannot serialise Duration natively.
+  // Convert to {value, unit} so the Go side can reconstruct time.Duration.
+  renderer = new JsonRenderer {
+    converters {
+      [Duration] = (d) -> new Dynamic { ["value"] = d.value; ["unit"] = d.unit }
+    }
+  }
+}

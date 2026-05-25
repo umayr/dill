@@ -8,11 +8,17 @@ import "encoding/json"
 
 type DillConfig struct {
 	Version  string              `json:"version"`
+	Name     string              `json:"name"`
 	Engine   string              `json:"engine"`
 	Services map[string]*Service `json:"services"`
 }
 
 type Service struct {
+	// BaseDir is the directory of the config file that declared this service.
+	// It is set programmatically after loading and is not part of the Pkl schema.
+	// Relative bind-mount paths are resolved against it.
+	BaseDir string `json:"-"`
+
 	Image         string            `json:"image"`
 	ContainerName string            `json:"container_name"`
 	Restart       string            `json:"restart"`
@@ -22,6 +28,7 @@ type Service struct {
 	Ports         []json.RawMessage `json:"ports"`      // string | Port
 	Labels        map[string]string `json:"labels"`
 	DependsOn     []string          `json:"depends_on"`
+	Command       []string          `json:"command"`
 	NetworkMode   string            `json:"network_mode"`
 	HealthCheck   *HealthCheck      `json:"healthcheck"`
 	User          string            `json:"user"`
