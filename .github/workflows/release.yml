@@ -1,4 +1,4 @@
-name: Release Pkl Package
+name: Release
 
 on:
   push:
@@ -15,28 +15,39 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # needed for git describe --tags
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
 
       - name: Install Pkl
         run: |
           curl -L \
             -o /usr/local/bin/pkl \
             https://github.com/apple/pkl/releases/latest/download/pkl-linux-amd64
-
           chmod +x /usr/local/bin/pkl
-
           pkl --version
 
-      - name: Build package
+      - name: Stamp PklProject version
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          sed -i "s/version = \"[^\"]*\"/version = \"$VERSION\"/" PklProject
+
+      - name: Build Pkl package
         run: |
           mkdir -p .out
           pkl project package . --output-path .out --skip-publish-check
-
           echo "Generated files:"
           ls -lah .out
 
       - name: Verify archive contents
-        run: |
-          unzip -l .out/*.zip
+        run: unzip -l .out/*.zip
+
+      - name: Build Go binaries
+        run: make dist
 
       - name: Publish GitHub Release
         uses: softprops/action-gh-release@v2
@@ -45,3 +56,7 @@ jobs:
           files: |
             .out/*.zip
             .out/*.sha256
+            dist/bin/dill-darwin-arm64
+            dist/bin/dill-darwin-amd64
+            dist/bin/dill-linux-amd64
+            dist/bin/dill-linux-arm64
