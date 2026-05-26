@@ -79,7 +79,7 @@ jobs:
 
       - name: Push metadata files
         run: |
-          cp .out/dill@* gh-pages/
+          find .out -maxdepth 1 -type f ! -name "*.zip*" -exec cp {} gh-pages/ \;
           cd gh-pages
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
