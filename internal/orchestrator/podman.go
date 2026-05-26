@@ -116,6 +116,7 @@ func (p *PodmanEngine) StartService(ctx context.Context, name string, svc *confi
 	if svc.NetworkMode != "" {
 		s.NetNS = specgen.Namespace{NSMode: specgen.NamespaceMode(svc.NetworkMode)}
 	} else {
+		s.NetNS = specgen.Namespace{NSMode: specgen.Bridge}
 		s.Networks = map[string]nettypes.PerNetworkOptions{
 			stackName: {Aliases: []string{name}},
 		}
