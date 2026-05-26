@@ -1,0 +1,12 @@
+amends "package://pkg.ushd.ca/dill@0.1.1#/dill.pkl"
+
+config {
+  name = "remote"
+  engine = "docker"
+  services {
+    ["web"] {
+      image = "nginx:alpine"
+      ports = List("8080:80")
+    }
+  }
+}
