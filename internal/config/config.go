@@ -23,8 +23,8 @@ type Service struct {
 	Restart       string            `json:"restart"`
 	PullPolicy    string            `json:"pull_policy"`
 	Environment   map[string]string `json:"environment"`
-	Volumes       []json.RawMessage `json:"volumes"`    // string | Mount
-	Ports         []json.RawMessage `json:"ports"`      // string | Port
+	Volumes       []json.RawMessage `json:"volumes"` // string | Mount
+	Ports         []json.RawMessage `json:"ports"`   // string | Port
 	Labels        map[string]string `json:"labels"`
 	DependsOn     []string          `json:"depends_on"`
 	Command       []string          `json:"command"`
@@ -57,7 +57,7 @@ type Mount struct {
 // Duration fields (Interval, Timeout, StartPeriod) are kept as raw JSON because
 // Pkl serializes Duration values as objects; callers should inspect and convert.
 type HealthCheck struct {
-	Test        json.RawMessage  `json:"test"`         // List<String> | String
+	Test        json.RawMessage  `json:"test"` // List<String> | String
 	Interval    *json.RawMessage `json:"interval"`
 	Timeout     *json.RawMessage `json:"timeout"`
 	Retries     *int             `json:"retries"`

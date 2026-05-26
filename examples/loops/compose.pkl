@@ -6,10 +6,10 @@ local baseCache = new Service {
 }
 
 config {
-  name   = "cache-cluster"
+  name = "cache-cluster"
   engine = "podman"
   services {
-    for (i in IntSeq(1,3)) {
+    for (i in IntSeq(1, 3)) {
       ["cache-node-\(i)"] = (baseCache) {
         ports = List("637\(i):6379")
       }

@@ -6,7 +6,7 @@ DIST    := dist
 VERSION := $(shell git describe --tags --always --dirty 2>/dev/null || echo "dev")
 LDFLAGS := -ldflags "-X main.version=$(VERSION)"
 
-.PHONY: build install clean test vet tidy dist
+.PHONY: build install clean test vet tidy fmt validate dist
 
 build:
 	@mkdir -p bin
@@ -23,6 +23,20 @@ vet:
 
 tidy:
 	go mod tidy
+
+fmt:
+	gofmt -w .
+	@for f in $$(find . -name "*.pkl" -not -path "./.git/*"); do \
+		pkl format -w "$$f"; \
+	done
+
+validate:
+	pkl project package . --output-path /tmp/dill-out --skip-publish-check
+	@for f in examples/**/compose.pkl; do \
+		[ -f "$$f" ] || continue; \
+		echo "eval $$f"; \
+		pkl eval "$$f" > /dev/null; \
+	done
 
 clean:
 	rm -rf bin $(DIST)

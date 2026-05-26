@@ -12,49 +12,51 @@
 /// On macOS/Windows remove that line and expose port 9100:9100 instead.
 amends "../../dill.pkl"
 
-local dataDir         = read?("env:DATA_DIR")         ?? "./data"
+local dataDir = read?("env:DATA_DIR") ?? "./data"
 local grafanaPassword = read?("env:GRAFANA_PASSWORD") ?? "admin"
-local prometheusPort  = 9090
-local grafanaPort     = 3000
+local prometheusPort = 9090
+local grafanaPort = 3000
 
 config {
-  name   = "monitoring"
+  name = "monitoring"
   engine = "docker"
 
   services {
     // Scrapes host metrics. Uses host networking so it can see all interfaces
     // without port mapping. Requires the /proc, /sys, /rootfs bind mounts.
     ["node-exporter"] {
-      image        = "prom/node-exporter:v1.8.1"
-      restart      = "unless-stopped"
+      image = "prom/node-exporter:v1.8.1"
+      restart = "unless-stopped"
       network_mode = "host"
-      cap_add      = List("SYS_TIME")
-      volumes = List(
-        "/proc:/host/proc:ro",
-        "/sys:/host/sys:ro",
-        "/:/rootfs:ro"
-      )
+      cap_add = List("SYS_TIME")
+      volumes =
+        List(
+          "/proc:/host/proc:ro",
+          "/sys:/host/sys:ro",
+          "/:/rootfs:ro",
+        )
       labels {
         ["monitoring.scrape"] = "true"
-        ["monitoring.port"]   = "9100"
+        ["monitoring.port"] = "9100"
       }
     }
 
     ["prometheus"] {
-      image      = "prom/prometheus:v2.53.0"
-      restart    = "unless-stopped"
+      image = "prom/prometheus:v2.53.0"
+      restart = "unless-stopped"
       depends_on = List("node-exporter")
-      user       = "65534:65534"
-      volumes = List(
-        "./prometheus.yml:/etc/prometheus/prometheus.yml:ro",
-        "\(dataDir)/prometheus:/prometheus"
-      )
+      user = "65534:65534"
+      volumes =
+        List(
+          "./prometheus.yml:/etc/prometheus/prometheus.yml:ro",
+          "\(dataDir)/prometheus:/prometheus",
+        )
       ports = List("\(prometheusPort):\(prometheusPort)")
       healthcheck {
-        test         = List("CMD-SHELL", "wget -qO- http://localhost:\(prometheusPort)/-/ready || exit 1")
-        interval     = 10.s
-        timeout      = 5.s
-        retries      = 5
+        test = List("CMD-SHELL", "wget -qO- http://localhost:\(prometheusPort)/-/ready || exit 1")
+        interval = 10.s
+        timeout = 5.s
+        retries = 5
         start_period = 15.s
       }
       labels {
@@ -63,27 +65,28 @@ config {
     }
 
     ["grafana"] {
-      image      = "grafana/grafana:11.1.0"
-      restart    = "unless-stopped"
+      image = "grafana/grafana:11.1.0"
+      restart = "unless-stopped"
       depends_on = List("prometheus")
-      user       = "472:472"
+      user = "472:472"
       environment {
-        ["GF_SECURITY_ADMIN_PASSWORD"]   = grafanaPassword
-        ["GF_USERS_ALLOW_SIGN_UP"]       = "false"
-        ["GF_SERVER_ROOT_URL"]           = "http://localhost:\(grafanaPort)"
+        ["GF_SECURITY_ADMIN_PASSWORD"] = grafanaPassword
+        ["GF_USERS_ALLOW_SIGN_UP"] = "false"
+        ["GF_SERVER_ROOT_URL"] = "http://localhost:\(grafanaPort)"
         ["GF_ANALYTICS_REPORTING_ENABLED"] = "false"
       }
-      volumes = List(
-        "\(dataDir)/grafana:/var/lib/grafana",
-        "./grafana/datasources:/etc/grafana/provisioning/datasources:ro",
-        "./grafana/dashboards:/etc/grafana/provisioning/dashboards:ro"
-      )
+      volumes =
+        List(
+          "\(dataDir)/grafana:/var/lib/grafana",
+          "./grafana/datasources:/etc/grafana/provisioning/datasources:ro",
+          "./grafana/dashboards:/etc/grafana/provisioning/dashboards:ro",
+        )
       ports = List("\(grafanaPort):\(grafanaPort)")
       healthcheck {
-        test         = List("CMD-SHELL", "wget -qO- http://localhost:\(grafanaPort)/api/health || exit 1")
-        interval     = 10.s
-        timeout      = 5.s
-        retries      = 5
+        test = List("CMD-SHELL", "wget -qO- http://localhost:\(grafanaPort)/api/health || exit 1")
+        interval = 10.s
+        timeout = 5.s
+        retries = 5
         start_period = 20.s
       }
       labels {

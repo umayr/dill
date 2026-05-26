@@ -1,7 +1,7 @@
 amends "../../dill.pkl"
 
 config {
-  name   = "basic"
+  name = "basic"
   engine = "docker"
   services {
     ["web"] {

@@ -1,0 +1,108 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+
+  fmt:
+    name: Format
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - name: Install Pkl
+        run: |
+          curl -L \
+            -o /usr/local/bin/pkl \
+            https://github.com/apple/pkl/releases/latest/download/pkl-linux-amd64
+          chmod +x /usr/local/bin/pkl
+      - name: Check gofmt
+        run: |
+          unformatted=$(gofmt -l .)
+          if [ -n "$unformatted" ]; then
+            echo "The following files are not gofmt-formatted:"
+            echo "$unformatted"
+            exit 1
+          fi
+      - name: Check pkl fmt
+        run: |
+          find . -name "*.pkl" -not -path "./.git/*" | while read f; do
+            orig=$(cat "$f")
+            pkl format -w "$f"
+            if [ "$(cat "$f")" != "$orig" ]; then
+              echo "$f is not pkl-formatted"
+              exit 1
+            fi
+          done
+
+  vet:
+    name: Vet
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - run: make vet
+
+  build:
+    name: Build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - run: make build
+
+  test:
+    name: Test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - run: make test
+
+  schema:
+    name: Validate Schema
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Pkl
+        run: |
+          curl -L \
+            -o /usr/local/bin/pkl \
+            https://github.com/apple/pkl/releases/latest/download/pkl-linux-amd64
+          chmod +x /usr/local/bin/pkl
+          pkl --version
+      - name: Package
+        run: pkl project package . --output-path /tmp/out --skip-publish-check
+
+  examples:
+    name: Validate Examples
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Pkl
+        run: |
+          curl -L \
+            -o /usr/local/bin/pkl \
+            https://github.com/apple/pkl/releases/latest/download/pkl-linux-amd64
+          chmod +x /usr/local/bin/pkl
+          pkl --version
+      - name: Eval examples
+        run: |
+          for f in examples/**/compose.pkl; do
+            [ -f "$f" ] || continue
+            echo "eval $f"
+            pkl eval "$f" > /dev/null
+          done

@@ -58,9 +58,9 @@ type plainPullSink struct {
 	service string
 }
 
-func (s *plainPullSink) Begin()                    { printProgress(s.service, "pulling") }
+func (s *plainPullSink) Begin()                      { printProgress(s.service, "pulling") }
 func (s *plainPullSink) Write(p []byte) (int, error) { return len(p), nil }
-func (s *plainPullSink) Done()                     {}
+func (s *plainPullSink) Done()                       {}
 
 // newMakePullSink returns a MakePullSink factory. The shared mutex prevents
 // concurrent pulls from interleaving characters; the shared activeCount lets

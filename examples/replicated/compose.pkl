@@ -11,32 +11,35 @@
 ///   dill -f examples/replicated/compose.pkl up
 amends "../../dill.pkl"
 
-local replicaCount    = 3
-local primaryPort     = 6379
+local replicaCount = 3
+local primaryPort = 6379
 local baseReplicaPort = 6380
-local password        = read?("env:REDIS_PASSWORD") ?? "redispass"
+local password = read?("env:REDIS_PASSWORD") ?? "redispass"
 
 // Shared healthcheck — closes over `password` from the enclosing scope.
 local function redisHealthCheck(port: Int) = new HealthCheck {
-  test     = List("CMD", "redis-cli", "-p", "\(port)", "-a", password, "ping")
+  test = List("CMD", "redis-cli", "-p", "\(port)", "-a", password, "ping")
   interval = 5.s
-  timeout  = 3.s
-  retries  = 5
+  timeout = 3.s
+  retries = 5
 }
 
 // The primary node. Replicas connect to it by the Docker service name.
 local primary = new Service {
-  image   = "redis:7-alpine"
+  image = "redis:7-alpine"
   restart = "unless-stopped"
-  command = List(
-    "redis-server",
-    "--requirepass",  password,
-    "--port",         "\(primaryPort)"
-  )
-  ports       = List("\(primaryPort):\(primaryPort)")
+  command =
+    List(
+      "redis-server",
+      "--requirepass",
+      password,
+      "--port",
+      "\(primaryPort)",
+    )
+  ports = List("\(primaryPort):\(primaryPort)")
   healthcheck = redisHealthCheck(primaryPort)
   labels {
-    ["redis.role"]    = "primary"
+    ["redis.role"] = "primary"
     ["redis.cluster"] = "main"
   }
 }
@@ -44,27 +47,33 @@ local primary = new Service {
 // Factory function: builds a replica for index n (1-based).
 // Each replica connects back to the primary over the Docker network.
 local function replica(n: Int) = new Service {
-  image      = "redis:7-alpine"
-  restart    = "unless-stopped"
+  image = "redis:7-alpine"
+  restart = "unless-stopped"
   depends_on = List("redis-primary")
-  command = List(
-    "redis-server",
-    "--requirepass",   password,
-    "--masterauth",    password,
-    "--replicaof",     "redis-primary", "\(primaryPort)",
-    "--port",          "\(baseReplicaPort + n - 1)"
-  )
-  ports       = List("\(baseReplicaPort + n - 1):\(baseReplicaPort + n - 1)")
+  command =
+    List(
+      "redis-server",
+      "--requirepass",
+      password,
+      "--masterauth",
+      password,
+      "--replicaof",
+      "redis-primary",
+      "\(primaryPort)",
+      "--port",
+      "\(baseReplicaPort + n - 1)",
+    )
+  ports = List("\(baseReplicaPort + n - 1):\(baseReplicaPort + n - 1)")
   healthcheck = redisHealthCheck(baseReplicaPort + n - 1)
   labels {
-    ["redis.role"]          = "replica"
+    ["redis.role"] = "replica"
     ["redis.replica-index"] = "\(n)"
-    ["redis.cluster"]       = "main"
+    ["redis.cluster"] = "main"
   }
 }
 
 config {
-  name   = "redis-cluster"
+  name = "redis-cluster"
   engine = "docker"
 
   services {

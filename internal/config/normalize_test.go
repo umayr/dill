@@ -7,7 +7,7 @@ import (
 	"time"
 )
 
-func raw(s string) json.RawMessage { return json.RawMessage(s) }
+func raw(s string) json.RawMessage    { return json.RawMessage(s) }
 func rawStr(s string) json.RawMessage { return json.RawMessage(`"` + s + `"`) }
 
 // --- NormalizePorts ---

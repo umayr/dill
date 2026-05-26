@@ -90,7 +90,6 @@ func (p *PodmanEngine) StartService(ctx context.Context, name string, svc *confi
 		s.PortMappings = append(s.PortMappings, pm)
 	}
 
-
 	for _, vm := range volumes {
 		s.Mounts = append(s.Mounts, specs.Mount{
 			Type:        vm.Type,
@@ -504,4 +503,3 @@ func volumeOptions(vm config.VolumeMount) []string {
 	}
 	return nil
 }
-

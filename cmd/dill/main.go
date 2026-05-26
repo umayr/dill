@@ -151,4 +151,3 @@ Flags:
 		return usageError{msg}
 	}
 }
-
