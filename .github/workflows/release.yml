@@ -69,3 +69,20 @@ jobs:
           gh release upload "${GITHUB_REF_NAME}" $METADATA --clobber
         env:
           GH_TOKEN: ${{ github.token }}
+
+      - name: Publish metadata to pkg.ushd.ca
+        uses: actions/checkout@v4
+        with:
+          repository: umayr/pkl-registry
+          token: ${{ secrets.PKL_REGISTRY_TOKEN }}
+          path: gh-pages
+
+      - name: Push metadata files
+        run: |
+          cp .out/dill@* gh-pages/
+          cd gh-pages
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add "dill@"*
+          git diff --cached --quiet || git commit -m "pkg: publish dill@${GITHUB_REF_NAME}"
+          git push
