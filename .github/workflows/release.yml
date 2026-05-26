@@ -54,10 +54,18 @@ jobs:
         with:
           generate_release_notes: true
           files: |
-            dill.pkl
             .out/*.zip
             .out/*.sha256
             dist/bin/dill-darwin-arm64
             dist/bin/dill-darwin-amd64
             dist/bin/dill-linux-amd64
             dist/bin/dill-linux-arm64
+
+      - name: Upload Pkl metadata file
+        run: |
+          # Upload the extension-less metadata file that Pkl's package resolver needs.
+          # softprops/action-gh-release globs skip files with no extension, so we use gh CLI.
+          METADATA=$(find .out -maxdepth 1 -type f ! -name "*.zip" ! -name "*.sha256")
+          gh release upload "${GITHUB_REF_NAME}" $METADATA --clobber
+        env:
+          GH_TOKEN: ${{ github.token }}
