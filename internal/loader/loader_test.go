@@ -2,6 +2,8 @@ package loader
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"os"
 	"path/filepath"
 	"strings"
@@ -88,5 +90,30 @@ func TestFindPkl_Cached(t *testing.T) {
 	}
 	if got != bin {
 		t.Errorf("FindPkl() returned %q, want cached %q", got, bin)
+	}
+}
+
+func TestVerifyDownloadedPklRequiresChecksum(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "pkl")
+	if err := os.WriteFile(path, []byte("fake"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("DILL_PKL_SHA256", "")
+	t.Setenv("DILL_ALLOW_UNVERIFIED_PKL_DOWNLOAD", "")
+	if err := verifyDownloadedPkl(path); err == nil {
+		t.Fatal("expected missing checksum error")
+	}
+}
+
+func TestVerifyDownloadedPklAcceptsChecksum(t *testing.T) {
+	content := []byte("fake")
+	path := filepath.Join(t.TempDir(), "pkl")
+	if err := os.WriteFile(path, content, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	sum := sha256.Sum256(content)
+	t.Setenv("DILL_PKL_SHA256", hex.EncodeToString(sum[:]))
+	if err := verifyDownloadedPkl(path); err != nil {
+		t.Fatal(err)
 	}
 }

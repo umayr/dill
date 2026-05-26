@@ -51,5 +51,8 @@ func Load(ctx context.Context, path string) (*DillConfig, error) {
 	for _, svc := range r.Config.Services {
 		svc.BaseDir = baseDir
 	}
+	if err := ValidateRuntime(r.Config); err != nil {
+		return nil, err
+	}
 	return r.Config, nil
 }

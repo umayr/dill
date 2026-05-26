@@ -9,6 +9,8 @@ package loader
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"io"
 	"net/http"
@@ -16,6 +18,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"sync"
 
 	"github.com/umayr/dill/internal/log"
@@ -135,6 +138,11 @@ func downloadPkl(ctx context.Context, dst string) (string, error) {
 	}
 	f.Close()
 
+	if err := verifyDownloadedPkl(tmp); err != nil {
+		os.Remove(tmp)
+		return "", err
+	}
+
 	if err := os.Rename(tmp, dst); err != nil {
 		os.Remove(tmp)
 		return "", fmt.Errorf("installing pkl binary: %w", err)
@@ -176,4 +184,35 @@ func releaseURL() (string, error) {
 		"https://github.com/apple/pkl/releases/download/%s/%s",
 		PklVersion, name,
 	), nil
+}
+
+func verifyDownloadedPkl(path string) error {
+	expected := os.Getenv("DILL_PKL_SHA256")
+	if expected == "" {
+		key := "DILL_PKL_SHA256_" + strings.ToUpper(runtime.GOOS) + "_" + strings.ToUpper(runtime.GOARCH)
+		expected = os.Getenv(key)
+	}
+	if expected == "" {
+		if os.Getenv("DILL_ALLOW_UNVERIFIED_PKL_DOWNLOAD") == "1" {
+			logger.Warn("allowing unverified pkl download because DILL_ALLOW_UNVERIFIED_PKL_DOWNLOAD=1")
+			return nil
+		}
+		return fmt.Errorf("refusing to install downloaded pkl without a SHA-256 checksum; install pkl on PATH, set DILL_PKL_PATH, set DILL_PKL_SHA256, or set DILL_ALLOW_UNVERIFIED_PKL_DOWNLOAD=1")
+	}
+
+	f, err := os.Open(path)
+	if err != nil {
+		return fmt.Errorf("opening downloaded pkl for verification: %w", err)
+	}
+	defer f.Close()
+
+	h := sha256.New()
+	if _, err := io.Copy(h, f); err != nil {
+		return fmt.Errorf("hashing downloaded pkl: %w", err)
+	}
+	got := hex.EncodeToString(h.Sum(nil))
+	if !strings.EqualFold(got, expected) {
+		return fmt.Errorf("downloaded pkl checksum mismatch: got %s, want %s", got, expected)
+	}
+	return nil
 }

@@ -3,6 +3,7 @@ package config
 import (
 	"encoding/json"
 	"fmt"
+	"net"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -132,11 +133,26 @@ func normalizePort(raw json.RawMessage) (PortBinding, error) {
 		Target:   strconv.Itoa(p.Target),
 		Protocol: p.Protocol,
 	}
+	if pb.Protocol == "" {
+		pb.Protocol = "tcp"
+	}
+	if pb.Protocol != "tcp" && pb.Protocol != "udp" && pb.Protocol != "sctp" {
+		return PortBinding{}, fmt.Errorf("invalid protocol %q", pb.Protocol)
+	}
+	if err := validatePort(pb.Target, "target"); err != nil {
+		return PortBinding{}, err
+	}
 	if p.Published != nil {
 		pb.Published = strconv.Itoa(*p.Published)
+		if err := validatePort(pb.Published, "published"); err != nil {
+			return PortBinding{}, err
+		}
 	}
 	if p.HostIP != nil {
 		pb.HostIP = *p.HostIP
+		if pb.HostIP != "" && net.ParseIP(pb.HostIP) == nil {
+			return PortBinding{}, fmt.Errorf("invalid host IP %q", pb.HostIP)
+		}
 	}
 	return pb, nil
 }
@@ -150,6 +166,9 @@ func parsePortString(s string) (PortBinding, error) {
 	if idx := strings.LastIndex(s, "/"); idx != -1 {
 		pb.Protocol = s[idx+1:]
 		s = s[:idx]
+	}
+	if pb.Protocol != "tcp" && pb.Protocol != "udp" && pb.Protocol != "sctp" {
+		return PortBinding{}, fmt.Errorf("invalid protocol %q", pb.Protocol)
 	}
 
 	parts := strings.Split(s, ":")
@@ -166,7 +185,32 @@ func parsePortString(s string) (PortBinding, error) {
 	default:
 		return PortBinding{}, fmt.Errorf("invalid port spec %q", s)
 	}
+	if err := validatePort(pb.Target, "target"); err != nil {
+		return PortBinding{}, err
+	}
+	if pb.Published != "" {
+		if err := validatePort(pb.Published, "published"); err != nil {
+			return PortBinding{}, err
+		}
+	}
+	if pb.HostIP != "" && net.ParseIP(pb.HostIP) == nil {
+		return PortBinding{}, fmt.Errorf("invalid host IP %q", pb.HostIP)
+	}
 	return pb, nil
+}
+
+func validatePort(raw, field string) error {
+	n, err := strconv.Atoi(raw)
+	if err != nil {
+		return fmt.Errorf("invalid %s port %q", field, raw)
+	}
+	if n < 0 || n > 65535 {
+		return fmt.Errorf("invalid %s port %q: must be between 0 and 65535", field, raw)
+	}
+	if field == "target" && n == 0 {
+		return fmt.Errorf("invalid target port %q: must be between 1 and 65535", raw)
+	}
+	return nil
 }
 
 func normalizeVolume(raw json.RawMessage, baseDir string) (VolumeMount, error) {
@@ -218,6 +262,8 @@ func parseVolumeString(s, baseDir string) (VolumeMount, error) {
 		}
 		if parts[2] == "ro" {
 			vm.ReadOnly = true
+		} else if parts[2] != "" {
+			return VolumeMount{}, fmt.Errorf("invalid volume option %q", parts[2])
 		}
 	default:
 		return VolumeMount{}, fmt.Errorf("invalid volume spec %q", s)

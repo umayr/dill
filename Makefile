@@ -6,7 +6,7 @@ DIST    := dist
 VERSION := $(shell git describe --tags --always --dirty 2>/dev/null || echo "dev")
 LDFLAGS := -ldflags "-X main.version=$(VERSION)"
 
-.PHONY: build install clean test vet tidy fmt validate dist
+.PHONY: build install clean test integration-test vet tidy fmt validate dist
 
 build:
 	@mkdir -p bin
@@ -17,6 +17,9 @@ install:
 
 test:
 	go test -tags $(TAGS) ./...
+
+integration-test:
+	go test -tags "$(TAGS),integration" ./test/integration -count=1 -v
 
 vet:
 	go vet -tags $(TAGS) ./...
