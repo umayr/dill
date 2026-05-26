@@ -139,6 +139,46 @@ func TestNormalizeNetworkMode(t *testing.T) {
 	}
 }
 
+func TestDiffConfigs_redactsSensitiveEnv(t *testing.T) {
+	svc := &config.Service{
+		Image: "busybox:1.36",
+		Environment: map[string]string{
+			"DB_PASSWORD": "new-secret",
+			"PUBLIC":      "new-value",
+		},
+	}
+	live := &orchestrator.LiveConfig{
+		Image: "busybox:1.36",
+		Env: map[string]string{
+			"DB_PASSWORD": "old-secret",
+			"PUBLIC":      "old-value",
+		},
+	}
+	diffs, err := diffConfigs("web", svc, live)
+	if err != nil {
+		t.Fatal(err)
+	}
+	seenSecret := false
+	seenPublic := false
+	for _, d := range diffs {
+		switch d.Field {
+		case "env.DB_PASSWORD":
+			seenSecret = true
+			if d.Before != "[redacted]" || d.After != "[redacted]" {
+				t.Fatalf("secret diff not redacted: %+v", d)
+			}
+		case "env.PUBLIC":
+			seenPublic = true
+			if d.Before != "old-value" || d.After != "new-value" {
+				t.Fatalf("public diff unexpectedly changed: %+v", d)
+			}
+		}
+	}
+	if !seenSecret || !seenPublic {
+		t.Fatalf("missing expected diffs: %+v", diffs)
+	}
+}
+
 // --- isNotFound ---
 
 func TestIsNotFound(t *testing.T) {

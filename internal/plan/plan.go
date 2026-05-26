@@ -40,8 +40,8 @@ type FieldDiff struct {
 }
 
 type Change struct {
-	Service string     `json:"service"`
-	Kind    ChangeKind `json:"kind"`
+	Service string      `json:"service"`
+	Kind    ChangeKind  `json:"kind"`
 	Diffs   []FieldDiff `json:"diffs"`
 }
 
@@ -123,6 +123,12 @@ func isNotFound(err error) bool {
 func diffConfigs(name string, svc *config.Service, live *orchestrator.LiveConfig) ([]FieldDiff, error) {
 	var diffs []FieldDiff
 
+	if wantHash, err := config.ServiceConfigHash(name, svc); err != nil {
+		return nil, fmt.Errorf("hashing desired config: %w", err)
+	} else if gotHash := live.SystemLabels["dill.config-hash"]; gotHash != "" && gotHash != wantHash {
+		diffs = append(diffs, FieldDiff{Field: "config_hash", Before: gotHash, After: wantHash})
+	}
+
 	// image
 	if svc.Image != live.Image {
 		diffs = append(diffs, FieldDiff{Field: "image", Before: live.Image, After: svc.Image})
@@ -132,7 +138,11 @@ func diffConfigs(name string, svc *config.Service, live *orchestrator.LiveConfig
 	for k, want := range svc.Environment {
 		got := live.Env[k]
 		if want != got {
-			diffs = append(diffs, FieldDiff{Field: "env." + k, Before: got, After: want})
+			before, after := got, want
+			if isSensitiveKey(k) {
+				before, after = redactValue(got), redactValue(want)
+			}
+			diffs = append(diffs, FieldDiff{Field: "env." + k, Before: before, After: after})
 		}
 	}
 
@@ -236,6 +246,23 @@ func diffConfigs(name string, svc *config.Service, live *orchestrator.LiveConfig
 	})
 
 	return diffs, nil
+}
+
+func isSensitiveKey(key string) bool {
+	k := strings.ToUpper(key)
+	for _, marker := range []string{"PASSWORD", "PASSWD", "SECRET", "TOKEN", "API_KEY", "ACCESS_KEY", "PRIVATE_KEY", "CREDENTIAL"} {
+		if strings.Contains(k, marker) {
+			return true
+		}
+	}
+	return false
+}
+
+func redactValue(v string) string {
+	if v == "" {
+		return ""
+	}
+	return "[redacted]"
 }
 
 func normalizeRestart(r string) string {

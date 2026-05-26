@@ -14,6 +14,12 @@ Dill is a strictly-typed, configuration-as-code orchestrator built with Pkl and 
 > avoiding a C dependency on `libgpgme`. Omit it only if you have `pkg-config` and
 > `gpgme` installed (e.g. `brew install pkg-config gpgme` on macOS).
 
+If Dill cannot find `pkl` on `PATH`, it can download the pinned Pkl release, but
+it now requires checksum verification. Prefer installing Pkl yourself or setting
+`DILL_PKL_PATH`. For automated installs, set `DILL_PKL_SHA256` to the expected
+binary hash. `DILL_ALLOW_UNVERIFIED_PKL_DOWNLOAD=1` exists only as an explicit
+escape hatch for disposable environments.
+
 ## Usage
 
 By default, Dill uses the Podman socket. You can switch to Docker by setting `engine = "docker"` in your configuration.
@@ -41,6 +47,29 @@ To tear it down:
 ```
 ./dill -f examples/overrides/my-server.pkl down
 ```
+
+## Integration Tests
+
+Dill has opt-in integration tests that exercise the real Docker and Podman APIs:
+
+```
+DILL_TEST_ENGINE=docker make integration-test
+DILL_TEST_ENGINE=podman PODMAN_SOCKET=unix:///tmp/podman.sock make integration-test
+```
+
+On macOS, the local helper scripts create VM-backed engines:
+
+```
+scripts/integration-colima-docker.sh
+scripts/integration-lima-podman.sh
+scripts/integration-local.sh
+```
+
+The Docker script uses a Colima VM. The Podman script uses a Lima Ubuntu VM,
+installs Go/Pkl/Podman if missing, starts the Podman API socket inside the VM,
+and runs the same Go integration tests there.
+
+CI runs the same integration suite against Docker and Podman on GitHub Actions.
 
 ## Configuration Schema
 

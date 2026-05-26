@@ -72,6 +72,61 @@ jobs:
           go-version-file: go.mod
       - run: make test
 
+  integration-docker:
+    name: Integration / Docker
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - name: Install Pkl
+        run: |
+          curl -fsSL \
+            -o /usr/local/bin/pkl \
+            https://github.com/apple/pkl/releases/download/0.31.1/pkl-linux-amd64
+          chmod +x /usr/local/bin/pkl
+          pkl --version
+      - name: Verify Docker
+        run: docker version
+      - name: Run integration tests
+        env:
+          DILL_TEST_ENGINE: docker
+        run: make integration-test
+
+  integration-podman:
+    name: Integration / Podman
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - name: Install Pkl and Podman
+        run: |
+          curl -fsSL \
+            -o /usr/local/bin/pkl \
+            https://github.com/apple/pkl/releases/download/0.31.1/pkl-linux-amd64
+          chmod +x /usr/local/bin/pkl
+          pkl --version
+          sudo apt-get update
+          sudo apt-get install -y podman
+          podman version
+      - name: Start Podman API socket
+        run: |
+          podman system service --time=0 unix:///tmp/podman.sock &
+          for i in $(seq 1 30); do
+            [ -S /tmp/podman.sock ] && exit 0
+            sleep 1
+          done
+          echo "Podman socket did not appear" >&2
+          exit 1
+      - name: Run integration tests
+        env:
+          DILL_TEST_ENGINE: podman
+          PODMAN_SOCKET: unix:///tmp/podman.sock
+        run: make integration-test
+
   schema:
     name: Validate Schema
     runs-on: ubuntu-latest

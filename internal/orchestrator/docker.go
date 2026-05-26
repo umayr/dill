@@ -170,9 +170,15 @@ func (d *DockerEngine) StartService(ctx context.Context, name string, svc *confi
 	}
 
 	labels := map[string]string{
-		"dill.managed": "true",
-		"dill.service": name,
-		"dill.stack":   stackName,
+		"dill.managed":     "true",
+		"dill.service":     name,
+		"dill.stack":       stackName,
+		"dill.config-hash": "",
+	}
+	if hash, err := config.ServiceConfigHash(name, svc); err != nil {
+		return "", fmt.Errorf("service %s: %w", name, err)
+	} else {
+		labels["dill.config-hash"] = hash
 	}
 	for k, v := range svc.Labels {
 		labels[k] = v
@@ -352,8 +358,11 @@ func (d *DockerEngine) InspectConfig(ctx context.Context, name string) (*LiveCon
 
 	// Labels: strip dill.* system labels.
 	userLabels := make(map[string]string)
+	systemLabels := make(map[string]string)
 	for k, v := range info.Config.Labels {
-		if !strings.HasPrefix(k, "dill.") {
+		if strings.HasPrefix(k, "dill.") {
+			systemLabels[k] = v
+		} else {
 			userLabels[k] = v
 		}
 	}
@@ -372,6 +381,7 @@ func (d *DockerEngine) InspectConfig(ctx context.Context, name string) (*LiveCon
 		Volumes:       volumes,
 		RestartPolicy: string(info.HostConfig.RestartPolicy.Name),
 		UserLabels:    userLabels,
+		SystemLabels:  systemLabels,
 		NetworkMode:   string(info.HostConfig.NetworkMode),
 		User:          info.Config.User,
 		HealthTest:    healthTest,

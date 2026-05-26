@@ -17,6 +17,7 @@ var ErrNotFound = errors.New("container not found")
 //	dill.managed=true          present on every dill-managed container
 //	dill.stack=<stackName>     associates the container with a named stack
 //	dill.service=<name>        logical service name within the stack
+//	dill.config-hash=<sha256>  desired service configuration fingerprint
 
 // LiveConfig holds the effective configuration of a running or stopped container,
 // extracted from the engine for comparison against desired state.
@@ -27,6 +28,7 @@ type LiveConfig struct {
 	Volumes       []config.VolumeMount
 	RestartPolicy string
 	UserLabels    map[string]string // excludes dill.* system labels
+	SystemLabels  map[string]string // dill.* system labels
 	NetworkMode   string
 	User          string
 	HealthTest    []string

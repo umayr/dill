@@ -71,9 +71,15 @@ func (p *PodmanEngine) StartService(ctx context.Context, name string, svc *confi
 	s.Name = containerName
 
 	s.Labels = map[string]string{
-		"dill.managed": "true",
-		"dill.service": name,
-		"dill.stack":   stackName,
+		"dill.managed":     "true",
+		"dill.service":     name,
+		"dill.stack":       stackName,
+		"dill.config-hash": "",
+	}
+	if hash, err := config.ServiceConfigHash(name, svc); err != nil {
+		return "", fmt.Errorf("service %s: %w", name, err)
+	} else {
+		s.Labels["dill.config-hash"] = hash
 	}
 	for k, v := range svc.Labels {
 		s.Labels[k] = v
@@ -84,8 +90,7 @@ func (p *PodmanEngine) StartService(ctx context.Context, name string, svc *confi
 	for _, pb := range ports {
 		pm, err := toSpecPortMapping(pb)
 		if err != nil {
-			logger.Warn("skipping invalid port", "service", name, "err", err)
-			continue
+			return "", fmt.Errorf("service %s: %w", name, err)
 		}
 		s.PortMappings = append(s.PortMappings, pm)
 	}
@@ -111,6 +116,7 @@ func (p *PodmanEngine) StartService(ctx context.Context, name string, svc *confi
 	if svc.NetworkMode != "" {
 		s.NetNS = specgen.Namespace{NSMode: specgen.NamespaceMode(svc.NetworkMode)}
 	} else {
+		s.NetNS = specgen.Namespace{NSMode: specgen.Bridge}
 		s.Networks = map[string]nettypes.PerNetworkOptions{
 			stackName: {Aliases: []string{name}},
 		}
@@ -366,9 +372,12 @@ func (p *PodmanEngine) InspectConfig(ctx context.Context, name string) (*LiveCon
 
 	// Labels: strip dill.* system labels.
 	userLabels := make(map[string]string)
+	systemLabels := make(map[string]string)
 	if data.Config != nil {
 		for k, v := range data.Config.Labels {
-			if !strings.HasPrefix(k, "dill.") {
+			if strings.HasPrefix(k, "dill.") {
+				systemLabels[k] = v
+			} else {
 				userLabels[k] = v
 			}
 		}
@@ -405,6 +414,7 @@ func (p *PodmanEngine) InspectConfig(ctx context.Context, name string) (*LiveCon
 		Volumes:       volumes,
 		RestartPolicy: restartPolicy,
 		UserLabels:    userLabels,
+		SystemLabels:  systemLabels,
 		NetworkMode:   networkMode,
 		User:          user,
 		HealthTest:    healthTest,

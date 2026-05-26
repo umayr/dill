@@ -62,6 +62,21 @@ func TestNormalizePorts_invalidSpec(t *testing.T) {
 	}
 }
 
+func TestNormalizePorts_invalidValues(t *testing.T) {
+	tests := []string{
+		"abc:80",
+		"8080:0",
+		"8080:70000",
+		"8080:80/http",
+		"not-an-ip:8080:80",
+	}
+	for _, tc := range tests {
+		if _, err := NormalizePorts([]json.RawMessage{rawStr(tc)}); err == nil {
+			t.Errorf("NormalizePorts(%q): expected error", tc)
+		}
+	}
+}
+
 // --- NormalizeVolumes ---
 
 func TestNormalizeVolumes_named(t *testing.T) {
@@ -105,6 +120,13 @@ func TestNormalizeVolumes_readOnly(t *testing.T) {
 	}
 	if len(got) != 1 || !got[0].ReadOnly {
 		t.Errorf("expected ReadOnly=true, got %+v", got[0])
+	}
+}
+
+func TestNormalizeVolumes_invalidOption(t *testing.T) {
+	_, err := NormalizeVolumes([]json.RawMessage{rawStr("/host:/container:rw")}, "")
+	if err == nil {
+		t.Error("expected error for unsupported volume option")
 	}
 }
 
