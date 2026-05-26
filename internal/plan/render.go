@@ -1,6 +1,7 @@
 package plan
 
 import (
+	"encoding/json"
 	"fmt"
 	"io"
 	"os"
@@ -73,6 +74,44 @@ func renderDiff(w io.Writer, d FieldDiff, isTTY bool, colour func(string, string
 		fmt.Fprintf(w, "%s  %s %s → %s\n", indent, field,
 			colour(d.Before, ansiRed), colour(d.After, ansiGreen))
 	}
+}
+
+// RenderJSON writes the plan as a JSON object with a "changes" array and a
+// "summary" breakdown, suitable for machine consumption.
+func RenderJSON(p *Plan, w io.Writer) error {
+	type summary struct {
+		Create   int `json:"create"`
+		Recreate int `json:"recreate"`
+		Remove   int `json:"remove"`
+		Noop     int `json:"noop"`
+	}
+	type output struct {
+		Changes []Change `json:"changes"`
+		Summary summary  `json:"summary"`
+	}
+
+	var s summary
+	for _, ch := range p.Changes {
+		switch ch.Kind {
+		case KindCreate:
+			s.Create++
+		case KindRecreate:
+			s.Recreate++
+		case KindRemove:
+			s.Remove++
+		case KindNoop:
+			s.Noop++
+		}
+	}
+
+	changes := p.Changes
+	if changes == nil {
+		changes = []Change{}
+	}
+
+	enc := json.NewEncoder(w)
+	enc.SetIndent("", "  ")
+	return enc.Encode(output{Changes: changes, Summary: s})
 }
 
 func isTerminal(w io.Writer) bool {

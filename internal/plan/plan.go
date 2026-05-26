@@ -20,20 +20,33 @@ const (
 	KindNoop                       // container exists and config matches
 )
 
+func (k ChangeKind) MarshalJSON() ([]byte, error) {
+	switch k {
+	case KindCreate:
+		return []byte(`"create"`), nil
+	case KindRecreate:
+		return []byte(`"recreate"`), nil
+	case KindRemove:
+		return []byte(`"remove"`), nil
+	default:
+		return []byte(`"noop"`), nil
+	}
+}
+
 type FieldDiff struct {
-	Field  string
-	Before string // empty when field is being added
-	After  string // empty when field is being removed
+	Field  string `json:"field"`
+	Before string `json:"before"`
+	After  string `json:"after"`
 }
 
 type Change struct {
-	Service string
-	Kind    ChangeKind
-	Diffs   []FieldDiff
+	Service string     `json:"service"`
+	Kind    ChangeKind `json:"kind"`
+	Diffs   []FieldDiff `json:"diffs"`
 }
 
 type Plan struct {
-	Changes []Change
+	Changes []Change `json:"changes"`
 }
 
 func Compute(ctx context.Context, cfg *config.DillConfig, engine orchestrator.Engine, stackName string) (*Plan, error) {
@@ -58,7 +71,7 @@ func Compute(ctx context.Context, cfg *config.DillConfig, engine orchestrator.En
 		live, err := engine.InspectConfig(ctx, d.containerName)
 		if err != nil {
 			if isNotFound(err) {
-				changes = append(changes, Change{Service: name, Kind: KindCreate})
+				changes = append(changes, Change{Service: name, Kind: KindCreate, Diffs: []FieldDiff{}})
 				continue
 			}
 			return nil, fmt.Errorf("inspect %s: %w", name, err)
@@ -89,7 +102,7 @@ func Compute(ctx context.Context, cfg *config.DillConfig, engine orchestrator.En
 
 	for _, cn := range liveNames {
 		if _, ok := desiredContainers[cn]; !ok {
-			changes = append(changes, Change{Service: cn, Kind: KindRemove})
+			changes = append(changes, Change{Service: cn, Kind: KindRemove, Diffs: []FieldDiff{}})
 		}
 	}
 

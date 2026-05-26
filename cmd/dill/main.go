@@ -46,7 +46,7 @@ func main() {
 		} else {
 			logger.Error("fatal", "err", err)
 		}
-		os.Exit(1)
+		os.Exit(2)
 	}
 }
 
@@ -115,7 +115,7 @@ Flags:
 	case cmdRestart:
 		return runRestart(ctx, *configFile, *timeout, fs.Args()[1:])
 	case cmdPs:
-		return runPs(ctx, *configFile)
+		return runPs(ctx, *configFile, fs.Args()[1:])
 	case cmdLogs:
 		return runLogs(ctx, *configFile, fs.Args()[1:])
 	case cmdPull:
@@ -125,7 +125,7 @@ Flags:
 	case cmdExec:
 		return runExec(ctx, *configFile, fs.Args()[1:])
 	case cmdPlan:
-		err := runPlan(ctx, *configFile)
+		err := runPlan(ctx, *configFile, fs.Args()[1:])
 		if errors.Is(err, errPlanHasChanges) {
 			os.Exit(1)
 		}
@@ -135,9 +135,9 @@ Flags:
 	case cmdInit:
 		return runInit(*configFile)
 	case cmdValidate:
-		return runValidate(ctx, *configFile)
+		return runValidate(ctx, *configFile, fs.Args()[1:])
 	case cmdFmt:
-		return runFmt(ctx, *configFile)
+		return runFmt(ctx, *configFile, fs.Args()[1:])
 	case cmdVersion:
 		fmt.Println(version)
 		return nil

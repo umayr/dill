@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"errors"
+	"flag"
 	"fmt"
 	"os"
 
@@ -10,7 +11,13 @@ import (
 	"github.com/umayr/dill/internal/plan"
 )
 
-func runPlan(ctx context.Context, configFile string) error {
+func runPlan(ctx context.Context, configFile string, args []string) error {
+	fs := flag.NewFlagSet("plan", flag.ContinueOnError)
+	format := fs.String("format", "text", "output format: text or json")
+	if err := fs.Parse(args); err != nil {
+		return usageError{err.Error()}
+	}
+
 	cfg, err := config.Load(ctx, configFile)
 	if err != nil {
 		return fmt.Errorf("loading config: %w", err)
@@ -28,7 +35,14 @@ func runPlan(ctx context.Context, configFile string) error {
 		return fmt.Errorf("computing plan: %w", err)
 	}
 
-	plan.Render(result, os.Stdout)
+	switch *format {
+	case "json":
+		if err := plan.RenderJSON(result, os.Stdout); err != nil {
+			return fmt.Errorf("rendering plan: %w", err)
+		}
+	default:
+		plan.Render(result, os.Stdout)
+	}
 
 	for _, ch := range result.Changes {
 		if ch.Kind != plan.KindNoop {

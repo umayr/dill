@@ -11,6 +11,13 @@ import (
 // ErrNotFound is returned by InspectConfig when the named container does not exist.
 var ErrNotFound = errors.New("container not found")
 
+// Dill attaches the following labels to every container it manages.
+// These are stable API — external tools (e.g. UIs) may rely on them.
+//
+//	dill.managed=true          present on every dill-managed container
+//	dill.stack=<stackName>     associates the container with a named stack
+//	dill.service=<name>        logical service name within the stack
+
 // LiveConfig holds the effective configuration of a running or stopped container,
 // extracted from the engine for comparison against desired state.
 type LiveConfig struct {
@@ -31,12 +38,12 @@ type LiveConfig struct {
 
 // ContainerStatus holds runtime information about a running or stopped container.
 type ContainerStatus struct {
-	Name   string   // container name (without leading /)
-	ID     string   // short ID (12 chars)
-	State  string   // "running", "exited", "paused", ...
-	Status string   // human-readable, e.g. "Up 2 hours" or "Exited (0) 3 minutes ago"
-	Image  string   // image name
-	Ports  []string // e.g. ["0.0.0.0:8080->80/tcp"]
+	Name   string   `json:"name"`   // container name (without leading /)
+	ID     string   `json:"id"`     // short ID (12 chars)
+	State  string   `json:"state"`  // "running", "exited", "paused", ...
+	Status string   `json:"status"` // human-readable, e.g. "Up 2 hours"
+	Image  string   `json:"image"`  // image name
+	Ports  []string `json:"ports"`  // e.g. ["0.0.0.0:8080->80/tcp"]
 }
 
 // Engine defines the methods required by Dill to manage containers.
