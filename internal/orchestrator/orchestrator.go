@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"io"
+	"time"
 
 	"github.com/umayr/dill/internal/config"
 )
@@ -29,13 +30,17 @@ type LiveConfig struct {
 	RestartPolicy string
 	UserLabels    map[string]string // excludes dill.* system labels
 	SystemLabels  map[string]string // dill.* system labels
-	NetworkMode   string
-	User          string
-	HealthTest    []string
-	Command       []string
-	CapAdd        []string
-	Init          bool
-	Cpuset        string
+	NetworkMode      string
+	User             string
+	HealthTest       []string
+	HealthInterval   time.Duration
+	HealthTimeout    time.Duration
+	HealthRetries    int
+	HealthStartPeriod time.Duration
+	Command          []string
+	CapAdd           []string
+	Init             bool
+	Cpuset           string
 }
 
 // ContainerStatus holds runtime information about a running or stopped container.

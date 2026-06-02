@@ -7,6 +7,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 
 	nettypes "github.com/containers/common/libnetwork/types"
 	"github.com/containers/image/v5/manifest"
@@ -35,7 +36,8 @@ func NewPodmanEngine(ctx context.Context, socket string) (*PodmanEngine, error) 
 
 func (p *PodmanEngine) PullImage(ctx context.Context, img string, w io.Writer) error {
 	logger.Debug("pulling image", "image", img)
-	_, err := images.Pull(p.conn, img, nil)
+	opts := new(images.PullOptions).WithProgressWriter(w)
+	_, err := images.Pull(p.conn, img, opts)
 	if err != nil {
 		return fmt.Errorf("pull %s: %w", img, err)
 	}
@@ -126,15 +128,19 @@ func (p *PodmanEngine) StartService(ctx context.Context, name string, svc *confi
 	}
 	s.CapAdd = svc.CapAdd
 	if len(svc.Devices) > 0 {
-		logger.Warn("device mapping in Podman requires host device lookup; devices will be passed as-is",
+		logger.Warn("device mapping in Podman uses the host device path; Podman looks up the device on the host by that path",
 			"service", name)
 		for _, d := range svc.Devices {
 			parts := strings.SplitN(d, ":", 2)
-			dev := specs.LinuxDevice{Path: parts[0]}
-			if len(parts) == 2 {
-				dev.Path = parts[1]
+			hostPath := parts[0]
+			if len(parts) == 2 && parts[1] != hostPath {
+				logger.Warn("Podman does not support remapping device paths; host path used for both host and container",
+					"host", hostPath, "container", parts[1], "service", name)
 			}
-			s.Devices = append(s.Devices, dev)
+			// specs.LinuxDevice.Path is the container path; Podman resolves the
+			// host device from that same path. Using the host path here ensures
+			// Podman can locate the device on the host.
+			s.Devices = append(s.Devices, specs.LinuxDevice{Path: hostPath})
 		}
 	}
 	if svc.Cpuset != "" {
@@ -384,8 +390,14 @@ func (p *PodmanEngine) InspectConfig(ctx context.Context, name string) (*LiveCon
 	}
 
 	var healthTest []string
+	var healthInterval, healthTimeout, healthStartPeriod time.Duration
+	var healthRetries int
 	if data.Config != nil && data.Config.Healthcheck != nil {
 		healthTest = data.Config.Healthcheck.Test
+		healthInterval = data.Config.Healthcheck.Interval
+		healthTimeout = data.Config.Healthcheck.Timeout
+		healthRetries = data.Config.Healthcheck.Retries
+		healthStartPeriod = data.Config.Healthcheck.StartPeriod
 	}
 
 	restartPolicy := ""
@@ -408,20 +420,24 @@ func (p *PodmanEngine) InspectConfig(ctx context.Context, name string) (*LiveCon
 	}
 
 	return &LiveConfig{
-		Image:         data.ImageName,
-		Env:           env,
-		Ports:         ports,
-		Volumes:       volumes,
-		RestartPolicy: restartPolicy,
-		UserLabels:    userLabels,
-		SystemLabels:  systemLabels,
-		NetworkMode:   networkMode,
-		User:          user,
-		HealthTest:    healthTest,
-		Command:       command,
-		CapAdd:        capAdd,
-		Init:          init,
-		Cpuset:        cpuset,
+		Image:             data.ImageName,
+		Env:               env,
+		Ports:             ports,
+		Volumes:           volumes,
+		RestartPolicy:     restartPolicy,
+		UserLabels:        userLabels,
+		SystemLabels:      systemLabels,
+		NetworkMode:       networkMode,
+		User:              user,
+		HealthTest:        healthTest,
+		HealthInterval:    healthInterval,
+		HealthTimeout:     healthTimeout,
+		HealthRetries:     healthRetries,
+		HealthStartPeriod: healthStartPeriod,
+		Command:           command,
+		CapAdd:            capAdd,
+		Init:              init,
+		Cpuset:            cpuset,
 	}, nil
 }
 

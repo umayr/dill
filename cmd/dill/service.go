@@ -3,8 +3,11 @@ package main
 import (
 	"context"
 	"fmt"
+	"os"
+	"os/signal"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 
 	"github.com/umayr/dill/internal/config"
@@ -27,8 +30,11 @@ func runStop(ctx context.Context, configFile string, services []string) error {
 	var names []string
 	if len(services) > 0 {
 		for _, svc := range services {
+			if _, ok := cfg.Services[svc]; !ok {
+				return fmt.Errorf("service %q is not defined in the config", svc)
+			}
 			containerName := sn + "_" + svc
-			if s, ok := cfg.Services[svc]; ok && s.ContainerName != "" {
+			if s := cfg.Services[svc]; s.ContainerName != "" {
 				containerName = s.ContainerName
 			}
 			names = append(names, containerName)
@@ -45,6 +51,8 @@ func runStop(ctx context.Context, configFile string, services []string) error {
 	}
 
 	for _, name := range names {
+		display := strings.TrimPrefix(name, sn+"_")
+		printProgress(display, "stopping")
 		if err := engine.StopService(ctx, name); err != nil {
 			logger.Warn("stop failed", "name", name, "err", err)
 		}
@@ -67,7 +75,11 @@ func runStart(ctx context.Context, configFile string, timeout time.Duration, ser
 
 	svcs := cfg.Services
 	if len(services) > 0 {
-		svcs = filterServices(cfg.Services, services)
+		filtered, err := filterServices(cfg.Services, services)
+		if err != nil {
+			return err
+		}
+		svcs = filtered
 	}
 
 	g, err := dag.Build(svcs)
@@ -84,6 +96,9 @@ func runStart(ctx context.Context, configFile string, timeout time.Duration, ser
 
 // runRestart stops all containers concurrently, then starts them in dependency order.
 func runRestart(ctx context.Context, configFile string, timeout time.Duration, services []string) error {
+	ctx, stop := signal.NotifyContext(ctx, os.Interrupt, syscall.SIGTERM)
+	defer stop()
+
 	cfg, err := config.Load(ctx, configFile)
 	if err != nil {
 		return fmt.Errorf("loading config: %w", err)
@@ -98,8 +113,11 @@ func runRestart(ctx context.Context, configFile string, timeout time.Duration, s
 	var names []string
 	if len(services) > 0 {
 		for _, svc := range services {
+			if _, ok := cfg.Services[svc]; !ok {
+				return fmt.Errorf("service %q is not defined in the config", svc)
+			}
 			containerName := sn + "_" + svc
-			if s, ok := cfg.Services[svc]; ok && s.ContainerName != "" {
+			if s := cfg.Services[svc]; s.ContainerName != "" {
 				containerName = s.ContainerName
 			}
 			names = append(names, containerName)
@@ -132,7 +150,11 @@ func runRestart(ctx context.Context, configFile string, timeout time.Duration, s
 
 	svcs := cfg.Services
 	if len(services) > 0 {
-		svcs = filterServices(cfg.Services, services)
+		filtered, err := filterServices(cfg.Services, services)
+		if err != nil {
+			return err
+		}
+		svcs = filtered
 	}
 
 	g, err := dag.Build(svcs)

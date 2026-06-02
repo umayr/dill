@@ -88,12 +88,24 @@ func loadEnvFile(path string) error {
 		if line == "" || strings.HasPrefix(line, "#") {
 			continue
 		}
+		// Strip "export " prefix — common in shell-sourced .env files.
+		line = strings.TrimSpace(strings.TrimPrefix(line, "export "))
+
 		key, val, ok := strings.Cut(line, "=")
 		if !ok {
 			continue
 		}
 		key = strings.TrimSpace(key)
 		val = strings.TrimSpace(val)
+
+		// Strip inline comments for unquoted values (KEY=value # comment).
+		if len(val) == 0 || (val[0] != '"' && val[0] != '\'') {
+			if idx := strings.Index(val, " #"); idx != -1 {
+				val = strings.TrimSpace(val[:idx])
+			}
+		}
+
+		// Strip matching outer quotes.
 		if len(val) >= 2 && ((val[0] == '"' && val[len(val)-1] == '"') ||
 			(val[0] == '\'' && val[len(val)-1] == '\'')) {
 			val = val[1 : len(val)-1]

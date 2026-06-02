@@ -6,6 +6,7 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"sort"
 	"strings"
 	"text/tabwriter"
 
@@ -35,6 +36,7 @@ func runPs(ctx context.Context, configFile string, args []string) error {
 	if err != nil {
 		return fmt.Errorf("listing stack: %w", err)
 	}
+	sort.Strings(names)
 
 	var statuses []*orchestrator.ContainerStatus
 	for _, name := range names {

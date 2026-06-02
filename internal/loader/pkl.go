@@ -38,23 +38,20 @@ var (
 // FindPkl returns the path to the pkl binary, downloading and caching it on first call.
 // Subsequent calls return the cached result immediately. Errors are NOT cached —
 // a transient download failure allows the next call to retry.
+// The mutex is held for the entire resolve to prevent concurrent downloads.
 func FindPkl(ctx context.Context) (string, error) {
 	pklMu.Lock()
+	defer pklMu.Unlock()
+
 	if cachedBin != "" {
-		bin := cachedBin
-		pklMu.Unlock()
-		return bin, nil
+		return cachedBin, nil
 	}
-	pklMu.Unlock()
 
 	bin, err := resolve(ctx)
 	if err != nil {
 		return "", err
 	}
-
-	pklMu.Lock()
 	cachedBin = bin
-	pklMu.Unlock()
 	return bin, nil
 }
 

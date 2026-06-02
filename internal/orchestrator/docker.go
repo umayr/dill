@@ -368,27 +368,37 @@ func (d *DockerEngine) InspectConfig(ctx context.Context, name string) (*LiveCon
 	}
 
 	var healthTest []string
+	var healthInterval, healthTimeout, healthStartPeriod time.Duration
+	var healthRetries int
 	if info.Config.Healthcheck != nil {
 		healthTest = info.Config.Healthcheck.Test
+		healthInterval = info.Config.Healthcheck.Interval
+		healthTimeout = info.Config.Healthcheck.Timeout
+		healthRetries = info.Config.Healthcheck.Retries
+		healthStartPeriod = info.Config.Healthcheck.StartPeriod
 	}
 
 	init := info.HostConfig.Init != nil && *info.HostConfig.Init
 
 	return &LiveConfig{
-		Image:         info.Config.Image,
-		Env:           env,
-		Ports:         ports,
-		Volumes:       volumes,
-		RestartPolicy: string(info.HostConfig.RestartPolicy.Name),
-		UserLabels:    userLabels,
-		SystemLabels:  systemLabels,
-		NetworkMode:   string(info.HostConfig.NetworkMode),
-		User:          info.Config.User,
-		HealthTest:    healthTest,
-		Command:       []string(info.Config.Cmd),
-		CapAdd:        []string(info.HostConfig.CapAdd),
-		Init:          init,
-		Cpuset:        info.HostConfig.Resources.CpusetCpus,
+		Image:             info.Config.Image,
+		Env:               env,
+		Ports:             ports,
+		Volumes:           volumes,
+		RestartPolicy:     string(info.HostConfig.RestartPolicy.Name),
+		UserLabels:        userLabels,
+		SystemLabels:      systemLabels,
+		NetworkMode:       string(info.HostConfig.NetworkMode),
+		User:              info.Config.User,
+		HealthTest:        healthTest,
+		HealthInterval:    healthInterval,
+		HealthTimeout:     healthTimeout,
+		HealthRetries:     healthRetries,
+		HealthStartPeriod: healthStartPeriod,
+		Command:           []string(info.Config.Cmd),
+		CapAdd:            []string(info.HostConfig.CapAdd),
+		Init:              init,
+		Cpuset:            info.HostConfig.Resources.CpusetCpus,
 	}, nil
 }
 

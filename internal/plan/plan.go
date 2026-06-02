@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"sort"
+	"strconv"
 	"strings"
 
 	"github.com/umayr/dill/internal/config"
@@ -134,7 +135,11 @@ func diffConfigs(name string, svc *config.Service, live *orchestrator.LiveConfig
 		diffs = append(diffs, FieldDiff{Field: "image", Before: live.Image, After: svc.Image})
 	}
 
-	// env — only keys defined in desired config
+	// env — only keys defined in desired config are checked.
+	// Env vars present in the live container but absent from desired config are NOT
+	// flagged: the image's own ENV instructions inject vars (PATH, HOME, etc.) that
+	// appear in inspect output but were never set by dill and cannot be removed by
+	// recreating the container.
 	for k, want := range svc.Environment {
 		got := live.Env[k]
 		if want != got {
@@ -179,7 +184,7 @@ func diffConfigs(name string, svc *config.Service, live *orchestrator.LiveConfig
 		diffs = append(diffs, FieldDiff{Field: "user", Before: live.User, After: svc.User})
 	}
 
-	// health_test
+	// health_test and timing
 	if svc.HealthCheck != nil {
 		test, err := config.NormalizeHealthCheckTest(svc.HealthCheck.Test)
 		if err == nil {
@@ -188,6 +193,29 @@ func diffConfigs(name string, svc *config.Service, live *orchestrator.LiveConfig
 			if wantHealth != gotHealth {
 				diffs = append(diffs, FieldDiff{Field: "health_test", Before: gotHealth, After: wantHealth})
 			}
+		}
+		// Only diff timing fields that the user explicitly set (non-nil pointer means explicitly configured).
+		if svc.HealthCheck.Interval != nil {
+			if want, err := config.ParsePklDuration(svc.HealthCheck.Interval); err == nil && want != live.HealthInterval {
+				diffs = append(diffs, FieldDiff{Field: "health_interval", Before: live.HealthInterval.String(), After: want.String()})
+			}
+		}
+		if svc.HealthCheck.Timeout != nil {
+			if want, err := config.ParsePklDuration(svc.HealthCheck.Timeout); err == nil && want != live.HealthTimeout {
+				diffs = append(diffs, FieldDiff{Field: "health_timeout", Before: live.HealthTimeout.String(), After: want.String()})
+			}
+		}
+		if svc.HealthCheck.StartPeriod != nil {
+			if want, err := config.ParsePklDuration(svc.HealthCheck.StartPeriod); err == nil && want != live.HealthStartPeriod {
+				diffs = append(diffs, FieldDiff{Field: "health_start_period", Before: live.HealthStartPeriod.String(), After: want.String()})
+			}
+		}
+		if svc.HealthCheck.Retries != nil && *svc.HealthCheck.Retries != live.HealthRetries {
+			diffs = append(diffs, FieldDiff{
+				Field:  "health_retries",
+				Before: strconv.Itoa(live.HealthRetries),
+				After:  strconv.Itoa(*svc.HealthCheck.Retries),
+			})
 		}
 	} else if len(live.HealthTest) > 0 {
 		diffs = append(diffs, FieldDiff{Field: "health_test", Before: strings.Join(live.HealthTest, " "), After: ""})
@@ -250,7 +278,11 @@ func diffConfigs(name string, svc *config.Service, live *orchestrator.LiveConfig
 
 func isSensitiveKey(key string) bool {
 	k := strings.ToUpper(key)
-	for _, marker := range []string{"PASSWORD", "PASSWD", "SECRET", "TOKEN", "API_KEY", "ACCESS_KEY", "PRIVATE_KEY", "CREDENTIAL"} {
+	for _, marker := range []string{
+		"PASSWORD", "PASSWD", "SECRET", "TOKEN",
+		"API_KEY", "APIKEY", "ACCESS_KEY", "PRIVATE_KEY",
+		"CREDENTIAL", "AUTH", "CERT", "DATABASE_URL", "DB_URL", "DSN",
+	} {
 		if strings.Contains(k, marker) {
 			return true
 		}

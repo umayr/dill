@@ -31,7 +31,7 @@ func runConfig(ctx context.Context, configFile string, args []string) error {
 
 	switch *format {
 	case "json":
-		// already marshalled
+		out = append(out, '\n')
 	case "yaml":
 		var v interface{}
 		if err := json.Unmarshal(out, &v); err != nil {

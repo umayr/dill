@@ -26,8 +26,11 @@ func runDown(ctx context.Context, configFile string, services []string) error {
 	// without tearing down the network.
 	if len(services) > 0 {
 		for _, svc := range services {
+			if _, ok := cfg.Services[svc]; !ok {
+				return fmt.Errorf("service %q is not defined in the config", svc)
+			}
 			containerName := sn + "_" + svc
-			if s, ok := cfg.Services[svc]; ok && s.ContainerName != "" {
+			if s := cfg.Services[svc]; s.ContainerName != "" {
 				containerName = s.ContainerName
 			}
 			printProgress(svc, "stopping")

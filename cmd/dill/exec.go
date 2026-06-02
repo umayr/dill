@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -10,7 +9,6 @@ import (
 	"golang.org/x/term"
 
 	"github.com/umayr/dill/internal/config"
-	"github.com/umayr/dill/internal/orchestrator"
 )
 
 func runExec(ctx context.Context, configFile string, args []string) error {
@@ -34,12 +32,14 @@ func runExec(ctx context.Context, configFile string, args []string) error {
 	}
 	defer engine.Close()
 
-	// Resolve container name: try bare name first, fall back to stack-prefixed.
-	containerName := svc
-	if _, err := engine.ServiceStatus(ctx, svc); err != nil {
-		if !errors.Is(err, orchestrator.ErrNotFound) {
-			return fmt.Errorf("looking up service %q: %w", svc, err)
-		}
+	// Resolve container name via config so we honour custom container_name and
+	// fail fast if the service doesn't exist instead of hitting a random container.
+	s, ok := cfg.Services[svc]
+	if !ok {
+		return fmt.Errorf("service %q is not defined in the config", svc)
+	}
+	containerName := s.ContainerName
+	if containerName == "" {
 		containerName = sn + "_" + svc
 	}
 

@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"errors"
 	"flag"
 	"fmt"
 	"os"
@@ -12,7 +11,6 @@ import (
 
 	"github.com/umayr/dill/internal/config"
 	"github.com/umayr/dill/internal/log"
-	"github.com/umayr/dill/internal/orchestrator"
 )
 
 func runLogs(ctx context.Context, configFile string, args []string) error {
@@ -35,16 +33,20 @@ func runLogs(ctx context.Context, configFile string, args []string) error {
 	defer engine.Close()
 
 	// If a service name is provided, show only that container.
+	// Resolve via config so we use the correct container name regardless of custom
+	// container_name settings, and fail fast if the service doesn't exist.
 	var names []string
 	if lfs.NArg() > 0 {
-		svc := lfs.Arg(0)
-		names = []string{svc}
-		if _, err := engine.ServiceStatus(ctx, svc); err != nil {
-			if !errors.Is(err, orchestrator.ErrNotFound) {
-				return fmt.Errorf("looking up service %q: %w", svc, err)
-			}
-			names = []string{sn + "_" + svc}
+		svcName := lfs.Arg(0)
+		svc, ok := cfg.Services[svcName]
+		if !ok {
+			return fmt.Errorf("service %q is not defined in the config", svcName)
 		}
+		cn := svc.ContainerName
+		if cn == "" {
+			cn = sn + "_" + svcName
+		}
+		names = []string{cn}
 	} else {
 		names, err = engine.ListStack(ctx, sn)
 		if err != nil {

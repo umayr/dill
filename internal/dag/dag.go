@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"strings"
 	"sync"
 	"time"
 
@@ -140,9 +141,12 @@ func (g *Graph) Run(ctx context.Context, engine orchestrator.Engine, stackName s
 			switch actions[n.name] {
 			case ActionNoop:
 				emit("unchanged")
-				if err := engine.StartExisting(egCtx, containerName); err != nil {
-					logger.Debug("start existing returned error (may already be running)",
-						"service", n.name, "err", err)
+				// Only start if the container is stopped — avoids a redundant API
+				// call (and noisy debug log) when the container is already running.
+				if running, _ := engine.IsReady(egCtx, containerName, false); !running {
+					if err := engine.StartExisting(egCtx, containerName); err != nil {
+						logger.Debug("start existing returned error", "service", n.name, "err", err)
+					}
 				}
 
 			case ActionStart:
@@ -296,6 +300,7 @@ func maybePull(ctx context.Context, engine orchestrator.Engine, svc *config.Serv
 }
 
 // detectCycles runs DFS from every node and returns an error on first cycle found.
+// The error message includes the full cycle path (e.g. "a → b → a").
 func detectCycles(g *Graph) error {
 	const (
 		unvisited = 0
@@ -303,6 +308,7 @@ func detectCycles(g *Graph) error {
 		visited   = 2
 	)
 	state := make(map[string]int, len(g.nodes))
+	var path []string // current DFS stack for cycle reporting
 
 	var dfs func(n *node) error
 	dfs = func(n *node) error {
@@ -310,14 +316,23 @@ func detectCycles(g *Graph) error {
 		case visited:
 			return nil
 		case visiting:
+			// Locate where the cycle starts in the current path.
+			for i, s := range path {
+				if s == n.name {
+					cycle := append(path[i:], n.name)
+					return fmt.Errorf("dependency cycle: %s", strings.Join(cycle, " → "))
+				}
+			}
 			return fmt.Errorf("cycle detected involving service %q", n.name)
 		}
 		state[n.name] = visiting
+		path = append(path, n.name)
 		for _, dep := range n.deps {
 			if err := dfs(dep); err != nil {
 				return err
 			}
 		}
+		path = path[:len(path)-1]
 		state[n.name] = visited
 		return nil
 	}

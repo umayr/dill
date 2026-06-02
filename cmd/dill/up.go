@@ -33,7 +33,11 @@ func runUp(ctx context.Context, configFile string, timeout time.Duration, forceR
 
 	// If specific services are named, restrict to those plus their transitive deps.
 	if len(services) > 0 {
-		cfg.Services = filterServices(cfg.Services, services)
+		filtered, err := filterServices(cfg.Services, services)
+		if err != nil {
+			return err
+		}
+		cfg.Services = filtered
 	}
 
 	engine, err := newEngine(ctx, cfg.Engine)
@@ -98,7 +102,13 @@ func runUp(ctx context.Context, configFile string, timeout time.Duration, forceR
 
 // filterServices returns a copy of services containing only the named services
 // and their transitive dependencies (BFS over DependsOn).
-func filterServices(all map[string]*config.Service, names []string) map[string]*config.Service {
+// Returns an error if any requested name is not defined in the config.
+func filterServices(all map[string]*config.Service, names []string) (map[string]*config.Service, error) {
+	for _, name := range names {
+		if _, ok := all[name]; !ok {
+			return nil, fmt.Errorf("service %q is not defined in the config", name)
+		}
+	}
 	included := make(map[string]bool)
 	queue := append([]string{}, names...)
 	for len(queue) > 0 {
@@ -118,5 +128,5 @@ func filterServices(all map[string]*config.Service, names []string) map[string]*
 			out[name] = svc
 		}
 	}
-	return out
+	return out, nil
 }
