@@ -9,23 +9,30 @@ import (
 	"strings"
 	"text/tabwriter"
 
-	"github.com/umayr/dill/internal/config"
 	"github.com/umayr/dill/internal/orchestrator"
 )
 
-func runPs(ctx context.Context, configFile string, args []string) error {
+func runPs(ctx context.Context, opts commandOptions, args []string) error {
 	fs := flag.NewFlagSet("ps", flag.ContinueOnError)
+	addConfigFlags(fs, &opts)
 	format := fs.String("format", "text", "output format: text or json")
+	all := fs.Bool("all", false, "include configured services with missing containers")
 	if err := fs.Parse(args); err != nil {
 		return usageError{err.Error()}
 	}
-
-	cfg, err := config.Load(ctx, configFile)
-	if err != nil {
-		return fmt.Errorf("loading config: %w", err)
+	if err := validateFormat(*format, "text", "json"); err != nil {
+		return err
 	}
-	sn := resolveStackName(cfg, configFile)
-	engine, err := newEngine(ctx, cfg.Engine)
+	if err := ensureNoArgs(fs.Args(), "ps"); err != nil {
+		return err
+	}
+
+	cfg, err := loadConfig(ctx, opts)
+	if err != nil {
+		return err
+	}
+	sn := resolveStackNameWithOptions(cfg, opts)
+	engine, err := openEngine(ctx, cfg)
 	if err != nil {
 		return err
 	}
@@ -43,6 +50,24 @@ func runPs(ctx context.Context, configFile string, args []string) error {
 			cs = &orchestrator.ContainerStatus{Name: name, State: "error", Status: err.Error()}
 		}
 		statuses = append(statuses, cs)
+	}
+	if *all {
+		seen := make(map[string]bool, len(statuses))
+		for _, cs := range statuses {
+			seen[cs.Name] = true
+		}
+		for svcName, svc := range cfg.Services {
+			containerName := serviceContainerName(sn, svcName, svc)
+			if seen[containerName] {
+				continue
+			}
+			statuses = append(statuses, &orchestrator.ContainerStatus{
+				Name:   containerName,
+				State:  "missing",
+				Status: "not created",
+				Image:  svc.Image,
+			})
+		}
 	}
 
 	switch *format {

@@ -302,6 +302,40 @@ func (d *DockerEngine) ListStack(ctx context.Context, stackName string) ([]strin
 	return names, nil
 }
 
+func (d *DockerEngine) ListStacks(ctx context.Context) ([]StackStatus, error) {
+	f := filters.NewArgs(filters.Arg("label", "dill.managed=true"))
+	cs, err := d.cli.ContainerList(ctx, container.ListOptions{
+		All:     true,
+		Filters: f,
+	})
+	if err != nil {
+		return nil, err
+	}
+	byName := make(map[string]*StackStatus)
+	for _, c := range cs {
+		name := c.Labels["dill.stack"]
+		if name == "" {
+			continue
+		}
+		st := byName[name]
+		if st == nil {
+			st = &StackStatus{Name: name, Engine: "docker"}
+			byName[name] = st
+		}
+		st.Containers++
+		if c.State == "running" {
+			st.Running++
+		} else {
+			st.Stopped++
+		}
+	}
+	out := make([]StackStatus, 0, len(byName))
+	for _, st := range byName {
+		out = append(out, *st)
+	}
+	return out, nil
+}
+
 func (d *DockerEngine) InspectConfig(ctx context.Context, name string) (*LiveConfig, error) {
 	info, err := d.cli.ContainerInspect(ctx, name)
 	if err != nil {
@@ -434,16 +468,18 @@ func (d *DockerEngine) ServiceStatus(ctx context.Context, name string) (*Contain
 	}, nil
 }
 
-func (d *DockerEngine) Logs(ctx context.Context, name string, follow bool, tail int, w io.Writer) error {
+func (d *DockerEngine) Logs(ctx context.Context, name string, opts LogOptions, w io.Writer) error {
 	tailStr := "all"
-	if tail > 0 {
-		tailStr = strconv.Itoa(tail)
+	if opts.Tail > 0 {
+		tailStr = strconv.Itoa(opts.Tail)
 	}
 	rc, err := d.cli.ContainerLogs(ctx, name, container.LogsOptions{
 		ShowStdout: true,
 		ShowStderr: true,
-		Follow:     follow,
+		Follow:     opts.Follow,
 		Tail:       tailStr,
+		Since:      opts.Since,
+		Timestamps: opts.Timestamps,
 	})
 	if err != nil {
 		return fmt.Errorf("logs %s: %w", name, err)

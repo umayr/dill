@@ -236,6 +236,43 @@ func (p *PodmanEngine) ListStack(ctx context.Context, stackName string) ([]strin
 	return names, nil
 }
 
+func (p *PodmanEngine) ListStacks(ctx context.Context) ([]StackStatus, error) {
+	filter := map[string][]string{
+		"label": {"dill.managed=true"},
+	}
+	all := true
+	list, err := containers.List(p.conn, &containers.ListOptions{
+		All:     &all,
+		Filters: filter,
+	})
+	if err != nil {
+		return nil, err
+	}
+	byName := make(map[string]*StackStatus)
+	for _, c := range list {
+		name := c.Labels["dill.stack"]
+		if name == "" {
+			continue
+		}
+		st := byName[name]
+		if st == nil {
+			st = &StackStatus{Name: name, Engine: "podman"}
+			byName[name] = st
+		}
+		st.Containers++
+		if c.State == "running" {
+			st.Running++
+		} else {
+			st.Stopped++
+		}
+	}
+	out := make([]StackStatus, 0, len(byName))
+	for _, st := range byName {
+		out = append(out, *st)
+	}
+	return out, nil
+}
+
 func (p *PodmanEngine) StartExisting(ctx context.Context, name string) error {
 	err := containers.Start(p.conn, name, nil)
 	if err != nil && strings.Contains(err.Error(), "no such container") {
@@ -278,16 +315,22 @@ func (p *PodmanEngine) ServiceStatus(ctx context.Context, name string) (*Contain
 	}, nil
 }
 
-func (p *PodmanEngine) Logs(ctx context.Context, name string, follow bool, tail int, w io.Writer) error {
+func (p *PodmanEngine) Logs(ctx context.Context, name string, logOpts LogOptions, w io.Writer) error {
 	tailStr := "all"
-	if tail > 0 {
-		tailStr = strconv.Itoa(tail)
+	if logOpts.Tail > 0 {
+		tailStr = strconv.Itoa(logOpts.Tail)
 	}
 	opts := new(containers.LogOptions).
-		WithFollow(follow).
+		WithFollow(logOpts.Follow).
 		WithTail(tailStr).
 		WithStdout(true).
 		WithStderr(true)
+	if logOpts.Since != "" {
+		opts.WithSince(logOpts.Since)
+	}
+	if logOpts.Timestamps {
+		opts.WithTimestamps(true)
+	}
 
 	stdoutCh := make(chan string, 64)
 	stderrCh := make(chan string, 64)

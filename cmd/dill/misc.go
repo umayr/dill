@@ -14,30 +14,52 @@ import (
 	"github.com/umayr/dill/internal/loader"
 )
 
-func runInit(configFile string) error {
-	if _, err := os.Stat(configFile); err == nil {
-		return fmt.Errorf("%s already exists", configFile)
+func runInit(opts commandOptions, args []string) error {
+	fs := flag.NewFlagSet("init", flag.ContinueOnError)
+	addFileFlag(fs, &opts)
+	addActionFlags(fs, &opts)
+	if err := fs.Parse(args); err != nil {
+		return usageError{err.Error()}
 	}
-	if err := os.WriteFile(configFile, []byte(starterTemplate), 0644); err != nil {
-		return fmt.Errorf("writing %s: %w", configFile, err)
+	if err := ensureNoArgs(fs.Args(), "init"); err != nil {
+		return err
 	}
-	fmt.Printf("created %s\n", configFile)
+	if opts.DryRun {
+		fmt.Printf("would create %s\n", opts.ConfigFile)
+		return nil
+	}
+	if _, err := os.Stat(opts.ConfigFile); err == nil {
+		return fmt.Errorf("%s already exists", opts.ConfigFile)
+	}
+	if err := os.WriteFile(opts.ConfigFile, []byte(starterTemplate), 0644); err != nil {
+		return fmt.Errorf("writing %s: %w", opts.ConfigFile, err)
+	}
+	if !opts.Quiet {
+		fmt.Printf("created %s\n", opts.ConfigFile)
+	}
 	return nil
 }
 
-func runValidate(ctx context.Context, configFile string, args []string) error {
+func runValidate(ctx context.Context, opts commandOptions, args []string) error {
 	fs := flag.NewFlagSet("validate", flag.ContinueOnError)
+	addFileFlag(fs, &opts)
 	format := fs.String("format", "text", "output format: text or json")
 	stdin := fs.Bool("stdin", false, "read config from stdin instead of file")
 	if err := fs.Parse(args); err != nil {
 		return usageError{err.Error()}
 	}
+	if err := validateFormat(*format, "text", "json"); err != nil {
+		return err
+	}
+	if err := ensureNoArgs(fs.Args(), "validate"); err != nil {
+		return err
+	}
 
-	target := configFile
+	target := opts.ConfigFile
 	if *stdin {
-		abs, err := filepath.Abs(configFile)
+		abs, err := filepath.Abs(opts.ConfigFile)
 		if err != nil {
-			abs = configFile
+			abs = opts.ConfigFile
 		}
 		tmp, err := os.CreateTemp(filepath.Dir(abs), "dill-validate-*.pkl")
 		if err != nil {
@@ -66,15 +88,20 @@ func runValidate(ctx context.Context, configFile string, args []string) error {
 	if validateErr != nil {
 		return validateErr
 	}
-	fmt.Printf("%s is valid\n", configFile)
+	fmt.Printf("%s is valid\n", opts.ConfigFile)
 	return nil
 }
 
-func runFmt(ctx context.Context, configFile string, args []string) error {
+func runFmt(ctx context.Context, opts commandOptions, args []string) error {
 	fs := flag.NewFlagSet("fmt", flag.ContinueOnError)
+	addFileFlag(fs, &opts)
+	addActionFlags(fs, &opts)
 	stdin := fs.Bool("stdin", false, "read config from stdin, write formatted output to stdout")
 	if err := fs.Parse(args); err != nil {
 		return usageError{err.Error()}
+	}
+	if err := ensureNoArgs(fs.Args(), "fmt"); err != nil {
+		return err
 	}
 
 	bin, err := loader.FindPkl(ctx)
@@ -109,12 +136,19 @@ func runFmt(ctx context.Context, configFile string, args []string) error {
 		return err
 	}
 
-	cmd := exec.CommandContext(ctx, bin, "format", "-w", configFile)
+	if opts.DryRun {
+		fmt.Printf("would format %s\n", opts.ConfigFile)
+		return nil
+	}
+
+	cmd := exec.CommandContext(ctx, bin, "format", "-w", opts.ConfigFile)
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	if err := cmd.Run(); err != nil {
 		return fmt.Errorf("pkl format: %w", err)
 	}
-	fmt.Printf("formatted %s\n", configFile)
+	if !opts.Quiet {
+		fmt.Printf("formatted %s\n", opts.ConfigFile)
+	}
 	return nil
 }
