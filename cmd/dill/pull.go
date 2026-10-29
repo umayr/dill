@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"flag"
 	"fmt"
 	"os"
 	"sync"
@@ -9,23 +10,34 @@ import (
 	"golang.org/x/sync/errgroup"
 	"golang.org/x/term"
 
-	"github.com/umayr/dill/internal/config"
 	"github.com/umayr/dill/internal/log"
 )
 
-func runPull(ctx context.Context, configFile string) error {
-	cfg, err := config.Load(ctx, configFile)
+func runPull(ctx context.Context, opts commandOptions, args []string) error {
+	fs := flag.NewFlagSet("pull", flag.ContinueOnError)
+	addConfigFlags(fs, &opts)
+	addActionFlags(fs, &opts)
+	if err := fs.Parse(args); err != nil {
+		return usageError{err.Error()}
+	}
+	if err := ensureNoArgs(fs.Args(), "pull"); err != nil {
+		return err
+	}
+	cfg, err := loadConfig(ctx, opts)
 	if err != nil {
-		return fmt.Errorf("loading config: %w", err)
+		return err
 	}
 
-	engine, err := newEngine(ctx, cfg.Engine)
+	engine, err := openEngine(ctx, cfg)
 	if err != nil {
 		return fmt.Errorf("initialising engine: %w", err)
 	}
 	defer engine.Close()
 
 	isTTY := term.IsTerminal(int(os.Stdout.Fd()))
+	if opts.Quiet {
+		isTTY = false
+	}
 	var pullMu sync.Mutex
 	mkSink := newMakePullSink(isTTY, &pullMu)
 

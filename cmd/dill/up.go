@@ -2,13 +2,13 @@ package main
 
 import (
 	"context"
+	"flag"
 	"fmt"
 	"os"
 	"os/signal"
 	"strings"
 	"sync"
 	"syscall"
-	"time"
 
 	"golang.org/x/term"
 
@@ -18,31 +18,54 @@ import (
 	"github.com/umayr/dill/internal/plan"
 )
 
-func runUp(ctx context.Context, configFile string, timeout time.Duration, forceRecreate bool, services []string) error {
+func runUp(ctx context.Context, opts commandOptions, args []string) error {
+	fs := flag.NewFlagSet("up", flag.ContinueOnError)
+	addConfigFlags(fs, &opts)
+	addActionFlags(fs, &opts)
+	addTimeoutFlag(fs, &opts)
+	fs.BoolVar(&opts.ForceRecreate, "force-recreate", opts.ForceRecreate, "force recreate containers even if nothing changed")
+	noDeps := fs.Bool("no-deps", false, "do not include service dependencies when selecting services")
+	pullPolicy := fs.String("pull", "", "temporarily override pull policy: always, missing, or never")
+	if err := fs.Parse(args); err != nil {
+		return usageError{err.Error()}
+	}
+	if *pullPolicy != "" && *pullPolicy != "always" && *pullPolicy != "missing" && *pullPolicy != "never" {
+		return usageError{fmt.Sprintf("unknown pull policy %q (supported: always, missing, never)", *pullPolicy)}
+	}
+
 	// Cancel the context on SIGINT/SIGTERM so the existing rollback path in
 	// dag.Run fires automatically rather than leaving partial state.
 	ctx, stop := signal.NotifyContext(ctx, os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	cfg, err := config.Load(ctx, configFile)
+	cfg, err := loadConfig(ctx, opts)
 	if err != nil {
-		return fmt.Errorf("loading config: %w", err)
+		return err
 	}
 
 	logger.Debug("loaded config", "engine", cfg.Engine, "services", len(cfg.Services))
 
 	// If specific services are named, restrict to those plus their transitive deps.
-	if len(services) > 0 {
-		cfg.Services = filterServices(cfg.Services, services)
+	if len(fs.Args()) > 0 {
+		selected, err := selectServices(cfg.Services, fs.Args(), !*noDeps)
+		if err != nil {
+			return err
+		}
+		cfg.Services = selected
+	}
+	if *pullPolicy != "" {
+		for _, svc := range cfg.Services {
+			svc.PullPolicy = *pullPolicy
+		}
 	}
 
-	engine, err := newEngine(ctx, cfg.Engine)
+	engine, err := openEngine(ctx, cfg)
 	if err != nil {
 		return fmt.Errorf("initialising engine: %w", err)
 	}
 	defer engine.Close()
 
-	sn := resolveStackName(cfg, configFile)
+	sn := resolveStackNameWithOptions(cfg, opts)
 	logger.Debug("using stack name", "stack", sn)
 
 	p, err := plan.Compute(ctx, cfg, engine, sn)
@@ -51,12 +74,17 @@ func runUp(ctx context.Context, configFile string, timeout time.Duration, forceR
 	}
 
 	// --force-recreate upgrades unchanged containers to recreate.
-	if forceRecreate {
+	if opts.ForceRecreate {
 		for i := range p.Changes {
 			if p.Changes[i].Kind == plan.KindNoop {
 				p.Changes[i].Kind = plan.KindRecreate
 			}
 		}
+	}
+
+	if opts.DryRun {
+		plan.Render(p, os.Stdout)
+		return nil
 	}
 
 	// Remove orphaned containers first.
@@ -65,7 +93,9 @@ func runUp(ctx context.Context, configFile string, timeout time.Duration, forceR
 			continue
 		}
 		display := strings.TrimPrefix(ch.Service, sn+"_")
-		printProgress(display, "removing orphan")
+		if !opts.Quiet {
+			printProgress(display, "removing orphan")
+		}
 		if err := engine.StopService(ctx, ch.Service); err != nil {
 			logger.Debug("stop orphan failed", "container", ch.Service, "err", err)
 		}
@@ -93,7 +123,7 @@ func runUp(ctx context.Context, configFile string, timeout time.Duration, forceR
 
 	isTTY := term.IsTerminal(int(os.Stdout.Fd()))
 	var pullMu sync.Mutex
-	return g.Run(ctx, engine, sn, timeout, actions, printProgress, newMakePullSink(isTTY, &pullMu))
+	return g.Run(ctx, engine, sn, opts.Timeout, actions, opts.progress(), newMakePullSink(isTTY, &pullMu))
 }
 
 // filterServices returns a copy of services containing only the named services

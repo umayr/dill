@@ -28,12 +28,43 @@ By default, Dill uses the Podman socket. You can switch to Docker by setting `en
 dill [flags] [command]
 
 Commands:
-  up    Start all services (default)
-  down  Stop and remove all dill-managed services
+  up        Start all services (default)
+  down      Stop and remove all dill-managed services
+  teardown  Remove containers, images, volumes, and network
+  stop      Stop services without removing containers
+  start     Start previously stopped containers
+  restart   Restart services
+  ps        List containers in the stack
+  status    Show stack status
+  logs      Fetch container logs
+  pull      Pull service images without starting
+  images    List images used by the config
+  exec      Execute a command in a running container
+  plan      Show what would change if you ran up
+  diff      Show desired vs live changes
+  stacks    List dill-managed stacks (alias: ls)
+  doctor    Check local dill, Pkl, and engine readiness
+  rm        Remove stopped containers in the stack
+  wait      Wait for services to become ready
+  port      Print published ports for a service
+  top       Show processes in a running container
+  cp        Copy files between a container and the host
+  config    Print the resolved config
+  init      Create a starter compose.pkl
+  validate  Check a .pkl config file for errors
+  fmt       Format a .pkl config file in-place
+  version   Print the dill version
 
 Flags:
   -f <path>         Path to .pkl config file (default: compose.pkl)
-  --timeout <dur>   Startup timeout per service (default: 60s)
+  -p, --stack-name  Override the stack name (also --project-name)
+  --engine          Override the config engine (podman or docker)
+  --timeout <dur>   Timeout for the stack to become ready (default: 5m)
+  --env-file        Load KEY=VALUE pairs before evaluating config
+  --force-recreate  Recreate matching containers during up
+  --dry-run         Show intended changes without mutating containers
+  --quiet           Suppress progress output
+  -y, --yes         Assume yes for destructive prompts
   -v / -vv / -vvv / -vvvv   Verbosity (info / debug / debug+caller / +timestamps)
   -v=N              Numeric verbosity
 ```
@@ -48,6 +79,43 @@ To tear it down:
 ./dill -f examples/overrides/my-server.pkl down
 ```
 
+To inspect and operate on a stack:
+```
+./dill -f examples/fullstack/compose.pkl status
+./dill -f examples/fullstack/compose.pkl plan --format json
+./dill -f examples/fullstack/compose.pkl logs --follow --tail 100 web
+./dill -f examples/fullstack/compose.pkl wait web
+./dill -f examples/fullstack/compose.pkl exec web sh
+```
+
+For machine-readable output, `ps`, `status`, `plan`/`diff`, `stacks`,
+`doctor`, `images`, `config`, `validate`, and `port` support `--format` where applicable.
+Lifecycle commands accept service names as positional arguments, for example
+`dill up web`, `dill restart web`, or `dill down web`. Use `--no-deps` with
+`up`, `start`, or `restart` when you intentionally do not want dependency services
+included.
+
+`plan` is CI-oriented: it exits non-zero when changes are detected. `diff`
+renders the same desired-vs-live information but exits zero unless the command
+itself fails. `rm` and `teardown` prompt before destructive removal; pass
+`--yes`/`-y` for automation. `stop` and `down` do not prompt.
+
+#### Notes
+
+- `logs` uses `--follow` (short form `-n`/`--tail` still apply). `-f` is
+  reserved everywhere for the config-file path, never for following logs.
+- `stacks` and `doctor` can run without a config file. `stacks` therefore has
+  no config to derive an engine from and defaults to Podman; pass
+  `--engine docker` to list Docker stacks.
+
+#### Exit codes
+
+| Code | Meaning |
+|------|---------|
+| `0`  | Success (including `diff` with drift and `doctor` with no issues) |
+| `1`  | Operational failure, `plan`/`doctor` detected drift or issues |
+| `2`  | Usage error (unknown command, bad flag, unknown service, invalid format) |
+
 ## Integration Tests
 
 Dill has opt-in integration tests that exercise the real Docker and Podman APIs:
@@ -55,6 +123,15 @@ Dill has opt-in integration tests that exercise the real Docker and Podman APIs:
 ```
 DILL_TEST_ENGINE=docker make integration-test
 DILL_TEST_ENGINE=podman PODMAN_SOCKET=unix:///tmp/podman.sock make integration-test
+```
+
+Useful integration-test knobs:
+
+```
+DILL_BINARY=/path/to/dill       # reuse an existing binary
+DILL_TEST_RUN=TestDillCommandUX # pass a -run filter through make
+DILL_TEST_TIMEOUT=2m            # default command timeout for fixtures
+DILL_TEST_KEEP=1                # keep failed stacks for debugging
 ```
 
 On macOS, the local helper scripts create VM-backed engines:
@@ -66,8 +143,10 @@ scripts/integration-local.sh
 ```
 
 The Docker script uses a Colima VM. The Podman script uses a Lima Ubuntu VM,
-installs Go/Pkl/Podman if missing, starts the Podman API socket inside the VM,
-and runs the same Go integration tests there.
+installs Go/Pkl/Podman if missing, starts a per-user Podman API socket inside
+the VM, and runs the same Go integration tests there. On failure, the scripts
+dump engine state (`version`, `info`, containers, images, volumes, and networks)
+to make cleanup and debugging less guessy.
 
 CI runs the same integration suite against Docker and Podman on GitHub Actions.
 

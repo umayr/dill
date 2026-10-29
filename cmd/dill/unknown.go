@@ -3,7 +3,8 @@ package main
 var allCommands = []string{
 	cmdUp, cmdDown, cmdTeardown, cmdStop, cmdStart, cmdRestart,
 	cmdPs, cmdLogs, cmdPull, cmdImages, cmdExec, cmdPlan, cmdConfig,
-	cmdInit, cmdValidate, cmdFmt, cmdVersion,
+	cmdInit, cmdValidate, cmdFmt, cmdVersion, cmdStatus, cmdDoctor,
+	cmdDiff, cmdStacks, cmdLs, cmdRm, cmdWait, cmdPort, cmdTop, cmdCp,
 }
 
 // closestCommand returns the command name most similar to s, or "" if no

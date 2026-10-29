@@ -4,6 +4,7 @@ set -euo pipefail
 instance="${LIMA_INSTANCE:-dill-podman}"
 go_version="${GO_VERSION:-1.25.0}"
 pkl_version="${PKL_VERSION:-0.31.1}"
+podman_socket="${PODMAN_SOCKET:-unix:///tmp/dill-podman-${USER:-user}.sock}"
 repo="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
 if ! command -v limactl >/dev/null 2>&1; then
@@ -47,13 +48,27 @@ if ! command -v pkl >/dev/null 2>&1; then
 fi
 
 export PATH=/usr/local/go/bin:\$PATH
-podman system service --time=0 unix:///tmp/podman.sock >/tmp/dill-podman-service.log 2>&1 &
+sock_path=\"${podman_socket#unix://}\"
+rm -f \"\$sock_path\"
+podman system service --time=0 \"${podman_socket}\" >/tmp/dill-podman-service.log 2>&1 &
 for i in \$(seq 1 30); do
-  [ -S /tmp/podman.sock ] && break
+  [ -S \"\$sock_path\" ] && break
   sleep 1
 done
-[ -S /tmp/podman.sock ]
+[ -S \"\$sock_path\" ]
+
+dump_podman_state() {
+  podman version || true
+  podman info || true
+  podman ps -a || true
+  podman images || true
+  podman volume ls || true
+  podman network ls || true
+}
 
 cd '$repo'
-PODMAN_SOCKET=unix:///tmp/podman.sock DILL_TEST_ENGINE=podman make integration-test
+if ! PODMAN_SOCKET='${podman_socket}' DILL_TEST_ENGINE=podman DILL_TEST_TIMEOUT=\"\${DILL_TEST_TIMEOUT:-2m}\" make integration-test; then
+  dump_podman_state >&2
+  exit 1
+fi
 "

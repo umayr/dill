@@ -48,6 +48,23 @@ type ContainerStatus struct {
 	Ports  []string `json:"ports"`  // e.g. ["0.0.0.0:8080->80/tcp"]
 }
 
+// StackStatus summarises a Dill-managed stack discovered from container labels.
+type StackStatus struct {
+	Name       string `json:"name"`
+	Engine     string `json:"engine"`
+	Containers int    `json:"containers"`
+	Running    int    `json:"running"`
+	Stopped    int    `json:"stopped"`
+}
+
+// LogOptions controls container log retrieval.
+type LogOptions struct {
+	Follow     bool
+	Tail       int
+	Since      string
+	Timestamps bool
+}
+
 // Engine defines the methods required by Dill to manage containers.
 type Engine interface {
 	// PullImage pulls the named image from its registry, writing download
@@ -79,9 +96,9 @@ type Engine interface {
 	// ServiceStatus returns runtime status information for the named container.
 	ServiceStatus(ctx context.Context, name string) (*ContainerStatus, error)
 
-	// Logs streams container output to w. If follow is true, it blocks until
-	// the context is cancelled. tail limits output to the last N lines (0 = all).
-	Logs(ctx context.Context, name string, follow bool, tail int, w io.Writer) error
+	// Logs streams container output to w. If Follow is true, it blocks until
+	// the context is cancelled. Tail limits output to the last N lines (0 = all).
+	Logs(ctx context.Context, name string, opts LogOptions, w io.Writer) error
 
 	// InspectConfig returns the live configuration of the named container.
 	// Returns ErrNotFound (unwrappable via errors.Is) when the container does not exist.
@@ -90,6 +107,9 @@ type Engine interface {
 	// ListStack returns the names of all containers bearing both
 	// dill.managed=true and dill.stack=stackName labels.
 	ListStack(ctx context.Context, stackName string) ([]string, error)
+
+	// ListStacks returns all Dill-managed stacks visible to this engine.
+	ListStacks(ctx context.Context) ([]StackStatus, error)
 
 	// EnsureNetwork creates a bridge network with the given name if it does
 	// not already exist. Idempotent.

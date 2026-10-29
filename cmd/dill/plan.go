@@ -7,29 +7,43 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/umayr/dill/internal/config"
 	"github.com/umayr/dill/internal/plan"
 )
 
-func runPlan(ctx context.Context, configFile string, args []string) error {
-	fs := flag.NewFlagSet("plan", flag.ContinueOnError)
+func runPlan(ctx context.Context, opts commandOptions, args []string) error {
+	return runPlanNamed(ctx, opts, args, "plan")
+}
+
+func runDiff(ctx context.Context, opts commandOptions, args []string) error {
+	return runPlanNamed(ctx, opts, args, "diff")
+}
+
+func runPlanNamed(ctx context.Context, opts commandOptions, args []string, name string) error {
+	fs := flag.NewFlagSet(name, flag.ContinueOnError)
+	addConfigFlags(fs, &opts)
 	format := fs.String("format", "text", "output format: text or json")
 	if err := fs.Parse(args); err != nil {
 		return usageError{err.Error()}
 	}
-
-	cfg, err := config.Load(ctx, configFile)
-	if err != nil {
-		return fmt.Errorf("loading config: %w", err)
+	if err := validateFormat(*format, "text", "json"); err != nil {
+		return err
+	}
+	if err := ensureNoArgs(fs.Args(), name); err != nil {
+		return err
 	}
 
-	engine, err := newEngine(ctx, cfg.Engine)
+	cfg, err := loadConfig(ctx, opts)
+	if err != nil {
+		return err
+	}
+
+	engine, err := openEngine(ctx, cfg)
 	if err != nil {
 		return fmt.Errorf("initialising engine: %w", err)
 	}
 	defer engine.Close()
 
-	sn := resolveStackName(cfg, configFile)
+	sn := resolveStackNameWithOptions(cfg, opts)
 	result, err := plan.Compute(ctx, cfg, engine, sn)
 	if err != nil {
 		return fmt.Errorf("computing plan: %w", err)

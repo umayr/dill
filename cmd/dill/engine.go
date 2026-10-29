@@ -9,6 +9,12 @@ import (
 )
 
 func newEngine(ctx context.Context, engineName string) (orchestrator.Engine, error) {
+	return engineFactory(ctx, engineName)
+}
+
+var engineFactory = defaultEngineFactory
+
+func defaultEngineFactory(ctx context.Context, engineName string) (orchestrator.Engine, error) {
 	switch engineName {
 	case "docker":
 		return orchestrator.NewDockerEngine()

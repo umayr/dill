@@ -8,20 +8,25 @@ import (
 	"os"
 
 	"gopkg.in/yaml.v3"
-
-	"github.com/umayr/dill/internal/config"
 )
 
-func runConfig(ctx context.Context, configFile string, args []string) error {
-	cfs := flag.NewFlagSet("config", flag.ExitOnError)
+func runConfig(ctx context.Context, opts commandOptions, args []string) error {
+	cfs := flag.NewFlagSet("config", flag.ContinueOnError)
+	addConfigFlags(cfs, &opts)
 	format := cfs.String("format", "json", "output format: json or yaml")
 	if err := cfs.Parse(args); err != nil {
+		return usageError{err.Error()}
+	}
+	if err := validateFormat(*format, "json", "yaml"); err != nil {
+		return err
+	}
+	if err := ensureNoArgs(cfs.Args(), "config"); err != nil {
 		return err
 	}
 
-	cfg, err := config.Load(ctx, configFile)
+	cfg, err := loadConfig(ctx, opts)
 	if err != nil {
-		return fmt.Errorf("loading config: %w", err)
+		return err
 	}
 
 	out, err := json.MarshalIndent(cfg, "", "  ")
@@ -41,8 +46,6 @@ func runConfig(ctx context.Context, configFile string, args []string) error {
 		if err != nil {
 			return fmt.Errorf("marshalling yaml: %w", err)
 		}
-	default:
-		return fmt.Errorf("unknown format %q (supported: json, yaml)", *format)
 	}
 
 	_, err = os.Stdout.Write(out)

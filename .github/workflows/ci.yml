@@ -92,7 +92,17 @@ jobs:
       - name: Run integration tests
         env:
           DILL_TEST_ENGINE: docker
+          DILL_TEST_TIMEOUT: 2m
         run: make integration-test
+      - name: Dump Docker state on failure
+        if: failure()
+        run: |
+          docker version || true
+          docker info || true
+          docker ps -a || true
+          docker images || true
+          docker volume ls || true
+          docker network ls || true
 
   integration-podman:
     name: Integration / Podman
@@ -114,9 +124,10 @@ jobs:
           podman version
       - name: Start Podman API socket
         run: |
-          podman system service --time=0 unix:///tmp/podman.sock &
+          rm -f /tmp/dill-podman.sock
+          podman system service --time=0 unix:///tmp/dill-podman.sock &
           for i in $(seq 1 30); do
-            [ -S /tmp/podman.sock ] && exit 0
+            [ -S /tmp/dill-podman.sock ] && exit 0
             sleep 1
           done
           echo "Podman socket did not appear" >&2
@@ -124,8 +135,18 @@ jobs:
       - name: Run integration tests
         env:
           DILL_TEST_ENGINE: podman
-          PODMAN_SOCKET: unix:///tmp/podman.sock
+          PODMAN_SOCKET: unix:///tmp/dill-podman.sock
+          DILL_TEST_TIMEOUT: 2m
         run: make integration-test
+      - name: Dump Podman state on failure
+        if: failure()
+        run: |
+          podman version || true
+          podman info || true
+          podman ps -a || true
+          podman images || true
+          podman volume ls || true
+          podman network ls || true
 
   schema:
     name: Validate Schema

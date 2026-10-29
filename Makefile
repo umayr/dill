@@ -19,7 +19,7 @@ test:
 	go test -tags $(TAGS) ./...
 
 integration-test:
-	go test -tags "$(TAGS),integration" ./test/integration -count=1 -v
+	go test -tags "$(TAGS),integration" ./test/integration -count=1 -v $(if $(DILL_TEST_RUN),-run $(DILL_TEST_RUN),)
 
 vet:
 	go vet -tags $(TAGS) ./...
