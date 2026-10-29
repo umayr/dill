@@ -95,13 +95,28 @@ func (p *PodmanEngine) StartService(ctx context.Context, name string, svc *confi
 		s.PortMappings = append(s.PortMappings, pm)
 	}
 
+	// Named volumes, bind mounts and tmpfs are modeled differently by the
+	// Podman API. Named volumes must go through specgen.Volumes so Podman
+	// registers them (auto-creating the volume if missing) and mounts the
+	// real volume path; the raw Mounts list is reserved for host paths.
+	// Previously named volumes were added to Mounts, which made crun treat
+	// the volume name as a host path and fail with "mount ... No such device".
 	for _, vm := range volumes {
-		s.Mounts = append(s.Mounts, specs.Mount{
-			Type:        vm.Type,
-			Source:      vm.Source,
-			Destination: vm.Target,
-			Options:     volumeOptions(vm),
-		})
+		switch vm.Type {
+		case "volume":
+			s.Volumes = append(s.Volumes, &specgen.NamedVolume{
+				Name:    vm.Source,
+				Dest:    vm.Target,
+				Options: volumeOptions(vm),
+			})
+		default:
+			s.Mounts = append(s.Mounts, specs.Mount{
+				Type:        vm.Type,
+				Source:      vm.Source,
+				Destination: vm.Target,
+				Options:     volumeOptions(vm),
+			})
+		}
 	}
 
 	if len(svc.Command) > 0 {
