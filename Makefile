@@ -3,7 +3,7 @@ CMD     := ./cmd/dill
 TAGS    := containers_image_openpgp,exclude_graphdriver_devicemapper,exclude_graphdriver_btrfs
 DIST    := dist
 
-VERSION := $(shell git describe --tags --always --dirty 2>/dev/null || echo "dev")
+VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo "dev")
 LDFLAGS := -ldflags "-X main.version=$(VERSION)"
 
 .PHONY: build install clean test integration-test vet tidy fmt validate dist

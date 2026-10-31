@@ -47,7 +47,7 @@ jobs:
         run: unzip -l .out/*.zip
 
       - name: Build Go binaries
-        run: make dist
+        run: make dist VERSION="${GITHUB_REF_NAME}"
 
       - name: Publish GitHub Release
         uses: softprops/action-gh-release@v2
