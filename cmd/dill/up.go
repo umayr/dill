@@ -47,16 +47,23 @@ func runUp(ctx context.Context, opts commandOptions, args []string) error {
 
 	logger.Debug("loaded config", "engine", cfg.Engine, "services", len(cfg.Services))
 
-	// If specific services are named, restrict to those plus their transitive deps.
-	if len(fs.Args()) > 0 {
-		selected, err := selectServices(cfg.Services, fs.Args(), !*noDeps)
+	// The plan is always computed against the full config so a partial `up`
+	// cannot mistake unselected services for orphans. Only the selected subset
+	// is planned, pulled, and run.
+	fullServices := cfg.Services
+	selected := fullServices
+	subset := len(fs.Args()) > 0
+	if subset {
+		selected, err = selectServices(cfg.Services, fs.Args(), !*noDeps)
 		if err != nil {
 			return err
 		}
-		cfg.Services = selected
+		if *noDeps {
+			selected = withoutDependencies(selected)
+		}
 	}
 	if *pullPolicy != "" {
-		for _, svc := range cfg.Services {
+		for _, svc := range selected {
 			svc.PullPolicy = *pullPolicy
 		}
 	}
@@ -81,7 +88,7 @@ func runUp(ctx context.Context, opts commandOptions, args []string) error {
 	// before computing the plan so the image-ID comparison can detect the new
 	// image and turn an otherwise unchanged service into a recreate.
 	if !opts.DryRun {
-		if err := pullAlwaysImages(ctx, engine, cfg.Services, mkSink); err != nil {
+		if err := pullAlwaysImages(ctx, engine, selected, mkSink); err != nil {
 			return err
 		}
 	}
@@ -90,6 +97,9 @@ func runUp(ctx context.Context, opts commandOptions, args []string) error {
 	if err != nil {
 		return fmt.Errorf("computing plan: %w", err)
 	}
+	// A partial up only applies changes for the selected services. Orphan
+	// removal remains a full-stack operation.
+	p = filterPlan(p, selected, !subset)
 
 	// --force-recreate upgrades unchanged containers to recreate.
 	if opts.ForceRecreate {
@@ -122,7 +132,7 @@ func runUp(ctx context.Context, opts commandOptions, args []string) error {
 		}
 	}
 
-	actions := make(map[string]dag.Action, len(cfg.Services))
+	actions := make(map[string]dag.Action, len(selected))
 	for _, ch := range p.Changes {
 		switch ch.Kind {
 		case plan.KindCreate:
@@ -134,12 +144,43 @@ func runUp(ctx context.Context, opts commandOptions, args []string) error {
 		}
 	}
 
-	g, err := dag.Build(cfg.Services)
+	g, err := dag.Build(selected)
 	if err != nil {
 		return fmt.Errorf("building dependency graph: %w", err)
 	}
 
 	return g.Run(ctx, engine, sn, opts.Timeout, actions, opts.progress(), mkSink)
+}
+
+// filterPlan keeps changes for the selected services. When keepOrphans is
+// false (a partial up), orphan removals are dropped so unselected services are
+// never touched.
+func filterPlan(p *plan.Plan, selected map[string]*config.Service, keepOrphans bool) *plan.Plan {
+	out := &plan.Plan{Changes: make([]plan.Change, 0, len(p.Changes))}
+	for _, ch := range p.Changes {
+		if ch.Kind == plan.KindRemove {
+			if keepOrphans {
+				out.Changes = append(out.Changes, ch)
+			}
+			continue
+		}
+		if _, ok := selected[ch.Service]; ok {
+			out.Changes = append(out.Changes, ch)
+		}
+	}
+	return out
+}
+
+// withoutDependencies returns copies of services with depends_on cleared, so
+// `up --no-deps <service>` can build a graph without the dependencies.
+func withoutDependencies(services map[string]*config.Service) map[string]*config.Service {
+	out := make(map[string]*config.Service, len(services))
+	for name, svc := range services {
+		cp := *svc
+		cp.DependsOn = nil
+		out[name] = &cp
+	}
+	return out
 }
 
 // pullAlwaysImages pulls every service with pull_policy "always" before the
