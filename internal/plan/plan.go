@@ -77,7 +77,12 @@ func Compute(ctx context.Context, cfg *config.DillConfig, engine orchestrator.En
 			return nil, fmt.Errorf("inspect %s: %w", name, err)
 		}
 
-		diffs, err := diffConfigs(name, d.svc, live)
+		localImageID, err := engine.LocalImageID(ctx, d.svc.Image)
+		if err != nil {
+			return nil, fmt.Errorf("resolving local image for %s: %w", name, err)
+		}
+
+		diffs, err := diffConfigs(name, d.svc, live, localImageID)
 		if err != nil {
 			return nil, fmt.Errorf("diff %s: %w", name, err)
 		}
@@ -120,7 +125,7 @@ func isNotFound(err error) bool {
 
 // diffConfigs compares desired service config against live container config
 // and returns a list of field-level diffs.
-func diffConfigs(name string, svc *config.Service, live *orchestrator.LiveConfig) ([]FieldDiff, error) {
+func diffConfigs(name string, svc *config.Service, live *orchestrator.LiveConfig, localImageID string) ([]FieldDiff, error) {
 	var diffs []FieldDiff
 
 	if wantHash, err := config.ServiceConfigHash(name, svc); err != nil {
@@ -132,6 +137,10 @@ func diffConfigs(name string, svc *config.Service, live *orchestrator.LiveConfig
 	// image
 	if svc.Image != live.Image {
 		diffs = append(diffs, FieldDiff{Field: "image", Before: live.Image, After: svc.Image})
+	} else if want, got := normalizeImageID(localImageID), normalizeImageID(live.ImageID); want != "" && got != "" && want != got {
+		// Same tag, different local image: the registry tag moved or the image
+		// was rebuilt locally. Recreate so the container picks it up.
+		diffs = append(diffs, FieldDiff{Field: "image_id", Before: shortImageID(got), After: shortImageID(want)})
 	}
 
 	// env — only keys defined in desired config
@@ -279,6 +288,20 @@ func normalizeNetworkMode(m string) string {
 		return ""
 	}
 	return m
+}
+
+// normalizeImageID strips the algorithm prefix so Docker and Podman IDs compare.
+func normalizeImageID(id string) string {
+	return strings.TrimPrefix(id, "sha256:")
+}
+
+// shortImageID returns the first 12 hex characters of an image ID for display.
+func shortImageID(id string) string {
+	id = normalizeImageID(id)
+	if len(id) > 12 {
+		return id[:12]
+	}
+	return id
 }
 
 // normalizeHostIP treats the various "any interface" representations as equal

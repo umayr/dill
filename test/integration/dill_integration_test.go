@@ -147,6 +147,53 @@ func TestDillRealEngineTeardown(t *testing.T) {
 	assertEmptyStack(t, bin, cfg)
 }
 
+func TestDillImageUpdateRecreates(t *testing.T) {
+	env := integrationEnv(t)
+	root := repoRoot(t)
+	bin := dillBinary(t, root)
+	stack := fmt.Sprintf("dill-it-%s-image-%d", env.engine, time.Now().UnixNano())
+	cfg := filepath.Join(t.TempDir(), "compose.pkl")
+	tag := "localhost/dill-it-image:latest"
+
+	// Two distinct images under one tag: moving the tag simulates a registry
+	// update without needing a registry.
+	runEngine(t, env.engine, "pull", "docker.io/library/busybox:1.36")
+	runEngine(t, env.engine, "pull", "docker.io/library/alpine:3.20")
+	runEngine(t, env.engine, "tag", "docker.io/library/busybox:1.36", tag)
+
+	// Registered before cleanupStack so it runs after `dill down` (LIFO).
+	t.Cleanup(func() {
+		_ = exec.Command(engineBinaryName(env.engine), "rmi", "-f", tag).Run()
+	})
+	writeImageConfig(t, cfg, root, env.engine, stack, tag)
+	cleanupStack(t, bin, cfg, stack)
+
+	runDill(t, true, bin, "-f", cfg, "--timeout", testTimeout(), "up")
+	before := runEngine(t, env.engine, "inspect", "--format", "{{.Image}}", stack+"_app")
+	assertNoopPlan(t, bin, cfg, 1)
+
+	// Point the tag at a different image, as a tag move would.
+	runEngine(t, env.engine, "tag", "docker.io/library/alpine:3.20", tag)
+
+	planOut := runDill(t, false, bin, "-f", cfg, "plan", "--format", "json")
+	var p planOutput
+	if err := json.Unmarshal([]byte(planOut), &p); err != nil {
+		t.Fatalf("parsing plan JSON: %v\n%s", err, planOut)
+	}
+	if p.Summary.Recreate != 1 {
+		t.Fatalf("expected 1 recreate after tag move, got %+v\n%s", p.Summary, planOut)
+	}
+	if !strings.Contains(planOut, `"image_id"`) {
+		t.Fatalf("plan did not report an image_id diff:\n%s", planOut)
+	}
+
+	runDill(t, true, bin, "-f", cfg, "--timeout", testTimeout(), "up")
+	after := runEngine(t, env.engine, "inspect", "--format", "{{.Image}}", stack+"_app")
+	if before == after {
+		t.Fatalf("container image did not change after tag move (still %s)", before)
+	}
+}
+
 func TestDillCommandUXWithoutEngineMutation(t *testing.T) {
 	env := integrationEnv(t)
 	root := repoRoot(t)
@@ -277,6 +324,28 @@ config {
 	}
 }
 
+func writeImageConfig(t *testing.T, path, root, engine, stack, image string) {
+	t.Helper()
+	schema := filepath.ToSlash(filepath.Join(root, "dill.pkl"))
+	body := fmt.Sprintf(`amends "%s"
+
+config {
+  name = "%s"
+  engine = "%s"
+  services {
+    ["app"] {
+      image = "%s"
+      pull_policy = "never"
+      command = List("sleep", "300")
+    }
+  }
+}
+`, schema, stack, engine, image)
+	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func writeVolumeConfig(t *testing.T, path, root, engine, stack string) {
 	t.Helper()
 	schema := filepath.ToSlash(filepath.Join(root, "dill.pkl"))
@@ -402,6 +471,25 @@ func assertEmptyStack(t *testing.T, bin, cfg string) {
 	if len(rows) != 0 {
 		t.Fatalf("expected empty stack after down, got %s", out)
 	}
+}
+
+func engineBinaryName(engine string) string {
+	if engine == "podman" {
+		return "podman"
+	}
+	return "docker"
+}
+
+func runEngine(t *testing.T, engine string, args ...string) string {
+	t.Helper()
+	bin := engineBinaryName(engine)
+	cmd := exec.Command(bin, args...)
+	cmd.Env = os.Environ()
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("%s %s failed: %v\n%s", bin, strings.Join(args, " "), err, out)
+	}
+	return strings.TrimSpace(string(out))
 }
 
 func dillBinary(t *testing.T, root string) string {

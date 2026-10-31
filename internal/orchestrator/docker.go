@@ -117,6 +117,18 @@ func (d *DockerEngine) ImageExists(ctx context.Context, img string) (bool, error
 	return true, nil
 }
 
+// LocalImageID returns the local image ID, or "" when the image is absent.
+func (d *DockerEngine) LocalImageID(ctx context.Context, img string) (string, error) {
+	inspect, _, err := d.cli.ImageInspectWithRaw(ctx, img)
+	if err != nil {
+		if client.IsErrNotFound(err) {
+			return "", nil
+		}
+		return "", err
+	}
+	return inspect.ID, nil
+}
+
 func (d *DockerEngine) StartService(ctx context.Context, name string, svc *config.Service, stackName string) (string, error) {
 	logger.Debug("starting service", "service", name, "image", svc.Image)
 
@@ -410,6 +422,7 @@ func (d *DockerEngine) InspectConfig(ctx context.Context, name string) (*LiveCon
 
 	return &LiveConfig{
 		Image:         info.Config.Image,
+		ImageID:       info.Image,
 		Env:           env,
 		Ports:         ports,
 		Volumes:       volumes,
