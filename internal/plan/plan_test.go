@@ -154,7 +154,7 @@ func TestDiffConfigs_redactsSensitiveEnv(t *testing.T) {
 			"PUBLIC":      "old-value",
 		},
 	}
-	diffs, err := diffConfigs("web", svc, live)
+	diffs, err := diffConfigs("web", svc, live, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -191,5 +191,75 @@ func TestIsNotFound(t *testing.T) {
 	}
 	if isNotFound(nil) {
 		t.Error("expected isNotFound=false for nil")
+	}
+}
+
+func TestDiffConfigs_imageIDChanged(t *testing.T) {
+	svc := &config.Service{Image: "app:latest"}
+	live := &orchestrator.LiveConfig{Image: "app:latest", ImageID: "sha256:aaaaaaaaaaaaaaaa"}
+	diffs, err := diffConfigs("app", svc, live, "sha256:bbbbbbbbbbbbbbbb")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var found *FieldDiff
+	for i := range diffs {
+		if diffs[i].Field == "image_id" {
+			found = &diffs[i]
+		}
+	}
+	if found == nil {
+		t.Fatalf("expected image_id diff, got %+v", diffs)
+	}
+	if found.Before != "aaaaaaaaaaaa" || found.After != "bbbbbbbbbbbb" {
+		t.Fatalf("unexpected image_id diff: %+v", found)
+	}
+}
+
+func TestDiffConfigs_imageIDSame(t *testing.T) {
+	svc := &config.Service{Image: "app:latest"}
+	live := &orchestrator.LiveConfig{Image: "app:latest", ImageID: "sha256:aaaaaaaaaaaaaaaa"}
+	diffs, err := diffConfigs("app", svc, live, "aaaaaaaaaaaaaaaa")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, d := range diffs {
+		if d.Field == "image_id" {
+			t.Fatalf("unexpected image_id diff: %+v", d)
+		}
+	}
+}
+
+func TestDiffConfigs_imageIDMissingLocally(t *testing.T) {
+	svc := &config.Service{Image: "app:latest"}
+	live := &orchestrator.LiveConfig{Image: "app:latest", ImageID: "sha256:aaaaaaaaaaaaaaaa"}
+	diffs, err := diffConfigs("app", svc, live, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, d := range diffs {
+		if d.Field == "image_id" {
+			t.Fatalf("unexpected image_id diff with no local image: %+v", d)
+		}
+	}
+}
+
+func TestDiffConfigs_imageNameChangedWins(t *testing.T) {
+	svc := &config.Service{Image: "app:v2"}
+	live := &orchestrator.LiveConfig{Image: "app:v1", ImageID: "sha256:aaaaaaaaaaaaaaaa"}
+	diffs, err := diffConfigs("app", svc, live, "sha256:bbbbbbbbbbbbbbbb")
+	if err != nil {
+		t.Fatal(err)
+	}
+	seenImage := false
+	for _, d := range diffs {
+		if d.Field == "image" {
+			seenImage = true
+		}
+		if d.Field == "image_id" {
+			t.Fatalf("image_id should not be reported when the image name changed: %+v", diffs)
+		}
+	}
+	if !seenImage {
+		t.Fatalf("expected image diff, got %+v", diffs)
 	}
 }

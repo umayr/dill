@@ -10,11 +10,13 @@ import (
 	"sync"
 	"syscall"
 
+	"golang.org/x/sync/errgroup"
 	"golang.org/x/term"
 
 	"github.com/umayr/dill/internal/config"
 	"github.com/umayr/dill/internal/dag"
 	"github.com/umayr/dill/internal/log"
+	"github.com/umayr/dill/internal/orchestrator"
 	"github.com/umayr/dill/internal/plan"
 )
 
@@ -67,6 +69,22 @@ func runUp(ctx context.Context, opts commandOptions, args []string) error {
 
 	sn := resolveStackNameWithOptions(cfg, opts)
 	logger.Debug("using stack name", "stack", sn)
+
+	isTTY := term.IsTerminal(int(os.Stdout.Fd()))
+	if opts.Quiet {
+		isTTY = false
+	}
+	var pullMu sync.Mutex
+	mkSink := newMakePullSink(isTTY, &pullMu)
+
+	// pull_policy: always means "check for a new image on every up". Pull
+	// before computing the plan so the image-ID comparison can detect the new
+	// image and turn an otherwise unchanged service into a recreate.
+	if !opts.DryRun {
+		if err := pullAlwaysImages(ctx, engine, cfg.Services, mkSink); err != nil {
+			return err
+		}
+	}
 
 	p, err := plan.Compute(ctx, cfg, engine, sn)
 	if err != nil {
@@ -121,9 +139,38 @@ func runUp(ctx context.Context, opts commandOptions, args []string) error {
 		return fmt.Errorf("building dependency graph: %w", err)
 	}
 
-	isTTY := term.IsTerminal(int(os.Stdout.Fd()))
-	var pullMu sync.Mutex
-	return g.Run(ctx, engine, sn, opts.Timeout, actions, opts.progress(), newMakePullSink(isTTY, &pullMu))
+	return g.Run(ctx, engine, sn, opts.Timeout, actions, opts.progress(), mkSink)
+}
+
+// pullAlwaysImages pulls every service with pull_policy "always" before the
+// plan is computed. Once the images are local, the policy is downgraded to
+// "missing" so the DAG's create/recreate path does not pull them a second time.
+func pullAlwaysImages(ctx context.Context, engine orchestrator.Engine, services map[string]*config.Service, mkSink dag.MakePullSink) error {
+	g, gctx := errgroup.WithContext(ctx)
+	for name, svc := range services {
+		if svc.PullPolicy != "always" {
+			continue
+		}
+		name, svc := name, svc
+		g.Go(func() error {
+			sink := mkSink(name)
+			sink.Begin()
+			defer sink.Done()
+			if err := engine.PullImage(gctx, svc.Image, sink); err != nil {
+				return fmt.Errorf("service %q: pulling %s: %w", name, svc.Image, err)
+			}
+			return nil
+		})
+	}
+	if err := g.Wait(); err != nil {
+		return err
+	}
+	for _, svc := range services {
+		if svc.PullPolicy == "always" {
+			svc.PullPolicy = "missing"
+		}
+	}
+	return nil
 }
 
 // filterServices returns a copy of services containing only the named services

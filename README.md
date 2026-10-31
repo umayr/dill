@@ -169,8 +169,14 @@ config {
 }
 ```
 
+`pull_policy` is applied before planning: `always` pulls before the plan is computed,
+and Dill recreates a container when the local image ID differs from the image it is
+running (for example after `dill pull` or a moved tag). `missing` only pulls when the
+image is absent; `never` uses the local image as-is.
+
 ## Why Dill?
 - **Type Safety:** Catch invalid ports or misspelled parameters in your IDE.
 - **Programmability:** Use loops, conditionals, and variables to build complex architectures.
 - **Engine Agnostic:** Deploy securely with Podman's daemonless architecture, or fallback to Docker when needed.
 - **DAG Startup:** Services with `depends_on` start in order and only after their dependencies are healthy.
+- **Image-aware updates:** `pull_policy: always` pulls before planning and recreates only when the image ID actually changed.

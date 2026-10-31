@@ -268,6 +268,7 @@ func captureCommand(t *testing.T, stdin string, fn func() error) (string, string
 type fakeEngine struct {
 	statuses       map[string]*orchestrator.ContainerStatus
 	removed        []string
+	pulled         []string
 	networkRemoved bool
 }
 
@@ -275,8 +276,12 @@ func newFakeEngine() *fakeEngine {
 	return &fakeEngine{statuses: make(map[string]*orchestrator.ContainerStatus)}
 }
 
-func (f *fakeEngine) PullImage(context.Context, string, io.Writer) error { return nil }
-func (f *fakeEngine) ImageExists(context.Context, string) (bool, error)  { return false, nil }
+func (f *fakeEngine) PullImage(_ context.Context, image string, _ io.Writer) error {
+	f.pulled = append(f.pulled, image)
+	return nil
+}
+func (f *fakeEngine) ImageExists(context.Context, string) (bool, error)    { return false, nil }
+func (f *fakeEngine) LocalImageID(context.Context, string) (string, error) { return "", nil }
 func (f *fakeEngine) StartService(context.Context, string, *config.Service, string) (string, error) {
 	return "id", nil
 }

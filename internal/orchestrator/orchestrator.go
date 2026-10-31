@@ -23,6 +23,7 @@ var ErrNotFound = errors.New("container not found")
 // extracted from the engine for comparison against desired state.
 type LiveConfig struct {
 	Image         string
+	ImageID       string            // engine image ID the container was created from
 	Env           map[string]string // KEY → value; only user-set vars
 	Ports         []config.PortBinding
 	Volumes       []config.VolumeMount
@@ -73,6 +74,10 @@ type Engine interface {
 
 	// ImageExists reports whether the image is already present locally.
 	ImageExists(ctx context.Context, image string) (bool, error)
+
+	// LocalImageID returns the ID of the locally available image, or "" when
+	// the image is not present locally. It never pulls.
+	LocalImageID(ctx context.Context, image string) (string, error)
 
 	// StartService creates and starts the container for svc.
 	// stackName is used as the dill.stack label value for later teardown scoping.

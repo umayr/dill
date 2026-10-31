@@ -50,6 +50,25 @@ func (p *PodmanEngine) ImageExists(ctx context.Context, img string) (bool, error
 	return exists, nil
 }
 
+// LocalImageID returns the local image ID, or "" when the image is absent.
+func (p *PodmanEngine) LocalImageID(ctx context.Context, img string) (string, error) {
+	exists, err := images.Exists(p.conn, img, nil)
+	if err != nil {
+		return "", err
+	}
+	if !exists {
+		return "", nil
+	}
+	data, err := images.GetImage(p.conn, img, nil)
+	if err != nil {
+		return "", err
+	}
+	if data == nil || data.ImageData == nil {
+		return "", nil
+	}
+	return data.ID, nil
+}
+
 func (p *PodmanEngine) StartService(ctx context.Context, name string, svc *config.Service, stackName string) (string, error) {
 	logger.Debug("starting service", "service", name, "image", svc.Image)
 
@@ -467,6 +486,7 @@ func (p *PodmanEngine) InspectConfig(ctx context.Context, name string) (*LiveCon
 
 	return &LiveConfig{
 		Image:         data.ImageName,
+		ImageID:       data.Image,
 		Env:           env,
 		Ports:         ports,
 		Volumes:       volumes,
