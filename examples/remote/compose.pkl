@@ -1,4 +1,4 @@
-amends "package://pkg.ushd.ca/dill@0.1.1#/dill.pkl"
+amends "package://pkg.ushd.ca/dill@0.2.0#/dill.pkl"
 
 config {
   name = "remote"
