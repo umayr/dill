@@ -45,7 +45,7 @@ func runPull(ctx context.Context, opts commandOptions, args []string) error {
 	for name, svc := range cfg.Services {
 		name, svc := name, svc
 		if svc.PullPolicy == "never" {
-			logger.Debug("skipping pull (pull_policy=never)", "service", name)
+			logger.Debug("skipping pull (pullPolicy=never)", "service", name)
 			continue
 		}
 		g.Go(func() error {

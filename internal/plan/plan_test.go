@@ -290,7 +290,7 @@ func TestDiffConfigs_externalVolumeMatches(t *testing.T) {
 	svc := &config.Service{
 		Image:   "app:latest",
 		BaseDir: "/tmp",
-		Volumes: []json.RawMessage{json.RawMessage(`{"type":"volume","source":"shared","target":"/data","external_volume":true}`)},
+		Volumes: []json.RawMessage{json.RawMessage(`{"type":"volume","source":"shared","target":"/data","externalVolume":true}`)},
 	}
 	live := &orchestrator.LiveConfig{
 		Image:   "app:latest",

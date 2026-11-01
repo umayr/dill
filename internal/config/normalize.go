@@ -30,7 +30,7 @@ type VolumeMount struct {
 }
 
 // NormalizePorts converts the raw JSON union slice (string | Port object) into
-// concrete PortBinding values. String form: [host_ip:]published:target[/protocol]
+// concrete PortBinding values. String form: [hostIp:]published:target[/protocol]
 func NormalizePorts(raw []json.RawMessage) ([]PortBinding, error) {
 	out := make([]PortBinding, 0, len(raw))
 	for i, r := range raw {
@@ -159,7 +159,7 @@ func normalizePort(raw json.RawMessage) (PortBinding, error) {
 	return pb, nil
 }
 
-// parsePortString handles: target, published:target, host_ip:published:target,
+// parsePortString handles: target, published:target, hostIp:published:target,
 // and optional /protocol suffix on target.
 func parsePortString(s string) (PortBinding, error) {
 	pb := PortBinding{Protocol: "tcp"}

@@ -84,7 +84,7 @@ func runUp(ctx context.Context, opts commandOptions, args []string) error {
 	var pullMu sync.Mutex
 	mkSink := newMakePullSink(isTTY, &pullMu)
 
-	// pull_policy: always means "check for a new image on every up". Pull
+	// pullPolicy: always means "check for a new image on every up". Pull
 	// before computing the plan so the image-ID comparison can detect the new
 	// image and turn an otherwise unchanged service into a recreate.
 	if !opts.DryRun {
@@ -171,7 +171,7 @@ func filterPlan(p *plan.Plan, selected map[string]*config.Service, keepOrphans b
 	return out
 }
 
-// withoutDependencies returns copies of services with depends_on cleared, so
+// withoutDependencies returns copies of services with dependsOn cleared, so
 // `up --no-deps <service>` can build a graph without the dependencies.
 func withoutDependencies(services map[string]*config.Service) map[string]*config.Service {
 	out := make(map[string]*config.Service, len(services))
@@ -183,7 +183,7 @@ func withoutDependencies(services map[string]*config.Service) map[string]*config
 	return out
 }
 
-// pullAlwaysImages pulls every service with pull_policy "always" before the
+// pullAlwaysImages pulls every service with pullPolicy "always" before the
 // plan is computed. Once the images are local, the policy is downgraded to
 // "missing" so the DAG's create/recreate path does not pull them a second time.
 func pullAlwaysImages(ctx context.Context, engine orchestrator.Engine, services map[string]*config.Service, mkSink dag.MakePullSink) error {

@@ -177,11 +177,11 @@ func diffConfigs(name string, svc *config.Service, live *orchestrator.LiveConfig
 		diffs = append(diffs, FieldDiff{Field: "restart", Before: live.RestartPolicy, After: svc.Restart})
 	}
 
-	// network_mode — treat "", "bridge", "default" as equivalent.
+	// networkMode — treat "", "bridge", "default" as equivalent.
 	// Docker sets NetworkMode="bridge" on containers attached to a user-defined
 	// network even when the user didn't specify a mode.
 	if normalizeNetworkMode(svc.NetworkMode) != normalizeNetworkMode(live.NetworkMode) {
-		diffs = append(diffs, FieldDiff{Field: "network_mode", Before: live.NetworkMode, After: svc.NetworkMode})
+		diffs = append(diffs, FieldDiff{Field: "networkMode", Before: live.NetworkMode, After: svc.NetworkMode})
 	}
 
 	// user
@@ -212,10 +212,10 @@ func diffConfigs(name string, svc *config.Service, live *orchestrator.LiveConfig
 		}
 	}
 
-	// cap_add — order-independent set comparison
+	// capAdd — order-independent set comparison
 	if !stringSetsEqual(svc.CapAdd, live.CapAdd) {
 		diffs = append(diffs, FieldDiff{
-			Field:  "cap_add",
+			Field:  "capAdd",
 			Before: strings.Join(sortedStrings(live.CapAdd), ","),
 			After:  strings.Join(sortedStrings(svc.CapAdd), ","),
 		})

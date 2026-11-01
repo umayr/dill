@@ -156,7 +156,7 @@ CI runs the same integration suite against Docker and Podman on GitHub Actions.
 Dill configs are `.pkl` files that amend the published `dill` schema:
 
 ```pkl
-amends "package://pkg.ushd.ca/dill@0.4.0#/dill.pkl"
+amends "package://pkg.ushd.ca/dill@0.5.0#/dill.pkl"
 
 config {
   engine = "docker"
@@ -164,13 +164,17 @@ config {
     ["web"] {
       image = "nginx:alpine"
       ports = List("8080:80")
-      pull_policy = "missing"   // "always" | "missing" | "never"
+      pullPolicy = "missing"   // "always" | "missing" | "never"
     }
   }
 }
 ```
 
-`pull_policy` is applied before planning: `always` pulls before the plan is computed,
+Schema properties are camelCase (Pkl convention: `pullPolicy`, `dependsOn`,
+`containerName`). JSON output matches. This is a breaking change in v0.5.0;
+rename the snake_case properties in existing configs.
+
+`pullPolicy` is applied before planning: `always` pulls before the plan is computed,
 and Dill recreates a container when the local image ID differs from the image it is
 running (for example after `dill pull` or a moved tag). `missing` only pulls when the
 image is absent; `never` uses the local image as-is.
@@ -190,12 +194,12 @@ volumes = List(new Mount {
   type = "volume"
   source = "pg-data"
   target = "/var/lib/postgresql/data"
-  external_volume = true
+  externalVolume = true
 })
 ```
 
-`external_volume = true` uses `source` (or `name`) as the engine volume name and
-Dill never creates, labels, or removes it. A `name` without `external_volume` uses
+`externalVolume = true` uses `source` (or `name`) as the engine volume name and
+Dill never creates, labels, or removes it. A `name` without `externalVolume` uses
 an explicit engine name but keeps the volume managed.
 
 `dill volumes` lists the volumes owned by the stack. Legacy and Compose-created
@@ -207,5 +211,5 @@ existing volume.
 - **Type Safety:** Catch invalid ports or misspelled parameters in your IDE.
 - **Programmability:** Use loops, conditionals, and variables to build complex architectures.
 - **Engine Agnostic:** Deploy securely with Podman's daemonless architecture, or fallback to Docker when needed.
-- **DAG Startup:** Services with `depends_on` start in order and only after their dependencies are healthy.
-- **Image-aware updates:** `pull_policy: always` pulls before planning and recreates only when the image ID actually changed.
+- **DAG Startup:** Services with `dependsOn` start in order and only after their dependencies are healthy.
+- **Image-aware updates:** `pullPolicy: always` pulls before planning and recreates only when the image ID actually changed.
