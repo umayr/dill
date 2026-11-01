@@ -222,17 +222,20 @@ func runRm(ctx context.Context, opts commandOptions, args []string) error {
 	}
 	args = fs.Args()
 
-	cfg, err := loadConfig(ctx, opts)
+	st, err := resolveLabelStack(ctx, opts)
 	if err != nil {
 		return err
 	}
 	if len(args) > 0 {
-		if _, err := selectServices(cfg.Services, args, false); err != nil {
+		if err := st.requireConfig("rm"); err != nil {
+			return err
+		}
+		if _, err := selectServices(st.Config.Services, args, false); err != nil {
 			return err
 		}
 	}
-	sn := resolveStackNameWithOptions(cfg, opts)
-	engine, err := openEngine(ctx, cfg)
+	sn := st.Name
+	engine, err := newEngine(ctx, st.Engine)
 	if err != nil {
 		return err
 	}
@@ -240,6 +243,7 @@ func runRm(ctx context.Context, opts commandOptions, args []string) error {
 
 	names := []string{}
 	if len(args) > 0 {
+		cfg := st.Config
 		for _, name := range args {
 			names = append(names, serviceContainerName(sn, name, cfg.Services[name]))
 		}
