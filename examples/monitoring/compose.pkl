@@ -1,14 +1,14 @@
 /// Observability stack: Prometheus + Grafana + Node Exporter.
 ///
-/// Demonstrates: network_mode = "host", cap_add, bind-mounted config files,
-/// computed local paths, depends_on chains, and label-based organisation.
+/// Demonstrates: networkMode = "host", capAdd, bind-mounted config files,
+/// computed local paths, dependsOn chains, and label-based organisation.
 ///
 /// Usage:
 ///   export GRAFANA_PASSWORD=admin DATA_DIR=./data
 ///   mkdir -p ./data/prometheus ./data/grafana
 ///   dill -f examples/monitoring/compose.pkl up
 ///
-/// Note: network_mode = "host" for node-exporter only works on Linux.
+/// Note: networkMode = "host" for node-exporter only works on Linux.
 /// On macOS/Windows remove that line and expose port 9100:9100 instead.
 amends "../../dill.pkl"
 
@@ -27,8 +27,8 @@ config {
     ["node-exporter"] {
       image = "prom/node-exporter:v1.8.1"
       restart = "unless-stopped"
-      network_mode = "host"
-      cap_add = List("SYS_TIME")
+      networkMode = "host"
+      capAdd = List("SYS_TIME")
       volumes =
         List(
           "/proc:/host/proc:ro",
@@ -44,7 +44,7 @@ config {
     ["prometheus"] {
       image = "prom/prometheus:v2.53.0"
       restart = "unless-stopped"
-      depends_on = List("node-exporter")
+      dependsOn = List("node-exporter")
       user = "65534:65534"
       volumes =
         List(
@@ -57,7 +57,7 @@ config {
         interval = 10.s
         timeout = 5.s
         retries = 5
-        start_period = 15.s
+        startPeriod = 15.s
       }
       labels {
         ["monitoring.role"] = "prometheus"
@@ -67,7 +67,7 @@ config {
     ["grafana"] {
       image = "grafana/grafana:11.1.0"
       restart = "unless-stopped"
-      depends_on = List("prometheus")
+      dependsOn = List("prometheus")
       user = "472:472"
       environment {
         ["GF_SECURITY_ADMIN_PASSWORD"] = grafanaPassword
@@ -87,7 +87,7 @@ config {
         interval = 10.s
         timeout = 5.s
         retries = 5
-        start_period = 20.s
+        startPeriod = 20.s
       }
       labels {
         ["monitoring.role"] = "grafana"

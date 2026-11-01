@@ -2,7 +2,7 @@
 ///
 /// Demonstrates: local functions, command field, computed port arithmetic,
 /// mixing a static service declaration with loop-generated services, and
-/// depends_on across dynamically named services.
+/// dependsOn across dynamically named services.
 ///
 /// Spins up one primary and `replicaCount` replicas. Each replica gets a
 /// sequentially assigned host port starting at baseReplicaPort.
@@ -49,7 +49,7 @@ local primary = new Service {
 local function replica(n: Int) = new Service {
   image = "redis:7-alpine"
   restart = "unless-stopped"
-  depends_on = List("redis-primary")
+  dependsOn = List("redis-primary")
   command =
     List(
       "redis-server",

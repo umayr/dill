@@ -38,7 +38,7 @@ func TestNormalizePorts_shorthand(t *testing.T) {
 func TestNormalizePorts_objectForm(t *testing.T) {
 	published := 8080
 	hostIP := "127.0.0.1"
-	raw := json.RawMessage(`{"target":80,"published":8080,"protocol":"tcp","host_ip":"127.0.0.1"}`)
+	raw := json.RawMessage(`{"target":80,"published":8080,"protocol":"tcp","hostIp":"127.0.0.1"}`)
 	got, err := NormalizePorts([]json.RawMessage{raw})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -214,7 +214,7 @@ func TestVolumeEngineName(t *testing.T) {
 
 func TestNormalizeVolumes_mountForm(t *testing.T) {
 	got, err := NormalizeVolumes([]json.RawMessage{
-		raw(`{"type":"volume","source":"data","target":"/data","external_volume":true}`),
+		raw(`{"type":"volume","source":"data","target":"/data","externalVolume":true}`),
 		raw(`{"type":"volume","source":"data","target":"/data","name":"custom"}`),
 	}, "")
 	if err != nil {
@@ -233,9 +233,9 @@ func TestNormalizeVolumes_mountForm(t *testing.T) {
 
 func TestNormalizeVolumes_invalidMounts(t *testing.T) {
 	cases := []string{
-		`{"type":"volume","target":"/data","external_volume":true}`,
+		`{"type":"volume","target":"/data","externalVolume":true}`,
 		`{"type":"volume","source":"data","target":"/data","name":""}`,
-		`{"type":"bind","source":"/host","target":"/data","external_volume":true}`,
+		`{"type":"bind","source":"/host","target":"/data","externalVolume":true}`,
 		`{"type":"bind","target":"/data"}`,
 		`{"type":"tmpfs","target":"/data","name":"custom"}`,
 		`{"type":"nfs","source":"host:/data","target":"/data"}`,

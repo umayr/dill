@@ -4,21 +4,21 @@ class Port {
   target: Int
   published: Int?
   protocol: "tcp" | "udp" | "sctp" = "tcp"
-  host_ip: String?
+  hostIp: String?
 }
 
 class Mount {
   type: "volume" | "bind" | "tmpfs" = "volume"
   source: String?
   target: String
-  read_only: Boolean = false
+  readOnly: Boolean = false
 
   /// Use an existing volume as-is: no stack prefix, no creation, labelling, or
   /// removal by teardown. `source` or `name` is the engine volume name.
-  external_volume: Boolean = false
+  externalVolume: Boolean = false
 
   /// Explicit engine volume name. The volume stays managed (created, labelled,
-  /// and removed) unless `external_volume` is true. When omitted, named volumes are
+  /// and removed) unless `externalVolume` is true. When omitted, named volumes are
   /// prefixed with the stack name: `pg-data` becomes `<stack>_pg-data`.
   name: String?
 }
@@ -28,25 +28,25 @@ class HealthCheck {
   interval: Duration?
   timeout: Duration?
   retries: Int?
-  start_period: Duration?
+  startPeriod: Duration?
 }
 
 class Service {
   image: String
-  container_name: String?
+  containerName: String?
   restart: "no" | "always" | "on-failure" | "unless-stopped" = "no"
-  pull_policy: "always" | "missing" | "never" = "missing"
+  pullPolicy: "always" | "missing" | "never" = "missing"
   environment: Mapping<String, String>?
   volumes: List<Mount | String>?
   ports: List<Port | String>?
   labels: Mapping<String, String>?
-  depends_on: List<String>?
+  dependsOn: List<String>?
   command: List<String>?
-  network_mode: String?
+  networkMode: String?
   healthcheck: HealthCheck?
   user: String?
   init: Boolean?
-  cap_add: List<String>?
+  capAdd: List<String>?
   devices: List<String>?
   cpuset: String?
 }

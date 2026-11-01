@@ -30,7 +30,7 @@ func TestServiceConfigHash_stackScopesVolumes(t *testing.T) {
 }
 
 func TestServiceConfigHash_externalVolumeIsStable(t *testing.T) {
-	svc := volumeService(`{"type":"volume","source":"shared","target":"/data","external_volume":true}`)
+	svc := volumeService(`{"type":"volume","source":"shared","target":"/data","externalVolume":true}`)
 
 	a, err := ServiceConfigHash("stack-a", "web", svc)
 	if err != nil {

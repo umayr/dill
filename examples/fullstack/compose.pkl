@@ -1,6 +1,6 @@
 /// Full-stack web application example.
 ///
-/// Demonstrates: depends_on, healthcheck with all timing fields, shared local
+/// Demonstrates: dependsOn, healthcheck with all timing fields, shared local
 /// variables for secrets, labels, and multiple services wired together.
 ///
 /// Usage:
@@ -34,7 +34,7 @@ config {
         interval = 5.s
         timeout = 3.s
         retries = 10
-        start_period = 10.s
+        startPeriod = 10.s
       }
       labels {
         ["com.example.tier"] = "data"
@@ -61,8 +61,8 @@ config {
     ["api"] {
       image = "node:22-alpine"
       restart = "unless-stopped"
-      pull_policy = "missing"
-      depends_on = List("postgres", "redis")
+      pullPolicy = "missing"
+      dependsOn = List("postgres", "redis")
       command =
         List(
           "node",
@@ -95,7 +95,7 @@ config {
     ["nginx"] {
       image = "nginx:1.27-alpine"
       restart = "unless-stopped"
-      depends_on = List("api")
+      dependsOn = List("api")
       ports = List("80:80", "443:443")
       volumes =
         List(

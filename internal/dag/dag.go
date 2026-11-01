@@ -57,7 +57,7 @@ type Graph struct {
 }
 
 // Build constructs a Graph from the services map.
-// Returns an error if any depends_on reference is missing or a cycle is detected.
+// Returns an error if any dependsOn reference is missing or a cycle is detected.
 func Build(services map[string]*config.Service) (*Graph, error) {
 	g := &Graph{
 		nodes: make([]*node, 0, len(services)),
@@ -269,7 +269,7 @@ func teardown(ctx context.Context, engine orchestrator.Engine, names []string, p
 	wg.Wait()
 }
 
-// maybePull pulls the image based on the service's pull_policy.
+// maybePull pulls the image based on the service's pullPolicy.
 // sink.Begin/Done bracket the pull so the caller can render progress.
 func maybePull(ctx context.Context, engine orchestrator.Engine, svc *config.Service, sink PullSink) error {
 	pull := func() error {

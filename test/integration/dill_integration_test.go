@@ -353,7 +353,7 @@ func TestDillExternalVolumePreserved(t *testing.T) {
       type = "volume"
       source = "%s"
       target = "/data"
-      external_volume = true
+      externalVolume = true
     })`, shared)
 	writeVolumeStackConfig(t, cfg, root, env.engine, stack, mount)
 	cleanupStack(t, bin, cfg, stack)
@@ -486,7 +486,7 @@ config {
   services {
     ["app"] {
       image = "docker.io/library/busybox:1.36"
-      pull_policy = "missing"
+      pullPolicy = "missing"
       environment {
         ["PUBLIC"] = "%s"
       }
@@ -517,7 +517,7 @@ config {
   services {
     ["app"] {
       image = "docker.io/library/busybox:1.36"
-      pull_policy = "missing"
+      pullPolicy = "missing"
       ports = List("127.0.0.1:0:8080")
       command = List("sh", "-c", "mkdir -p /www; echo hello > /www/index.html; echo alpha; echo beta; echo ready > /tmp/ready; httpd -f -p 8080 -h /www")
       healthcheck {
@@ -546,7 +546,7 @@ config {
   services {
     ["app"] {
       image = "%s"
-      pull_policy = "never"
+      pullPolicy = "never"
       command = List("sleep", "300")
     }
   }
@@ -565,7 +565,7 @@ func writePartialConfig(t *testing.T, path, root, engine, stack string, includeO
 		other = `
     ["other"] {
       image = "docker.io/library/busybox:1.36"
-      pull_policy = "missing"
+      pullPolicy = "missing"
       command = List("sleep", "300")
     }`
 	}
@@ -577,13 +577,13 @@ config {
   services {
     ["dep"] {
       image = "docker.io/library/busybox:1.36"
-      pull_policy = "missing"
+      pullPolicy = "missing"
       command = List("sleep", "300")
     }
     ["app"] {
       image = "docker.io/library/busybox:1.36"
-      pull_policy = "missing"
-      depends_on = List("dep")
+      pullPolicy = "missing"
+      dependsOn = List("dep")
       command = List("sleep", "300")
     }%s
   }
@@ -605,7 +605,7 @@ config {
   services {
     ["app"] {
       image = "docker.io/library/busybox:1.36"
-      pull_policy = "missing"
+      pullPolicy = "missing"
       volumes = %s
       command = List("sh", "-c", "trap 'exit 0' TERM; while true; do sleep 1; done")
     }
@@ -629,7 +629,7 @@ config {
   services {
     ["app"] {
       image = "docker.io/library/busybox:1.36"
-      pull_policy = "missing"
+      pullPolicy = "missing"
       volumes = List("%s:/data")
       command = List("sh", "-c", "echo ready > /tmp/ready; trap 'exit 0' TERM; while true; do sleep 1; done")
       healthcheck {
