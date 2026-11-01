@@ -156,7 +156,7 @@ CI runs the same integration suite against Docker and Podman on GitHub Actions.
 Dill configs are `.pkl` files that amend the published `dill` schema:
 
 ```pkl
-amends "package://pkg.ushd.ca/dill@0.3.0#/dill.pkl"
+amends "package://pkg.ushd.ca/dill@0.4.0#/dill.pkl"
 
 config {
   engine = "docker"
