@@ -194,6 +194,58 @@ func TestDillImageUpdateRecreates(t *testing.T) {
 	}
 }
 
+func TestDillPartialUpKeepsOtherServices(t *testing.T) {
+	env := integrationEnv(t)
+	root := repoRoot(t)
+	bin := dillBinary(t, root)
+	stack := fmt.Sprintf("dill-it-%s-partial-%d", env.engine, time.Now().UnixNano())
+	cfg := filepath.Join(t.TempDir(), "compose.pkl")
+
+	writePartialConfig(t, cfg, root, env.engine, stack, true)
+	cleanupStack(t, bin, cfg, stack)
+
+	runDill(t, true, bin, "-f", cfg, "--timeout", testTimeout(), "up")
+	if got := containerState(t, env.engine, stack+"_other"); got != "running" {
+		t.Fatalf("other state = %q, want running", got)
+	}
+
+	// Stop the dependency, then bring up only app without deps. The dependency
+	// must stay stopped and app must still start.
+	runDill(t, true, bin, "-f", cfg, "stop", "dep")
+	runDill(t, true, bin, "-f", cfg, "--timeout", testTimeout(), "up", "--no-deps", "app")
+	if got := containerState(t, env.engine, stack+"_dep"); got == "running" {
+		t.Fatalf("dep was started by --no-deps")
+	}
+	if got := containerState(t, env.engine, stack+"_app"); got != "running" {
+		t.Fatalf("app state = %q, want running", got)
+	}
+
+	// A partial up with deps must start dep again and still leave other alone.
+	runDill(t, true, bin, "-f", cfg, "--timeout", testTimeout(), "up", "app")
+	if got := containerState(t, env.engine, stack+"_dep"); got != "running" {
+		t.Fatalf("dep state = %q, want running", got)
+	}
+	if got := containerState(t, env.engine, stack+"_other"); got != "running" {
+		t.Fatalf("other state = %q after partial up, want running", got)
+	}
+
+	// A full up still removes services deleted from the config.
+	writePartialConfig(t, cfg, root, env.engine, stack, false)
+	runDill(t, true, bin, "-f", cfg, "--timeout", testTimeout(), "up")
+	out := runDill(t, true, bin, "-f", cfg, "ps", "--format", "json")
+	var rows []struct {
+		Name string `json:"name"`
+	}
+	if err := json.Unmarshal([]byte(out), &rows); err != nil {
+		t.Fatalf("parsing ps JSON: %v\n%s", err, out)
+	}
+	for _, row := range rows {
+		if row.Name == stack+"_other" {
+			t.Fatalf("other was not removed by full up: %s", out)
+		}
+	}
+}
+
 func TestDillCommandUXWithoutEngineMutation(t *testing.T) {
 	env := integrationEnv(t)
 	root := repoRoot(t)
@@ -346,6 +398,43 @@ config {
 	}
 }
 
+func writePartialConfig(t *testing.T, path, root, engine, stack string, includeOther bool) {
+	t.Helper()
+	schema := filepath.ToSlash(filepath.Join(root, "dill.pkl"))
+	other := ""
+	if includeOther {
+		other = `
+    ["other"] {
+      image = "docker.io/library/busybox:1.36"
+      pull_policy = "missing"
+      command = List("sleep", "300")
+    }`
+	}
+	body := fmt.Sprintf(`amends "%s"
+
+config {
+  name = "%s"
+  engine = "%s"
+  services {
+    ["dep"] {
+      image = "docker.io/library/busybox:1.36"
+      pull_policy = "missing"
+      command = List("sleep", "300")
+    }
+    ["app"] {
+      image = "docker.io/library/busybox:1.36"
+      pull_policy = "missing"
+      depends_on = List("dep")
+      command = List("sleep", "300")
+    }%s
+  }
+}
+`, schema, stack, engine, other)
+	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func writeVolumeConfig(t *testing.T, path, root, engine, stack string) {
 	t.Helper()
 	schema := filepath.ToSlash(filepath.Join(root, "dill.pkl"))
@@ -478,6 +567,11 @@ func engineBinaryName(engine string) string {
 		return "podman"
 	}
 	return "docker"
+}
+
+func containerState(t *testing.T, engine, name string) string {
+	t.Helper()
+	return runEngine(t, engine, "inspect", "--format", "{{.State.Status}}", name)
 }
 
 func runEngine(t *testing.T, engine string, args ...string) string {

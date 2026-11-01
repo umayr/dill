@@ -6,6 +6,7 @@ import (
 
 	"github.com/umayr/dill/internal/config"
 	"github.com/umayr/dill/internal/dag"
+	"github.com/umayr/dill/internal/plan"
 )
 
 type noopPullSink struct{}
@@ -36,5 +37,50 @@ func TestPullAlwaysImages(t *testing.T) {
 	}
 	if services["missing"].PullPolicy != "missing" || services["never"].PullPolicy != "never" {
 		t.Errorf("policies changed unexpectedly: %+v", services)
+	}
+}
+
+func TestFilterPlanSubset(t *testing.T) {
+	p := &plan.Plan{Changes: []plan.Change{
+		{Service: "app", Kind: plan.KindCreate},
+		{Service: "dep", Kind: plan.KindNoop},
+		{Service: "other", Kind: plan.KindCreate},
+		{Service: "orphan-container", Kind: plan.KindRemove},
+	}}
+	selected := map[string]*config.Service{"app": {Image: "x"}}
+
+	got := filterPlan(p, selected, false)
+	if len(got.Changes) != 1 || got.Changes[0].Service != "app" {
+		t.Fatalf("filterPlan = %+v, want only app", got.Changes)
+	}
+}
+
+func TestFilterPlanFullKeepsOrphans(t *testing.T) {
+	changes := []plan.Change{
+		{Service: "app", Kind: plan.KindCreate},
+		{Service: "other", Kind: plan.KindNoop},
+		{Service: "orphan-container", Kind: plan.KindRemove},
+	}
+	selected := map[string]*config.Service{
+		"app":   {Image: "x"},
+		"other": {Image: "x"},
+	}
+
+	got := filterPlan(&plan.Plan{Changes: changes}, selected, true)
+	if len(got.Changes) != 3 {
+		t.Fatalf("filterPlan = %+v, want all 3 changes", got.Changes)
+	}
+}
+
+func TestWithoutDependencies(t *testing.T) {
+	services := map[string]*config.Service{
+		"app": {Image: "x", DependsOn: []string{"dep"}},
+	}
+	got := withoutDependencies(services)
+	if len(got["app"].DependsOn) != 0 {
+		t.Fatalf("copy still has dependencies: %+v", got["app"].DependsOn)
+	}
+	if len(services["app"].DependsOn) != 1 {
+		t.Fatalf("original was mutated: %+v", services["app"].DependsOn)
 	}
 }
