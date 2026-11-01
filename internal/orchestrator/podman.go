@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -15,6 +16,7 @@ import (
 	"github.com/containers/podman/v5/pkg/bindings/images"
 	podmannetwork "github.com/containers/podman/v5/pkg/bindings/network"
 	podmanvolumes "github.com/containers/podman/v5/pkg/bindings/volumes"
+	entitiesTypes "github.com/containers/podman/v5/pkg/domain/entities/types"
 	"github.com/containers/podman/v5/pkg/specgen"
 	specs "github.com/opencontainers/runtime-spec/specs-go"
 	"github.com/umayr/dill/internal/config"
@@ -95,7 +97,7 @@ func (p *PodmanEngine) StartService(ctx context.Context, name string, svc *confi
 		"dill.stack":       stackName,
 		"dill.config-hash": "",
 	}
-	if hash, err := config.ServiceConfigHash(name, svc); err != nil {
+	if hash, err := config.ServiceConfigHash(stackName, name, svc); err != nil {
 		return "", fmt.Errorf("service %s: %w", name, err)
 	} else {
 		s.Labels["dill.config-hash"] = hash
@@ -123,8 +125,14 @@ func (p *PodmanEngine) StartService(ctx context.Context, name string, svc *confi
 	for _, vm := range volumes {
 		switch vm.Type {
 		case "volume":
+			name := vm.EngineName(stackName)
+			if !vm.External && name != "" {
+				if err := p.EnsureVolume(ctx, name, stackName); err != nil {
+					return "", fmt.Errorf("service %s: %w", name, err)
+				}
+			}
 			s.Volumes = append(s.Volumes, &specgen.NamedVolume{
-				Name:    vm.Source,
+				Name:    name,
 				Dest:    vm.Target,
 				Options: volumeOptions(vm),
 			})
@@ -549,6 +557,48 @@ func (p *PodmanEngine) RemoveImage(ctx context.Context, image string, force bool
 	}
 	logger.Debug("image removed", "image", image)
 	return nil
+}
+
+// EnsureVolume creates a stack-owned volume with dill labels if it does not
+// exist. Existing volumes (including Compose-created ones) are left untouched.
+func (p *PodmanEngine) EnsureVolume(ctx context.Context, name, stackName string) error {
+	exists, err := podmanvolumes.Exists(p.conn, name, nil)
+	if err != nil {
+		return err
+	}
+	if exists {
+		return nil
+	}
+	_, err = podmanvolumes.Create(p.conn, entitiesTypes.VolumeCreateOptions{
+		Name: name,
+		Labels: map[string]string{
+			"dill.managed": "true",
+			"dill.stack":   stackName,
+		},
+		IgnoreIfExists: true,
+	}, nil)
+	if err != nil {
+		return fmt.Errorf("creating volume %s: %w", name, err)
+	}
+	logger.Debug("volume created", "name", name, "stack", stackName)
+	return nil
+}
+
+// ListStackVolumes returns volumes labelled as owned by the stack.
+func (p *PodmanEngine) ListStackVolumes(ctx context.Context, stackName string) ([]string, error) {
+	opts := new(podmanvolumes.ListOptions).WithFilters(map[string][]string{
+		"label": {"dill.stack=" + stackName},
+	})
+	reports, err := podmanvolumes.List(p.conn, opts)
+	if err != nil {
+		return nil, err
+	}
+	names := make([]string, 0, len(reports))
+	for _, r := range reports {
+		names = append(names, r.Name)
+	}
+	sort.Strings(names)
+	return names, nil
 }
 
 func (p *PodmanEngine) RemoveVolume(ctx context.Context, name string, force bool) error {

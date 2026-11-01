@@ -47,10 +47,12 @@ type Port struct {
 
 // Mount mirrors the Pkl Mount class.
 type Mount struct {
-	Type     string  `json:"type"`
-	Source   *string `json:"source"`
-	Target   string  `json:"target"`
-	ReadOnly bool    `json:"read_only"`
+	Type           string  `json:"type"`
+	Source         *string `json:"source"`
+	Target         string  `json:"target"`
+	ReadOnly       bool    `json:"read_only"`
+	ExternalVolume bool    `json:"external_volume"`
+	Name           *string `json:"name"`
 }
 
 // HealthCheck mirrors the Pkl HealthCheck class.

@@ -287,6 +287,124 @@ func TestDillLabelOnlyTeardown(t *testing.T) {
 	}
 }
 
+func TestDillStackScopedVolumes(t *testing.T) {
+	env := integrationEnv(t)
+	root := repoRoot(t)
+	bin := dillBinary(t, root)
+	suffix := fmt.Sprintf("%d", time.Now().UnixNano())
+	stackA := "dill-it-" + env.engine + "-vol-a-" + suffix
+	stackB := "dill-it-" + env.engine + "-vol-b-" + suffix
+	cfgA := filepath.Join(t.TempDir(), "a.pkl")
+	cfgB := filepath.Join(t.TempDir(), "b.pkl")
+
+	writeVolumeStackConfig(t, cfgA, root, env.engine, stackA, `List("data:/data")`)
+	writeVolumeStackConfig(t, cfgB, root, env.engine, stackB, `List("data:/data")`)
+
+	t.Cleanup(func() {
+		_ = exec.Command(engineBinaryName(env.engine), "volume", "rm", "-f", stackA+"_data").Run()
+		_ = exec.Command(engineBinaryName(env.engine), "volume", "rm", "-f", stackB+"_data").Run()
+	})
+	cleanupStack(t, bin, cfgA, stackA)
+	cleanupStack(t, bin, cfgB, stackB)
+
+	runDill(t, true, bin, "-f", cfgA, "--timeout", testTimeout(), "up")
+	runDill(t, true, bin, "-f", cfgB, "--timeout", testTimeout(), "up")
+
+	if !volumeExists(t, env.engine, stackA+"_data") || !volumeExists(t, env.engine, stackB+"_data") {
+		t.Fatalf("expected both %s_data volumes", env.engine)
+	}
+	vols := runDill(t, true, bin, "--engine", env.engine, "-p", stackA, "volumes", "--format", "json")
+	if !strings.Contains(vols, stackA+"_data") {
+		t.Fatalf("dill volumes did not list %s_data: %s", stackA, vols)
+	}
+
+	// Same logical volume, separate data.
+	runEngine(t, env.engine, "run", "--rm", "-v", stackA+"_data:/data",
+		"docker.io/library/busybox:1.36", "sh", "-c", "echo A > /data/marker")
+	if out, err := runEngineRaw(t, env.engine, "run", "--rm", "-v", stackB+"_data:/data",
+		"docker.io/library/busybox:1.36", "sh", "-c", "cat /data/marker"); err == nil {
+		t.Fatalf("volumes are not isolated; B saw %q", out)
+	}
+
+	// Tearing down A must not remove B's volume.
+	runDill(t, true, bin, "-f", cfgA, "teardown", "--yes")
+	if volumeExists(t, env.engine, stackA+"_data") {
+		t.Fatal("A's volume survived teardown")
+	}
+	if !volumeExists(t, env.engine, stackB+"_data") {
+		t.Fatal("A's teardown removed B's volume")
+	}
+}
+
+func TestDillExternalVolumePreserved(t *testing.T) {
+	env := integrationEnv(t)
+	root := repoRoot(t)
+	bin := dillBinary(t, root)
+	stack := fmt.Sprintf("dill-it-%s-external-%d", env.engine, time.Now().UnixNano())
+	shared := fmt.Sprintf("dill-it-shared-%d", time.Now().UnixNano())
+	cfg := filepath.Join(t.TempDir(), "compose.pkl")
+
+	runEngine(t, env.engine, "volume", "create", shared)
+	t.Cleanup(func() {
+		_ = exec.Command(engineBinaryName(env.engine), "volume", "rm", "-f", shared).Run()
+	})
+
+	mount := fmt.Sprintf(`List(new Mount {
+      type = "volume"
+      source = "%s"
+      target = "/data"
+      external_volume = true
+    })`, shared)
+	writeVolumeStackConfig(t, cfg, root, env.engine, stack, mount)
+	cleanupStack(t, bin, cfg, stack)
+
+	runDill(t, true, bin, "-f", cfg, "--timeout", testTimeout(), "up")
+	runEngine(t, env.engine, "run", "--rm", "-v", shared+":/data",
+		"docker.io/library/busybox:1.36", "sh", "-c", "echo keep > /data/marker")
+
+	vols := runDill(t, true, bin, "--engine", env.engine, "-p", stack, "volumes", "--format", "json")
+	if strings.Contains(vols, shared) {
+		t.Fatalf("external volume was listed as owned: %s", vols)
+	}
+
+	runDill(t, true, bin, "-f", cfg, "teardown", "--yes")
+	if !volumeExists(t, env.engine, shared) {
+		t.Fatal("teardown removed an external volume")
+	}
+
+	runEngine(t, env.engine, "pull", "docker.io/library/busybox:1.36")
+	out, err := runEngineRaw(t, env.engine, "run", "--rm", "-v", shared+":/data",
+		"docker.io/library/busybox:1.36", "sh", "-c", "cat /data/marker")
+	if err != nil || strings.TrimSpace(out) != "keep" {
+		t.Fatalf("external volume data lost: %q (err %v)", out, err)
+	}
+}
+
+func TestDillComposeStyleVolumeReused(t *testing.T) {
+	env := integrationEnv(t)
+	root := repoRoot(t)
+	bin := dillBinary(t, root)
+	stack := fmt.Sprintf("dill-it-%s-migrate-%d", env.engine, time.Now().UnixNano())
+	volume := stack + "_data"
+	cfg := filepath.Join(t.TempDir(), "compose.pkl")
+
+	runEngine(t, env.engine, "volume", "create", volume)
+	t.Cleanup(func() {
+		_ = exec.Command(engineBinaryName(env.engine), "volume", "rm", "-f", volume).Run()
+	})
+	runEngine(t, env.engine, "run", "--rm", "-v", volume+":/data",
+		"docker.io/library/busybox:1.36", "sh", "-c", "echo migrated > /data/marker")
+
+	writeVolumeStackConfig(t, cfg, root, env.engine, stack, `List("data:/data")`)
+	cleanupStack(t, bin, cfg, stack)
+	runDill(t, true, bin, "-f", cfg, "--timeout", testTimeout(), "up")
+
+	out := runDill(t, true, bin, "-f", cfg, "exec", "app", "cat", "/data/marker")
+	if strings.TrimSpace(out) != "migrated" {
+		t.Fatalf("pre-existing Compose-style volume was not reused: %q", out)
+	}
+}
+
 func TestDillCommandUXWithoutEngineMutation(t *testing.T) {
 	env := integrationEnv(t)
 	root := repoRoot(t)
@@ -476,6 +594,29 @@ config {
 	}
 }
 
+func writeVolumeStackConfig(t *testing.T, path, root, engine, stack, volumes string) {
+	t.Helper()
+	schema := filepath.ToSlash(filepath.Join(root, "dill.pkl"))
+	body := fmt.Sprintf(`amends "%s"
+
+config {
+  name = "%s"
+  engine = "%s"
+  services {
+    ["app"] {
+      image = "docker.io/library/busybox:1.36"
+      pull_policy = "missing"
+      volumes = %s
+      command = List("sh", "-c", "trap 'exit 0' TERM; while true; do sleep 1; done")
+    }
+  }
+}
+`, schema, stack, engine, volumes)
+	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func writeVolumeConfig(t *testing.T, path, root, engine, stack string) {
 	t.Helper()
 	schema := filepath.ToSlash(filepath.Join(root, "dill.pkl"))
@@ -608,6 +749,20 @@ func engineBinaryName(engine string) string {
 		return "podman"
 	}
 	return "docker"
+}
+
+func runEngineRaw(t *testing.T, engine string, args ...string) (string, error) {
+	t.Helper()
+	cmd := exec.Command(engineBinaryName(engine), args...)
+	cmd.Env = os.Environ()
+	out, err := cmd.CombinedOutput()
+	return strings.TrimSpace(string(out)), err
+}
+
+func volumeExists(t *testing.T, engine, name string) bool {
+	t.Helper()
+	_, err := runEngineRaw(t, engine, "volume", "inspect", name)
+	return err == nil
 }
 
 func stackContainerNames(t *testing.T, engine, stack string) string {

@@ -282,6 +282,10 @@ func (f *fakeEngine) PullImage(_ context.Context, image string, _ io.Writer) err
 }
 func (f *fakeEngine) ImageExists(context.Context, string) (bool, error)    { return false, nil }
 func (f *fakeEngine) LocalImageID(context.Context, string) (string, error) { return "", nil }
+func (f *fakeEngine) EnsureVolume(context.Context, string, string) error   { return nil }
+func (f *fakeEngine) ListStackVolumes(context.Context, string) ([]string, error) {
+	return nil, nil
+}
 func (f *fakeEngine) StartService(context.Context, string, *config.Service, string) (string, error) {
 	return "id", nil
 }

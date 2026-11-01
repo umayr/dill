@@ -1,6 +1,7 @@
 package plan
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"testing"
@@ -154,7 +155,7 @@ func TestDiffConfigs_redactsSensitiveEnv(t *testing.T) {
 			"PUBLIC":      "old-value",
 		},
 	}
-	diffs, err := diffConfigs("web", svc, live, "")
+	diffs, err := diffConfigs("web", svc, live, "", "test-stack")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -197,7 +198,7 @@ func TestIsNotFound(t *testing.T) {
 func TestDiffConfigs_imageIDChanged(t *testing.T) {
 	svc := &config.Service{Image: "app:latest"}
 	live := &orchestrator.LiveConfig{Image: "app:latest", ImageID: "sha256:aaaaaaaaaaaaaaaa"}
-	diffs, err := diffConfigs("app", svc, live, "sha256:bbbbbbbbbbbbbbbb")
+	diffs, err := diffConfigs("app", svc, live, "sha256:bbbbbbbbbbbbbbbb", "test-stack")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -218,7 +219,7 @@ func TestDiffConfigs_imageIDChanged(t *testing.T) {
 func TestDiffConfigs_imageIDSame(t *testing.T) {
 	svc := &config.Service{Image: "app:latest"}
 	live := &orchestrator.LiveConfig{Image: "app:latest", ImageID: "sha256:aaaaaaaaaaaaaaaa"}
-	diffs, err := diffConfigs("app", svc, live, "aaaaaaaaaaaaaaaa")
+	diffs, err := diffConfigs("app", svc, live, "aaaaaaaaaaaaaaaa", "test-stack")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -232,7 +233,7 @@ func TestDiffConfigs_imageIDSame(t *testing.T) {
 func TestDiffConfigs_imageIDMissingLocally(t *testing.T) {
 	svc := &config.Service{Image: "app:latest"}
 	live := &orchestrator.LiveConfig{Image: "app:latest", ImageID: "sha256:aaaaaaaaaaaaaaaa"}
-	diffs, err := diffConfigs("app", svc, live, "")
+	diffs, err := diffConfigs("app", svc, live, "", "test-stack")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -246,7 +247,7 @@ func TestDiffConfigs_imageIDMissingLocally(t *testing.T) {
 func TestDiffConfigs_imageNameChangedWins(t *testing.T) {
 	svc := &config.Service{Image: "app:v2"}
 	live := &orchestrator.LiveConfig{Image: "app:v1", ImageID: "sha256:aaaaaaaaaaaaaaaa"}
-	diffs, err := diffConfigs("app", svc, live, "sha256:bbbbbbbbbbbbbbbb")
+	diffs, err := diffConfigs("app", svc, live, "sha256:bbbbbbbbbbbbbbbb", "test-stack")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -261,5 +262,47 @@ func TestDiffConfigs_imageNameChangedWins(t *testing.T) {
 	}
 	if !seenImage {
 		t.Fatalf("expected image diff, got %+v", diffs)
+	}
+}
+
+func TestDiffConfigs_stackScopedVolumeMatches(t *testing.T) {
+	svc := &config.Service{
+		Image:   "app:latest",
+		BaseDir: "/tmp",
+		Volumes: []json.RawMessage{json.RawMessage(`"data:/data"`)},
+	}
+	live := &orchestrator.LiveConfig{
+		Image:   "app:latest",
+		Volumes: []config.VolumeMount{{Type: "volume", Source: "app_data", Target: "/data"}},
+	}
+	diffs, err := diffConfigs("app", svc, live, "", "app")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, d := range diffs {
+		if d.Field == "volume./data" {
+			t.Fatalf("stack-scoped volume reported as a diff: %+v", d)
+		}
+	}
+}
+
+func TestDiffConfigs_externalVolumeMatches(t *testing.T) {
+	svc := &config.Service{
+		Image:   "app:latest",
+		BaseDir: "/tmp",
+		Volumes: []json.RawMessage{json.RawMessage(`{"type":"volume","source":"shared","target":"/data","external_volume":true}`)},
+	}
+	live := &orchestrator.LiveConfig{
+		Image:   "app:latest",
+		Volumes: []config.VolumeMount{{Type: "volume", Source: "shared", Target: "/data"}},
+	}
+	diffs, err := diffConfigs("app", svc, live, "", "app")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, d := range diffs {
+		if d.Field == "volume./data" {
+			t.Fatalf("external volume reported as a diff: %+v", d)
+		}
 	}
 }

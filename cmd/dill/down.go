@@ -5,8 +5,8 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"strings"
 
-	"github.com/umayr/dill/internal/config"
 	"github.com/umayr/dill/internal/dag"
 	"github.com/umayr/dill/internal/log"
 )
@@ -101,11 +101,19 @@ func runTeardown(ctx context.Context, opts commandOptions, args []string) error 
 	}
 	defer engine.Close()
 
+	vols, err := engine.ListStackVolumes(ctx, sn)
+	if err != nil {
+		logger.Warn("could not list stack volumes", "err", err)
+		vols = nil
+	}
+
 	if !opts.DryRun {
-		ok, err := confirmDestructive(
-			fmt.Sprintf("This will remove containers, images, named volumes, and network for stack %s", sn),
-			opts,
-		)
+		msg := fmt.Sprintf("This will remove containers, images, and network for stack %s", sn)
+		if len(vols) > 0 {
+			msg = fmt.Sprintf("This will remove containers, images, %d named volume(s), and network for stack %s\nvolumes: %s",
+				len(vols), sn, strings.Join(vols, ", "))
+		}
+		ok, err := confirmDestructive(msg, opts)
 		if err != nil {
 			return fmt.Errorf("reading confirmation: %w", err)
 		}
@@ -118,7 +126,10 @@ func runTeardown(ctx context.Context, opts commandOptions, args []string) error 
 	}
 
 	if opts.DryRun {
-		fmt.Printf("would remove stack %s containers, network, named volumes, and images\n", sn)
+		fmt.Printf("would remove stack %s containers, network, and images\n", sn)
+		if len(vols) > 0 {
+			fmt.Printf("would remove volumes: %s\n", strings.Join(vols, ", "))
+		}
 		return nil
 	}
 
@@ -126,24 +137,12 @@ func runTeardown(ctx context.Context, opts commandOptions, args []string) error 
 		return err
 	}
 
-	seen := make(map[string]bool)
-	for svcName, svc := range cfg.Services {
-		vols, err := config.NormalizeVolumes(svc.Volumes, svc.BaseDir)
-		if err != nil {
-			logger.Warn("could not parse volumes", "service", svcName, "err", err)
-			continue
+	for _, name := range vols {
+		if !opts.Quiet {
+			printProgress(name, "removing volume")
 		}
-		for _, v := range vols {
-			if v.Type != "volume" || v.Source == "" || seen[v.Source] {
-				continue
-			}
-			seen[v.Source] = true
-			if !opts.Quiet {
-				printProgress(v.Source, "removing volume")
-			}
-			if err := engine.RemoveVolume(ctx, v.Source, *force); err != nil {
-				logger.Warn("remove volume failed", "name", v.Source, "err", err)
-			}
+		if err := engine.RemoveVolume(ctx, name, *force); err != nil {
+			logger.Warn("remove volume failed", "name", name, "err", err)
 		}
 	}
 

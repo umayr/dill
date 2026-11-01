@@ -82,7 +82,7 @@ func Compute(ctx context.Context, cfg *config.DillConfig, engine orchestrator.En
 			return nil, fmt.Errorf("resolving local image for %s: %w", name, err)
 		}
 
-		diffs, err := diffConfigs(name, d.svc, live, localImageID)
+		diffs, err := diffConfigs(name, d.svc, live, localImageID, stackName)
 		if err != nil {
 			return nil, fmt.Errorf("diff %s: %w", name, err)
 		}
@@ -125,10 +125,10 @@ func isNotFound(err error) bool {
 
 // diffConfigs compares desired service config against live container config
 // and returns a list of field-level diffs.
-func diffConfigs(name string, svc *config.Service, live *orchestrator.LiveConfig, localImageID string) ([]FieldDiff, error) {
+func diffConfigs(name string, svc *config.Service, live *orchestrator.LiveConfig, localImageID, stackName string) ([]FieldDiff, error) {
 	var diffs []FieldDiff
 
-	if wantHash, err := config.ServiceConfigHash(name, svc); err != nil {
+	if wantHash, err := config.ServiceConfigHash(stackName, name, svc); err != nil {
 		return nil, fmt.Errorf("hashing desired config: %w", err)
 	} else if gotHash := live.SystemLabels["dill.config-hash"]; gotHash != "" && gotHash != wantHash {
 		diffs = append(diffs, FieldDiff{Field: "config_hash", Before: gotHash, After: wantHash})
@@ -167,6 +167,7 @@ func diffConfigs(name string, svc *config.Service, live *orchestrator.LiveConfig
 	if err != nil {
 		return nil, fmt.Errorf("normalizing volumes: %w", err)
 	}
+	desiredVols = config.ResolveVolumes(desiredVols, stackName)
 	diffs = append(diffs, diffVolumes(desiredVols, live.Volumes)...)
 
 	// restart policy
