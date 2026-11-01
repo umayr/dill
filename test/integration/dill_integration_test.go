@@ -246,6 +246,47 @@ func TestDillPartialUpKeepsOtherServices(t *testing.T) {
 	}
 }
 
+func TestDillLabelOnlyTeardown(t *testing.T) {
+	env := integrationEnv(t)
+	root := repoRoot(t)
+	bin := dillBinary(t, root)
+	stack := fmt.Sprintf("dill-it-%s-labels-%d", env.engine, time.Now().UnixNano())
+	cfg := filepath.Join(t.TempDir(), "compose.pkl")
+
+	writeConfig(t, cfg, root, env.engine, stack, "one")
+	cleanupStack(t, bin, cfg, stack)
+
+	runDill(t, true, bin, "-f", cfg, "--timeout", testTimeout(), "up")
+	if err := os.Remove(cfg); err != nil {
+		t.Fatal(err)
+	}
+
+	// Without a config file, -p + --engine must still stop and remove.
+	runDill(t, true, bin, "--engine", env.engine, "-p", stack, "stop")
+	if got := containerState(t, env.engine, stack+"_app"); got == "running" {
+		t.Fatalf("app state = %q after label-only stop", got)
+	}
+
+	runDill(t, true, bin, "--engine", env.engine, "-p", stack, "rm", "--yes")
+	if names := stackContainerNames(t, env.engine, stack); names != "" {
+		t.Fatalf("containers remain after label-only rm: %s", names)
+	}
+
+	// No containers left; down should still succeed and clear the network.
+	runDill(t, true, bin, "--engine", env.engine, "-p", stack, "down")
+
+	// Recreate and tear down a running stack without the config.
+	writeConfig(t, cfg, root, env.engine, stack, "one")
+	runDill(t, true, bin, "-f", cfg, "--timeout", testTimeout(), "up")
+	if err := os.Remove(cfg); err != nil {
+		t.Fatal(err)
+	}
+	runDill(t, true, bin, "--engine", env.engine, "-p", stack, "down")
+	if names := stackContainerNames(t, env.engine, stack); names != "" {
+		t.Fatalf("containers remain after label-only down: %s", names)
+	}
+}
+
 func TestDillCommandUXWithoutEngineMutation(t *testing.T) {
 	env := integrationEnv(t)
 	root := repoRoot(t)
@@ -567,6 +608,11 @@ func engineBinaryName(engine string) string {
 		return "podman"
 	}
 	return "docker"
+}
+
+func stackContainerNames(t *testing.T, engine, stack string) string {
+	t.Helper()
+	return strings.TrimSpace(runEngine(t, engine, "ps", "-a", "--filter", "label=dill.stack="+stack, "--format", "{{.Names}}"))
 }
 
 func containerState(t *testing.T, engine, name string) string {

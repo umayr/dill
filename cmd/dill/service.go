@@ -20,12 +20,17 @@ func runStop(ctx context.Context, opts commandOptions, services []string) error 
 	}
 	services = fs.Args()
 
-	cfg, err := loadConfig(ctx, opts)
+	st, err := resolveLabelStack(ctx, opts)
 	if err != nil {
 		return err
 	}
-	sn := resolveStackNameWithOptions(cfg, opts)
-	engine, err := openEngine(ctx, cfg)
+	if len(services) > 0 {
+		if err := st.requireConfig("stop"); err != nil {
+			return err
+		}
+	}
+	sn := st.Name
+	engine, err := newEngine(ctx, st.Engine)
 	if err != nil {
 		return err
 	}
@@ -33,6 +38,7 @@ func runStop(ctx context.Context, opts commandOptions, services []string) error 
 
 	var names []string
 	if len(services) > 0 {
+		cfg := st.Config
 		if _, err := selectServices(cfg.Services, services, false); err != nil {
 			return err
 		}

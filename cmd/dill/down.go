@@ -20,12 +20,17 @@ func runDown(ctx context.Context, opts commandOptions, args []string) error {
 	}
 	args = fs.Args()
 
-	cfg, err := loadConfig(ctx, opts)
+	st, err := resolveLabelStack(ctx, opts)
 	if err != nil {
 		return err
 	}
-	sn := resolveStackNameWithOptions(cfg, opts)
-	engine, err := openEngine(ctx, cfg)
+	if len(args) > 0 {
+		if err := st.requireConfig("down"); err != nil {
+			return err
+		}
+	}
+	sn := st.Name
+	engine, err := newEngine(ctx, st.Engine)
 	if err != nil {
 		return err
 	}
@@ -34,6 +39,7 @@ func runDown(ctx context.Context, opts commandOptions, args []string) error {
 	// If specific services are named, stop + remove only those containers
 	// without tearing down the network.
 	if len(args) > 0 {
+		cfg := st.Config
 		if _, err := selectServices(cfg.Services, args, false); err != nil {
 			return err
 		}
