@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -15,6 +16,7 @@ import (
 	"github.com/docker/docker/api/types/mount"
 	"github.com/docker/docker/api/types/network"
 	"github.com/docker/docker/api/types/strslice"
+	volumetypes "github.com/docker/docker/api/types/volume"
 	"github.com/docker/docker/client"
 	"github.com/docker/docker/pkg/stdcopy"
 	"github.com/docker/go-connections/nat"
@@ -157,9 +159,19 @@ func (d *DockerEngine) StartService(ctx context.Context, name string, svc *confi
 		}
 	}
 
-	// Build mounts.
+	// Build mounts. Named volumes are stack-scoped and created with ownership
+	// labels; external volumes are mounted as-is.
 	mounts := make([]mount.Mount, 0, len(volumes))
 	for _, v := range volumes {
+		source := v.Source
+		if v.Type == "volume" {
+			source = v.EngineName(stackName)
+			if !v.External && source != "" {
+				if err := d.EnsureVolume(ctx, source, stackName); err != nil {
+					return "", fmt.Errorf("service %s: %w", name, err)
+				}
+			}
+		}
 		mt := mount.TypeVolume
 		switch v.Type {
 		case "bind":
@@ -169,7 +181,7 @@ func (d *DockerEngine) StartService(ctx context.Context, name string, svc *confi
 		}
 		mounts = append(mounts, mount.Mount{
 			Type:     mt,
-			Source:   v.Source,
+			Source:   source,
 			Target:   v.Target,
 			ReadOnly: v.ReadOnly,
 		})
@@ -187,7 +199,7 @@ func (d *DockerEngine) StartService(ctx context.Context, name string, svc *confi
 		"dill.stack":       stackName,
 		"dill.config-hash": "",
 	}
-	if hash, err := config.ServiceConfigHash(name, svc); err != nil {
+	if hash, err := config.ServiceConfigHash(stackName, name, svc); err != nil {
 		return "", fmt.Errorf("service %s: %w", name, err)
 	} else {
 		labels["dill.config-hash"] = hash
@@ -550,6 +562,45 @@ func (d *DockerEngine) RemoveImage(ctx context.Context, image string, force bool
 	}
 	logger.Debug("image removed", "image", image)
 	return nil
+}
+
+// EnsureVolume creates a stack-owned volume with dill labels if it does not
+// exist. Existing volumes (including Compose-created ones) are left untouched.
+func (d *DockerEngine) EnsureVolume(ctx context.Context, name, stackName string) error {
+	_, err := d.cli.VolumeInspect(ctx, name)
+	if err == nil {
+		return nil
+	}
+	if !client.IsErrNotFound(err) {
+		return err
+	}
+	_, err = d.cli.VolumeCreate(ctx, volumetypes.CreateOptions{
+		Name: name,
+		Labels: map[string]string{
+			"dill.managed": "true",
+			"dill.stack":   stackName,
+		},
+	})
+	if err != nil {
+		return fmt.Errorf("creating volume %s: %w", name, err)
+	}
+	logger.Debug("volume created", "name", name, "stack", stackName)
+	return nil
+}
+
+// ListStackVolumes returns volumes labelled as owned by the stack.
+func (d *DockerEngine) ListStackVolumes(ctx context.Context, stackName string) ([]string, error) {
+	f := filters.NewArgs(filters.Arg("label", "dill.stack="+stackName))
+	resp, err := d.cli.VolumeList(ctx, volumetypes.ListOptions{Filters: f})
+	if err != nil {
+		return nil, err
+	}
+	names := make([]string, 0, len(resp.Volumes))
+	for _, v := range resp.Volumes {
+		names = append(names, v.Name)
+	}
+	sort.Strings(names)
+	return names, nil
 }
 
 func (d *DockerEngine) RemoveVolume(ctx context.Context, name string, force bool) error {

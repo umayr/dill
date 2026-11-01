@@ -11,6 +11,7 @@ const (
 	cmdLogs     = "logs"
 	cmdPull     = "pull"
 	cmdImages   = "images"
+	cmdVolumes  = "volumes"
 	cmdExec     = "exec"
 	cmdPlan     = "plan"
 	cmdConfig   = "config"

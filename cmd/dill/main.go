@@ -98,6 +98,7 @@ Commands:
   logs      Fetch container logs
   pull      Pull service images without starting
   images    List images used by the config
+  volumes   List stack-owned volumes
   exec      Execute a command in a running container
   plan      Show what would change if you ran up
   diff      Show desired vs live changes
@@ -159,6 +160,8 @@ Flags:
 		return runPull(ctx, opts, fs.Args()[1:])
 	case cmdImages:
 		return runImages(ctx, opts, fs.Args()[1:])
+	case cmdVolumes:
+		return runVolumes(ctx, opts, fs.Args()[1:])
 	case cmdExec:
 		return runExec(ctx, opts, fs.Args()[1:])
 	case cmdPlan:

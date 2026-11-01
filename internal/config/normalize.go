@@ -22,9 +22,11 @@ type PortBinding struct {
 // VolumeMount is the normalized form of a Pkl Mount struct or shorthand string.
 type VolumeMount struct {
 	Type     string // "volume", "bind", "tmpfs"
-	Source   string // "" for anonymous volumes
+	Source   string // logical source; for volumes, use EngineName for the engine-facing name
 	Target   string
 	ReadOnly bool
+	External bool   // existing volume: never created, labelled, or removed
+	Name     string // explicit engine volume name
 }
 
 // NormalizePorts converts the raw JSON union slice (string | Port object) into
@@ -227,15 +229,80 @@ func normalizeVolume(raw json.RawMessage, baseDir string) (VolumeMount, error) {
 	if err := json.Unmarshal(raw, &m); err != nil {
 		return VolumeMount{}, fmt.Errorf("invalid Mount object: %w", err)
 	}
+	if m.Type == "" {
+		m.Type = "volume"
+	}
+	switch m.Type {
+	case "volume":
+		if m.ExternalVolume && (m.Source == nil || *m.Source == "") && (m.Name == nil || *m.Name == "") {
+			return VolumeMount{}, fmt.Errorf("external volume requires a source or name")
+		}
+		if m.Name != nil && *m.Name == "" {
+			return VolumeMount{}, fmt.Errorf("volume name must not be empty")
+		}
+	case "bind":
+		if m.ExternalVolume || m.Name != nil {
+			return VolumeMount{}, fmt.Errorf("bind mounts do not support external or name")
+		}
+		if m.Source == nil || *m.Source == "" {
+			return VolumeMount{}, fmt.Errorf("bind mount requires a source")
+		}
+	case "tmpfs":
+		if m.ExternalVolume || m.Name != nil {
+			return VolumeMount{}, fmt.Errorf("tmpfs mounts do not support external or name")
+		}
+	default:
+		return VolumeMount{}, fmt.Errorf("invalid mount type %q", m.Type)
+	}
+
 	vm := VolumeMount{
 		Type:     m.Type,
 		Target:   m.Target,
 		ReadOnly: m.ReadOnly,
+		External: m.ExternalVolume,
+	}
+	if m.Name != nil {
+		vm.Name = *m.Name
 	}
 	if m.Source != nil {
-		vm.Source = resolveBindSource(*m.Source, baseDir)
+		if m.Type == "bind" {
+			vm.Source = resolveBindSource(*m.Source, baseDir)
+		} else {
+			vm.Source = *m.Source
+		}
 	}
 	return vm, nil
+}
+
+// EngineName resolves the volume name used by the container engine.
+// Non-volume mounts return their host path. Anonymous volumes return "".
+func (v VolumeMount) EngineName(stackName string) string {
+	if v.Type != "volume" {
+		return v.Source
+	}
+	if v.Name != "" {
+		return v.Name
+	}
+	if v.External {
+		return v.Source
+	}
+	if v.Source == "" {
+		return ""
+	}
+	return stackName + "_" + v.Source
+}
+
+// ResolveVolumes returns copies with Source set to the engine-facing name.
+// This is the form used for hashing, planning, and mounting.
+func ResolveVolumes(vols []VolumeMount, stackName string) []VolumeMount {
+	out := make([]VolumeMount, len(vols))
+	copy(out, vols)
+	for i := range out {
+		out[i].Source = out[i].EngineName(stackName)
+		out[i].Name = ""
+		out[i].External = false
+	}
+	return out
 }
 
 // parseVolumeString handles: target, source:target, source:target:ro

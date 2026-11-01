@@ -186,3 +186,78 @@ func TestParsePklDuration_unknownUnit(t *testing.T) {
 		t.Error("expected error for unknown unit")
 	}
 }
+
+// --- stack-scoped volumes ---
+
+func TestVolumeEngineName(t *testing.T) {
+	tests := []struct {
+		name  string
+		vm    VolumeMount
+		stack string
+		want  string
+	}{
+		{"managed prefix", VolumeMount{Type: "volume", Source: "data"}, "app", "app_data"},
+		{"external", VolumeMount{Type: "volume", Source: "shared", External: true}, "app", "shared"},
+		{"explicit name", VolumeMount{Type: "volume", Source: "data", Name: "custom"}, "app", "custom"},
+		{"external name", VolumeMount{Type: "volume", Source: "data", Name: "custom", External: true}, "app", "custom"},
+		{"bind", VolumeMount{Type: "bind", Source: "/host/data"}, "app", "/host/data"},
+		{"anonymous", VolumeMount{Type: "volume"}, "app", ""},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := tc.vm.EngineName(tc.stack); got != tc.want {
+				t.Errorf("EngineName() = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestNormalizeVolumes_mountForm(t *testing.T) {
+	got, err := NormalizeVolumes([]json.RawMessage{
+		raw(`{"type":"volume","source":"data","target":"/data","external_volume":true}`),
+		raw(`{"type":"volume","source":"data","target":"/data","name":"custom"}`),
+	}, "")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(got) != 2 {
+		t.Fatalf("got %d volumes, want 2", len(got))
+	}
+	if !got[0].External || got[0].EngineName("app") != "data" {
+		t.Errorf("external volume = %+v", got[0])
+	}
+	if got[1].External || got[1].Name != "custom" || got[1].EngineName("app") != "custom" {
+		t.Errorf("named volume = %+v", got[1])
+	}
+}
+
+func TestNormalizeVolumes_invalidMounts(t *testing.T) {
+	cases := []string{
+		`{"type":"volume","target":"/data","external_volume":true}`,
+		`{"type":"volume","source":"data","target":"/data","name":""}`,
+		`{"type":"bind","source":"/host","target":"/data","external_volume":true}`,
+		`{"type":"bind","target":"/data"}`,
+		`{"type":"tmpfs","target":"/data","name":"custom"}`,
+		`{"type":"nfs","source":"host:/data","target":"/data"}`,
+	}
+	for _, c := range cases {
+		if _, err := NormalizeVolumes([]json.RawMessage{raw(c)}, ""); err == nil {
+			t.Errorf("NormalizeVolumes(%s): expected error", c)
+		}
+	}
+}
+
+func TestResolveVolumes(t *testing.T) {
+	in := []VolumeMount{
+		{Type: "volume", Source: "data", Target: "/data"},
+		{Type: "bind", Source: "/host", Target: "/hostdata"},
+		{Type: "volume", Source: "shared", Target: "/shared", External: true},
+	}
+	got := ResolveVolumes(in, "app")
+	if got[0].Source != "app_data" || got[1].Source != "/host" || got[2].Source != "shared" {
+		t.Fatalf("resolved = %+v", got)
+	}
+	if in[0].Source != "data" {
+		t.Fatalf("original was mutated: %+v", in[0])
+	}
+}

@@ -127,6 +127,13 @@ type Engine interface {
 	// If force is true the image is removed even if containers reference it.
 	RemoveImage(ctx context.Context, image string, force bool) error
 
+	// EnsureVolume creates a stack-owned volume with dill labels if it does
+	// not exist. Existing volumes are left untouched and treated as shared.
+	EnsureVolume(ctx context.Context, name, stackName string) error
+
+	// ListStackVolumes returns the volumes labelled as owned by the stack.
+	ListStackVolumes(ctx context.Context, stackName string) ([]string, error)
+
 	// RemoveVolume removes a named volume.
 	// If force is true the volume is removed even if in use.
 	RemoveVolume(ctx context.Context, name string, force bool) error

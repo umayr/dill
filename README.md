@@ -39,6 +39,7 @@ Commands:
   logs      Fetch container logs
   pull      Pull service images without starting
   images    List images used by the config
+  volumes   List stack-owned volumes
   exec      Execute a command in a running container
   plan      Show what would change if you ran up
   diff      Show desired vs live changes
@@ -173,6 +174,34 @@ config {
 and Dill recreates a container when the local image ID differs from the image it is
 running (for example after `dill pull` or a moved tag). `missing` only pulls when the
 image is absent; `never` uses the local image as-is.
+
+### Volumes
+
+Named volumes are stack-scoped by default: `pg-data:/var/lib/postgresql/data`
+creates `<stack>_pg-data`. Two stacks declaring the same logical volume get two
+independent volumes, and `dill teardown` only removes volumes labelled as owned by
+the stack.
+
+To reuse a pre-existing volume (for example one Compose created as
+`<project>_pg-data`) or a shared volume, use the full mount form:
+
+```pkl
+volumes = List(new Mount {
+  type = "volume"
+  source = "pg-data"
+  target = "/var/lib/postgresql/data"
+  external_volume = true
+})
+```
+
+`external_volume = true` uses `source` (or `name`) as the engine volume name and
+Dill never creates, labels, or removes it. A `name` without `external_volume` uses
+an explicit engine name but keeps the volume managed.
+
+`dill volumes` lists the volumes owned by the stack. Legacy and Compose-created
+volumes are unlabelled and are left untouched by teardown. If the stack name matches
+the Compose project name, the default `<stack>_<volume>` already points at the
+existing volume.
 
 ## Why Dill?
 - **Type Safety:** Catch invalid ports or misspelled parameters in your IDE.

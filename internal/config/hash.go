@@ -8,8 +8,9 @@ import (
 )
 
 // ServiceConfigHash returns a stable fingerprint for the desired service spec
-// after shorthand ports/volumes have been normalized.
-func ServiceConfigHash(name string, svc *Service) (string, error) {
+// after shorthand ports/volumes have been normalized and stack-scoped volume
+// names have been resolved.
+func ServiceConfigHash(stackName, name string, svc *Service) (string, error) {
 	ports, err := NormalizePorts(svc.Ports)
 	if err != nil {
 		return "", fmt.Errorf("normalizing ports: %w", err)
@@ -18,13 +19,24 @@ func ServiceConfigHash(name string, svc *Service) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("normalizing volumes: %w", err)
 	}
+	resolved := ResolveVolumes(volumes, stackName)
+	type hashVolume struct {
+		Type     string
+		Source   string
+		Target   string
+		ReadOnly bool
+	}
+	hashVolumes := make([]hashVolume, len(resolved))
+	for i, v := range resolved {
+		hashVolumes[i] = hashVolume{Type: v.Type, Source: v.Source, Target: v.Target, ReadOnly: v.ReadOnly}
+	}
 	payload := struct {
 		Name          string
 		Image         string
 		ContainerName string
 		Restart       string
 		Environment   map[string]string
-		Volumes       []VolumeMount
+		Volumes       []hashVolume
 		Ports         []PortBinding
 		Labels        map[string]string
 		Command       []string
@@ -41,7 +53,7 @@ func ServiceConfigHash(name string, svc *Service) (string, error) {
 		ContainerName: svc.ContainerName,
 		Restart:       svc.Restart,
 		Environment:   svc.Environment,
-		Volumes:       volumes,
+		Volumes:       hashVolumes,
 		Ports:         ports,
 		Labels:        svc.Labels,
 		Command:       svc.Command,

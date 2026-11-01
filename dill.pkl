@@ -12,6 +12,15 @@ class Mount {
   source: String?
   target: String
   read_only: Boolean = false
+
+  /// Use an existing volume as-is: no stack prefix, no creation, labelling, or
+  /// removal by teardown. `source` or `name` is the engine volume name.
+  external_volume: Boolean = false
+
+  /// Explicit engine volume name. The volume stays managed (created, labelled,
+  /// and removed) unless `external_volume` is true. When omitted, named volumes are
+  /// prefixed with the stack name: `pg-data` becomes `<stack>_pg-data`.
+  name: String?
 }
 
 class HealthCheck {
