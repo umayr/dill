@@ -433,6 +433,7 @@ func (d *DockerEngine) InspectConfig(ctx context.Context, name string) (*LiveCon
 	init := info.HostConfig.Init != nil && *info.HostConfig.Init
 
 	return &LiveConfig{
+		ID:            info.ID,
 		Image:         info.Config.Image,
 		ImageID:       info.Image,
 		Env:           env,

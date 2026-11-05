@@ -493,6 +493,7 @@ func (p *PodmanEngine) InspectConfig(ctx context.Context, name string) (*LiveCon
 	}
 
 	return &LiveConfig{
+		ID:            data.ID,
 		Image:         data.ImageName,
 		ImageID:       data.Image,
 		Env:           env,

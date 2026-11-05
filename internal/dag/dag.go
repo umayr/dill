@@ -109,7 +109,7 @@ func (g *Graph) Run(ctx context.Context, engine orchestrator.Engine, stackName s
 	}
 
 	var mu sync.Mutex
-	var started []string // container names started during this run (for rollback)
+	var started []string // immutable container IDs created during this run (for rollback)
 
 	eg, egCtx := errgroup.WithContext(ctx)
 
@@ -137,17 +137,34 @@ func (g *Graph) Run(ctx context.Context, engine orchestrator.Engine, stackName s
 				}
 			}
 
+			// Recheck before acting and bind mutations to the inspected ID, so a
+			// replacement container cannot be targeted by reusing the same name.
+			containerID := containerName
+			if action := actions[n.name]; action == ActionNoop || action == ActionStart || action == ActionRecreate {
+				live, err := engine.InspectConfig(egCtx, containerName)
+				if err != nil {
+					return fmt.Errorf("service %q: inspect before reconciliation: %w", n.name, err)
+				}
+				if err := orchestrator.CheckOwnership(containerName, stackName, n.name, live); err != nil {
+					return err
+				}
+				if live.ID == "" {
+					return fmt.Errorf("service %q: inspect returned an empty container ID", n.name)
+				}
+				containerID = live.ID
+			}
+
 			switch actions[n.name] {
 			case ActionNoop:
 				emit("unchanged")
-				if err := engine.StartExisting(egCtx, containerName); err != nil {
+				if err := engine.StartExisting(egCtx, containerID); err != nil {
 					logger.Debug("start existing returned error (may already be running)",
 						"service", n.name, "err", err)
 				}
 
 			case ActionStart:
 				emit("starting")
-				if err := engine.StartExisting(egCtx, containerName); err != nil {
+				if err := engine.StartExisting(egCtx, containerID); err != nil {
 					if errors.Is(err, orchestrator.ErrNotFound) {
 						return fmt.Errorf("service %q: container does not exist, run 'dill up' first", n.name)
 					}
@@ -157,35 +174,39 @@ func (g *Graph) Run(ctx context.Context, engine orchestrator.Engine, stackName s
 
 			case ActionRecreate:
 				emit("stopping")
-				if err := engine.StopService(egCtx, containerName); err != nil {
+				if err := engine.StopService(egCtx, containerID); err != nil {
 					logger.Debug("stop failed during recreate (may already be stopped)",
 						"service", n.name, "err", err)
 				}
-				if err := engine.RemoveService(egCtx, containerName); err != nil {
+				if err := engine.RemoveService(egCtx, containerID); err != nil {
 					return fmt.Errorf("service %q: remove before recreate: %w", n.name, err)
 				}
 				if err := maybePull(egCtx, engine, n.svc, mkSink(n.name)); err != nil {
 					return fmt.Errorf("service %q: %w", n.name, err)
 				}
 				emit("recreating")
-				if _, err := engine.StartService(egCtx, n.name, n.svc, stackName); err != nil {
+				id, err := engine.StartService(egCtx, n.name, n.svc, stackName)
+				if err != nil {
 					return fmt.Errorf("service %q: %w", n.name, err)
 				}
 				mu.Lock()
-				started = append(started, containerName)
+				started = append(started, id)
 				mu.Unlock()
+				containerID = id
 
 			default: // ActionCreate
 				if err := maybePull(egCtx, engine, n.svc, mkSink(n.name)); err != nil {
 					return fmt.Errorf("service %q: %w", n.name, err)
 				}
 				emit("creating")
-				if _, err := engine.StartService(egCtx, n.name, n.svc, stackName); err != nil {
+				id, err := engine.StartService(egCtx, n.name, n.svc, stackName)
+				if err != nil {
 					return fmt.Errorf("service %q: %w", n.name, err)
 				}
 				mu.Lock()
-				started = append(started, containerName)
+				started = append(started, id)
 				mu.Unlock()
+				containerID = id
 			}
 
 			// Poll until the container is ready.
@@ -193,7 +214,7 @@ func (g *Graph) Run(ctx context.Context, engine orchestrator.Engine, stackName s
 			pollStart := time.Now()
 			var lastWaitEmit time.Time
 			for {
-				ready, err := engine.IsReady(egCtx, containerName, hasHealthCheck)
+				ready, err := engine.IsReady(egCtx, containerID, hasHealthCheck)
 				if err != nil {
 					return fmt.Errorf("service %q readiness check: %w", n.name, err)
 				}

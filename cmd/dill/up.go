@@ -84,18 +84,25 @@ func runUp(ctx context.Context, opts commandOptions, args []string) error {
 	var pullMu sync.Mutex
 	mkSink := newMakePullSink(isTTY, &pullMu)
 
-	// pullPolicy: always means "check for a new image on every up". Pull
-	// before computing the plan so the image-ID comparison can detect the new
-	// image and turn an otherwise unchanged service into a recreate.
-	if !opts.DryRun {
-		if err := pullAlwaysImages(ctx, engine, selected, mkSink); err != nil {
-			return err
-		}
-	}
-
+	// Check ownership before pulling images or applying any planned mutations.
 	p, err := plan.Compute(ctx, cfg, engine, sn)
 	if err != nil {
 		return fmt.Errorf("computing plan: %w", err)
+	}
+	if !opts.DryRun {
+		for _, svc := range selected {
+			if svc.PullPolicy == "always" {
+				if err := pullAlwaysImages(ctx, engine, selected, mkSink); err != nil {
+					return err
+				}
+				// Recompute after pulling so moved tags still trigger recreation.
+				p, err = plan.Compute(ctx, cfg, engine, sn)
+				if err != nil {
+					return fmt.Errorf("computing plan after pull: %w", err)
+				}
+				break
+			}
+		}
 	}
 	// A partial up only applies changes for the selected services. Orphan
 	// removal remains a full-stack operation.
@@ -120,14 +127,27 @@ func runUp(ctx context.Context, opts commandOptions, args []string) error {
 		if ch.Kind != plan.KindRemove {
 			continue
 		}
+		live, err := engine.InspectConfig(ctx, ch.Service)
+		if err != nil {
+			return fmt.Errorf("inspect orphan %q: %w", ch.Service, err)
+		}
+		if live == nil {
+			return fmt.Errorf("inspect orphan %q: empty configuration", ch.Service)
+		}
+		if err := orchestrator.CheckOwnership(ch.Service, sn, live.SystemLabels["dill.service"], live); err != nil {
+			return err
+		}
+		if live.ID == "" {
+			return fmt.Errorf("inspect orphan %q: empty container ID", ch.Service)
+		}
 		display := strings.TrimPrefix(ch.Service, sn+"_")
 		if !opts.Quiet {
 			printProgress(display, "removing orphan")
 		}
-		if err := engine.StopService(ctx, ch.Service); err != nil {
+		if err := engine.StopService(ctx, live.ID); err != nil {
 			logger.Debug("stop orphan failed", "container", ch.Service, "err", err)
 		}
-		if err := engine.RemoveService(ctx, ch.Service); err != nil {
+		if err := engine.RemoveService(ctx, live.ID); err != nil {
 			logger.Warn("remove orphan failed", "container", ch.Service, "err", err)
 		}
 	}

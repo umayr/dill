@@ -60,9 +60,9 @@ local binary.
 
 Deployment flow: `loader` (resolve Pkl) → `config` (evaluate, parse, validate) →
 `plan` (diff vs live) → `dag` (dependency-ordered execution) → `orchestrator`
-(engine operations). Currently, `up` pulls `always` images before planning and
-removes orphans before graph validation; do not assume preflight is mutation-free
-until #29 is fixed.
+(engine operations). `up` checks ownership before pulling `always` images, then
+recomputes the plan after those pulls. It still removes orphans before graph
+validation; do not assume preflight is mutation-free until #29 is fixed.
 
 ## Conventions
 
