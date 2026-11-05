@@ -49,6 +49,22 @@ class Service {
   capAdd: List<String>?
   devices: List<String>?
   cpuset: String?
+
+  /// Hard memory limit (for example "512m", "1g", "1.5g").
+  memLimit: String?
+
+  /// Soft memory reservation.
+  memReservation: String?
+
+  /// CPU limit as a decimal fraction of one core (for example "0.5" or "1.5").
+  /// Rounded down to 0.00001-core precision for identical engine quotas.
+  cpus: String?
+
+  /// Relative CPU weight (Docker --cpu-shares).
+  cpuShares: Int?
+
+  /// Maximum number of PIDs; -1 means unlimited.
+  pidsLimit: Int?
 }
 
 class DillConfig {

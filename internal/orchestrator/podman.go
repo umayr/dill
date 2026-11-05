@@ -82,6 +82,10 @@ func (p *PodmanEngine) StartService(ctx context.Context, name string, svc *confi
 	if err != nil {
 		return "", fmt.Errorf("service %s: %w", name, err)
 	}
+	resources, err := config.NormalizeResources(svc)
+	if err != nil {
+		return "", fmt.Errorf("service %s: %w", name, err)
+	}
 
 	s := specgen.NewSpecGenerator(svc.Image, false)
 
@@ -179,10 +183,45 @@ func (p *PodmanEngine) StartService(ctx context.Context, name string, svc *confi
 			s.Devices = append(s.Devices, dev)
 		}
 	}
-	if svc.Cpuset != "" {
-		s.ResourceLimits = &specs.LinuxResources{
-			CPU: &specs.LinuxCPU{Cpus: svc.Cpuset},
+	linuxRes := &specs.LinuxResources{}
+	hasResources := false
+	if resources.Memory != 0 || resources.MemoryReservation != 0 {
+		mem := &specs.LinuxMemory{}
+		if resources.Memory != 0 {
+			limit := resources.Memory
+			mem.Limit = &limit
 		}
+		if resources.MemoryReservation != 0 {
+			reservation := resources.MemoryReservation
+			mem.Reservation = &reservation
+		}
+		linuxRes.Memory = mem
+		hasResources = true
+	}
+	if resources.CPUShares != 0 || resources.NanoCPUs != 0 || svc.Cpuset != "" {
+		cpu := &specs.LinuxCPU{}
+		if resources.CPUShares != 0 {
+			shares := uint64(resources.CPUShares)
+			cpu.Shares = &shares
+		}
+		if resources.NanoCPUs != 0 {
+			period := uint64(100000)
+			quota := resources.NanoCPUs / 10000
+			cpu.Period = &period
+			cpu.Quota = &quota
+		}
+		if svc.Cpuset != "" {
+			cpu.Cpus = svc.Cpuset
+		}
+		linuxRes.CPU = cpu
+		hasResources = true
+	}
+	if resources.PidsLimit != 0 {
+		linuxRes.Pids = &specs.LinuxPids{Limit: resources.PidsLimit}
+		hasResources = true
+	}
+	if hasResources {
+		s.ResourceLimits = linuxRes
 	}
 	if svc.HealthCheck != nil {
 		test, err := config.NormalizeHealthCheckTest(svc.HealthCheck.Test)
@@ -492,6 +531,17 @@ func (p *PodmanEngine) InspectConfig(ctx context.Context, name string) (*LiveCon
 		command = data.Config.Cmd
 	}
 
+	res := config.ResourceLimits{}
+	if data.HostConfig != nil {
+		res = config.ResourceLimits{
+			Memory:            data.HostConfig.Memory,
+			MemoryReservation: data.HostConfig.MemoryReservation,
+			NanoCPUs:          data.HostConfig.NanoCpus,
+			CPUShares:         int64(data.HostConfig.CpuShares),
+			PidsLimit:         data.HostConfig.PidsLimit,
+		}
+	}
+
 	return &LiveConfig{
 		Image:         data.ImageName,
 		ImageID:       data.Image,
@@ -508,6 +558,7 @@ func (p *PodmanEngine) InspectConfig(ctx context.Context, name string) (*LiveCon
 		CapAdd:        capAdd,
 		Init:          init,
 		Cpuset:        cpuset,
+		Resources:     res,
 	}, nil
 }
 
