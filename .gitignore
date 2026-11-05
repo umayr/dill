@@ -37,3 +37,6 @@ go.work.sum
 
 # Agent/tooling session artifacts
 .pi/
+
+# Local feature worktrees
+/.worktree/
