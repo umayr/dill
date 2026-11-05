@@ -1,6 +1,7 @@
 package config
 
 import (
+	"encoding/json"
 	"fmt"
 	"strings"
 )
@@ -30,6 +31,16 @@ func ValidateRuntime(cfg *DillConfig) error {
 			return fmt.Errorf("service %q: %w", name, err)
 		}
 		if svc.HealthCheck != nil {
+			for _, field := range []struct {
+				name string
+				raw  *json.RawMessage
+			}{
+				{"interval", svc.HealthCheck.Interval}, {"timeout", svc.HealthCheck.Timeout}, {"startPeriod", svc.HealthCheck.StartPeriod},
+			} {
+				if _, err := ParsePklDuration(field.raw); err != nil {
+					return fmt.Errorf("service %q healthcheck %s: %w", name, field.name, err)
+				}
+			}
 			if _, err := NormalizeHealthCheckTest(svc.HealthCheck.Test); err != nil {
 				return fmt.Errorf("service %q: %w", name, err)
 			}
