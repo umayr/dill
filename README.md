@@ -207,6 +207,31 @@ volumes are unlabelled and are left untouched by teardown. If the stack name mat
 the Compose project name, the default `<stack>_<volume>` already points at the
 existing volume.
 
+### Resource limits
+
+The working-tree schema supports per-service resource limits on Docker and
+Podman (see `examples/basic/compose.pkl`):
+
+```pkl
+memLimit = "512m"
+memReservation = "128m"
+cpus = "0.5"
+cpuShares = 512
+pidsLimit = 100
+```
+
+Memory sizes use binary units (`k`, `m`, `g`, `t`, or `KiB`/`MiB`/`GiB`/`TiB`)
+with optional decimal fractions. CPU values use decimal core counts and are
+rounded down to 0.00001-core quota precision. Zero or omitted memory, shares,
+and PID values defer to engine defaults; `pidsLimit = -1` requests unlimited PIDs.
+
+`plan` compares explicitly configured limits with the engine's inspected values.
+**Podman 4.x limitation:** `podman update` can change runtime cgroups without
+updating the OCI spec returned by `inspect`, so those updates may be invisible to
+Dill. Use a newer Podman release for live-update drift detection; Podman 5.8.2
+was verified locally. Config-file changes still trigger recreation through the
+configuration hash on either version.
+
 ## Why Dill?
 - **Type Safety:** Catch invalid ports or misspelled parameters in your IDE.
 - **Programmability:** Use loops, conditionals, and variables to build complex architectures.
