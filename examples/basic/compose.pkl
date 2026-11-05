@@ -7,6 +7,11 @@ config {
     ["web"] {
       image = "nginx:alpine"
       ports = List("8080:80")
+      memLimit = "512m"
+      memReservation = "128m"
+      cpus = "0.5"
+      cpuShares = 512
+      pidsLimit = 100
     }
   }
 }

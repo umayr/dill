@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"sort"
+	"strconv"
 	"strings"
 
 	"github.com/umayr/dill/internal/config"
@@ -236,6 +237,40 @@ func diffConfigs(name string, svc *config.Service, live *orchestrator.LiveConfig
 		diffs = append(diffs, FieldDiff{Field: "cpuset", Before: live.Cpuset, After: svc.Cpuset})
 	}
 
+	resources, err := config.NormalizeResources(svc)
+	if err != nil {
+		return nil, fmt.Errorf("normalizing resources: %w", err)
+	}
+	// Unset/zero resources defer to engine defaults (notably Podman's PID
+	// limit). Compare only explicitly requested limits, as with environment
+	// keys. Removing a previously configured limit is detected by config_hash.
+	for _, field := range []struct {
+		name string
+		want int64
+		got  int64
+	}{
+		{"memLimit", resources.Memory, live.Resources.Memory},
+		{"memReservation", resources.MemoryReservation, live.Resources.MemoryReservation},
+		{"cpus", resources.NanoCPUs, live.Resources.NanoCPUs},
+		{"cpuShares", resources.CPUShares, live.Resources.CPUShares},
+		{"pidsLimit", resources.PidsLimit, live.Resources.PidsLimit},
+	} {
+		if field.want == 0 {
+			continue
+		}
+		// Engines represent unlimited PIDs as either zero or -1.
+		if field.name == "pidsLimit" && field.want == -1 && field.got <= 0 {
+			continue
+		}
+		if field.want != field.got {
+			diffs = append(diffs, FieldDiff{
+				Field:  field.name,
+				Before: formatResourceValue(field.name, field.got),
+				After:  formatResourceValue(field.name, field.want),
+			})
+		}
+	}
+
 	// user_labels — only check keys present in desired config.
 	// Live-only labels are skipped: they may be image-level labels baked into
 	// the image (e.g. nginx's MAINTAINER label) that dill never set and cannot
@@ -256,6 +291,14 @@ func diffConfigs(name string, svc *config.Service, live *orchestrator.LiveConfig
 	})
 
 	return diffs, nil
+}
+
+// Memory values are reported in bytes; CPUs use the same core units as Pkl.
+func formatResourceValue(field string, value int64) string {
+	if field == "cpus" {
+		return strings.TrimRight(strings.TrimRight(fmt.Sprintf("%d.%09d", value/1_000_000_000, value%1_000_000_000), "0"), ".")
+	}
+	return strconv.FormatInt(value, 10)
 }
 
 func isSensitiveKey(key string) bool {

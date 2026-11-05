@@ -37,6 +37,7 @@ type LiveConfig struct {
 	CapAdd        []string
 	Init          bool
 	Cpuset        string
+	Resources     config.ResourceLimits
 }
 
 // ContainerStatus holds runtime information about a running or stopped container.

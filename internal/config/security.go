@@ -29,6 +29,9 @@ func ValidateRuntime(cfg *DillConfig) error {
 		if _, err := NormalizeVolumes(svc.Volumes, svc.BaseDir); err != nil {
 			return fmt.Errorf("service %q: %w", name, err)
 		}
+		if _, err := NormalizeResources(svc); err != nil {
+			return fmt.Errorf("service %q: %w", name, err)
+		}
 		if svc.HealthCheck != nil {
 			if _, err := NormalizeHealthCheckTest(svc.HealthCheck.Test); err != nil {
 				return fmt.Errorf("service %q: %w", name, err)

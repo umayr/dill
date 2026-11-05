@@ -20,6 +20,14 @@ func ServiceConfigHash(stackName, name string, svc *Service) (string, error) {
 		return "", fmt.Errorf("normalizing volumes: %w", err)
 	}
 	resolved := ResolveVolumes(volumes, stackName)
+	resources, err := NormalizeResources(svc)
+	if err != nil {
+		return "", fmt.Errorf("normalizing resources: %w", err)
+	}
+	var resourcePtr *ResourceLimits
+	if !resources.IsZero() {
+		resourcePtr = &resources
+	}
 	type hashVolume struct {
 		Type     string
 		Source   string
@@ -47,6 +55,7 @@ func ServiceConfigHash(stackName, name string, svc *Service) (string, error) {
 		CapAdd        []string
 		Devices       []string
 		Cpuset        string
+		Resources     *ResourceLimits `json:"resources,omitempty"`
 	}{
 		Name:          name,
 		Image:         svc.Image,
@@ -64,6 +73,7 @@ func ServiceConfigHash(stackName, name string, svc *Service) (string, error) {
 		CapAdd:        svc.CapAdd,
 		Devices:       svc.Devices,
 		Cpuset:        svc.Cpuset,
+		Resources:     resourcePtr,
 	}
 	b, err := json.Marshal(payload)
 	if err != nil {

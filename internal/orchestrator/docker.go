@@ -142,6 +142,10 @@ func (d *DockerEngine) StartService(ctx context.Context, name string, svc *confi
 	if err != nil {
 		return "", fmt.Errorf("service %s: %w", name, err)
 	}
+	resources, err := config.NormalizeResources(svc)
+	if err != nil {
+		return "", fmt.Errorf("service %s: %w", name, err)
+	}
 
 	// Build port bindings.
 	portBindings := nat.PortMap{}
@@ -227,15 +231,25 @@ func (d *DockerEngine) StartService(ctx context.Context, name string, svc *confi
 		containerCfg.Healthcheck = toDockerHealthCheck(svc.HealthCheck)
 	}
 
+	hostResources := container.Resources{
+		Devices:           toDeviceMappings(svc.Devices),
+		CpusetCpus:        svc.Cpuset,
+		Memory:            resources.Memory,
+		MemoryReservation: resources.MemoryReservation,
+		NanoCPUs:          resources.NanoCPUs,
+		CPUShares:         resources.CPUShares,
+	}
+	if resources.PidsLimit != 0 {
+		pids := resources.PidsLimit
+		hostResources.PidsLimit = &pids
+	}
+
 	hostCfg := &container.HostConfig{
 		PortBindings:  portBindings,
 		Mounts:        mounts,
 		RestartPolicy: container.RestartPolicy{Name: container.RestartPolicyMode(svc.Restart)},
 		CapAdd:        strslice.StrSlice(svc.CapAdd),
-		Resources: container.Resources{
-			Devices:    toDeviceMappings(svc.Devices),
-			CpusetCpus: svc.Cpuset,
-		},
+		Resources:     hostResources,
 	}
 	if svc.NetworkMode != "" {
 		hostCfg.NetworkMode = container.NetworkMode(svc.NetworkMode)
@@ -432,6 +446,16 @@ func (d *DockerEngine) InspectConfig(ctx context.Context, name string) (*LiveCon
 
 	init := info.HostConfig.Init != nil && *info.HostConfig.Init
 
+	res := config.ResourceLimits{
+		Memory:            info.HostConfig.Resources.Memory,
+		MemoryReservation: info.HostConfig.Resources.MemoryReservation,
+		NanoCPUs:          info.HostConfig.Resources.NanoCPUs,
+		CPUShares:         info.HostConfig.Resources.CPUShares,
+	}
+	if info.HostConfig.Resources.PidsLimit != nil {
+		res.PidsLimit = *info.HostConfig.Resources.PidsLimit
+	}
+
 	return &LiveConfig{
 		Image:         info.Config.Image,
 		ImageID:       info.Image,
@@ -448,6 +472,7 @@ func (d *DockerEngine) InspectConfig(ctx context.Context, name string) (*LiveCon
 		CapAdd:        []string(info.HostConfig.CapAdd),
 		Init:          init,
 		Cpuset:        info.HostConfig.Resources.CpusetCpus,
+		Resources:     res,
 	}, nil
 }
 
