@@ -2,10 +2,16 @@ package main
 
 import (
 	"context"
+	"encoding/json"
+	"io"
+	"reflect"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/umayr/dill/internal/config"
 	"github.com/umayr/dill/internal/dag"
+	"github.com/umayr/dill/internal/orchestrator"
 	"github.com/umayr/dill/internal/plan"
 )
 
@@ -82,5 +88,89 @@ func TestWithoutDependencies(t *testing.T) {
 	}
 	if len(services["app"].DependsOn) != 1 {
 		t.Fatalf("original was mutated: %+v", services["app"].DependsOn)
+	}
+}
+
+type recordingUpEngine struct {
+	*fakeEngine
+	mu     sync.Mutex
+	events []string
+}
+
+func (f *recordingUpEngine) record(s string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.events = append(f.events, s)
+}
+func (f *recordingUpEngine) PullImage(_ context.Context, image string, _ io.Writer) error {
+	f.record("pull:" + image)
+	return nil
+}
+func (f *recordingUpEngine) ImageExists(context.Context, string) (bool, error) { return true, nil }
+func (f *recordingUpEngine) EnsureNetwork(context.Context, string) error {
+	f.record("network")
+	return nil
+}
+func (f *recordingUpEngine) StopService(_ context.Context, name string) error {
+	f.record("stop:" + name)
+	return nil
+}
+func (f *recordingUpEngine) RemoveService(_ context.Context, name string) error {
+	f.record("remove:" + name)
+	return nil
+}
+func (f *recordingUpEngine) StartService(_ context.Context, name string, _ *config.Service, _ string) (string, error) {
+	f.record("start:" + name)
+	return "id", nil
+}
+func (f *recordingUpEngine) InspectConfig(context.Context, string) (*orchestrator.LiveConfig, error) {
+	f.record("inspect")
+	return nil, orchestrator.ErrNotFound
+}
+
+func TestRunUpConfigPreflight(t *testing.T) {
+	badDuration := json.RawMessage(`{"value":1,"unit":"bogus"}`)
+	tests := []struct {
+		name                 string
+		services             map[string]*config.Service
+		names                []string
+		noDeps, dry, wantErr bool
+		wantOpen             bool
+	}{
+		{"cycle", map[string]*config.Service{"a": {Image: "a", PullPolicy: "always", DependsOn: []string{"b"}}, "b": {Image: "b", DependsOn: []string{"a"}}}, nil, false, false, true, false},
+		{"missing", map[string]*config.Service{"a": {Image: "a", PullPolicy: "always", DependsOn: []string{"missing"}}}, nil, false, false, true, false},
+		{"cycle dry run", map[string]*config.Service{"a": {Image: "a", DependsOn: []string{"a"}}}, nil, false, true, true, false},
+		{"bad duration", map[string]*config.Service{"a": {Image: "a", PullPolicy: "always", HealthCheck: &config.HealthCheck{Test: json.RawMessage(`"ok"`), Interval: &badDuration}}}, nil, false, false, true, false},
+		{"unselected cycle", map[string]*config.Service{"a": {Image: "a"}, "b": {Image: "b", DependsOn: []string{"b"}}}, []string{"a"}, false, true, false, true},
+		{"no deps cycle", map[string]*config.Service{"a": {Image: "a", DependsOn: []string{"a"}}}, []string{"a"}, true, true, false, true},
+		{"selected dependency cycle", map[string]*config.Service{"a": {Image: "a", DependsOn: []string{"b"}}, "b": {Image: "b", DependsOn: []string{"a"}}}, []string{"a"}, false, true, true, false},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			f := &recordingUpEngine{fakeEngine: newFakeEngine()}
+			opened := false
+			err := runUpConfig(context.Background(), commandOptions{DryRun: tc.dry, Quiet: true, Timeout: time.Second}, &config.DillConfig{Name: "test", Services: tc.services}, tc.names, tc.noDeps, "", func(context.Context, *config.DillConfig) (orchestrator.Engine, error) { opened = true; return f, nil })
+			if (err != nil) != tc.wantErr || opened != tc.wantOpen {
+				t.Fatalf("error=%v opened=%v", err, opened)
+			}
+			for _, event := range f.events {
+				if event != "inspect" {
+					t.Fatalf("unexpected mutation: %v", f.events)
+				}
+			}
+		})
+	}
+}
+
+func TestRunUpConfigPullBeforePlanAndCreate(t *testing.T) {
+	f := &recordingUpEngine{fakeEngine: newFakeEngine()}
+	cfg := &config.DillConfig{Name: "test", Services: map[string]*config.Service{"a": {Image: "a", PullPolicy: "always"}}}
+	err := runUpConfig(context.Background(), commandOptions{Quiet: true, Timeout: time.Second}, cfg, nil, false, "", func(context.Context, *config.DillConfig) (orchestrator.Engine, error) { return f, nil })
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"pull:a", "inspect", "network", "start:a"}
+	if !reflect.DeepEqual(f.events, want) {
+		t.Fatalf("events = %v, want %v", f.events, want)
 	}
 }

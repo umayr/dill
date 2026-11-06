@@ -45,30 +45,44 @@ func runUp(ctx context.Context, opts commandOptions, args []string) error {
 		return err
 	}
 
+	return runUpConfig(ctx, opts, cfg, fs.Args(), *noDeps, *pullPolicy, openEngine)
+}
+
+func runUpConfig(ctx context.Context, opts commandOptions, cfg *config.DillConfig, names []string, noDeps bool, pullPolicy string, open func(context.Context, *config.DillConfig) (orchestrator.Engine, error)) error {
+	if err := config.ValidateRuntime(cfg); err != nil {
+		return err
+	}
+
 	logger.Debug("loaded config", "engine", cfg.Engine, "services", len(cfg.Services))
 
 	// The plan is always computed against the full config so a partial `up`
 	// cannot mistake unselected services for orphans. Only the selected subset
 	// is planned, pulled, and run.
+	var err error
 	fullServices := cfg.Services
 	selected := fullServices
-	subset := len(fs.Args()) > 0
+	subset := len(names) > 0
 	if subset {
-		selected, err = selectServices(cfg.Services, fs.Args(), !*noDeps)
+		selected, err = selectServices(cfg.Services, names, !noDeps)
 		if err != nil {
 			return err
 		}
-		if *noDeps {
+		if noDeps {
 			selected = withoutDependencies(selected)
 		}
 	}
-	if *pullPolicy != "" {
+	if pullPolicy != "" {
 		for _, svc := range selected {
-			svc.PullPolicy = *pullPolicy
+			svc.PullPolicy = pullPolicy
 		}
 	}
 
-	engine, err := openEngine(ctx, cfg)
+	g, err := dag.Build(selected)
+	if err != nil {
+		return fmt.Errorf("building dependency graph: %w", err)
+	}
+
+	engine, err := open(ctx, cfg)
 	if err != nil {
 		return fmt.Errorf("initialising engine: %w", err)
 	}
@@ -142,11 +156,6 @@ func runUp(ctx context.Context, opts commandOptions, args []string) error {
 		case plan.KindNoop:
 			actions[ch.Service] = dag.ActionNoop
 		}
-	}
-
-	g, err := dag.Build(selected)
-	if err != nil {
-		return fmt.Errorf("building dependency graph: %w", err)
 	}
 
 	return g.Run(ctx, engine, sn, opts.Timeout, actions, opts.progress(), mkSink)
