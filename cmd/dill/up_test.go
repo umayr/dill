@@ -162,7 +162,7 @@ func TestRunUpConfigPreflight(t *testing.T) {
 	}
 }
 
-func TestRunUpConfigPullBeforePlanAndCreate(t *testing.T) {
+func TestRunUpConfigOwnershipBeforePullAndCreate(t *testing.T) {
 	f := &recordingUpEngine{fakeEngine: newFakeEngine()}
 	cfg := &config.DillConfig{Name: "test", Services: map[string]*config.Service{"a": {Image: "a", PullPolicy: "always"}}}
 	err := runUpConfig(context.Background(), commandOptions{Quiet: true, Timeout: time.Second}, cfg, nil, false, "", func(context.Context, *config.DillConfig) (orchestrator.Engine, error) { return f, nil })
