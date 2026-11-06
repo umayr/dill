@@ -22,6 +22,7 @@ var ErrNotFound = errors.New("container not found")
 // LiveConfig holds the effective configuration of a running or stopped container,
 // extracted from the engine for comparison against desired state.
 type LiveConfig struct {
+	ID            string // immutable engine container ID; use for mutations after ownership checks
 	Image         string
 	ImageID       string            // engine image ID the container was created from
 	Env           map[string]string // KEY → value; only user-set vars
@@ -85,16 +86,16 @@ type Engine interface {
 	// Returns the container ID on success.
 	StartService(ctx context.Context, name string, svc *config.Service, stackName string) (string, error)
 
-	// StopService stops the running container identified by name.
+	// StopService stops the running container identified by name or ID.
 	StopService(ctx context.Context, name string) error
 
-	// StartExisting starts a previously stopped container by name.
+	// StartExisting starts a previously stopped container by name or ID.
 	StartExisting(ctx context.Context, name string) error
 
-	// RemoveService removes the stopped container identified by name.
+	// RemoveService removes the stopped container identified by name or ID.
 	RemoveService(ctx context.Context, name string) error
 
-	// IsReady returns true when the container is in a usable state.
+	// IsReady looks up a container by name or ID and reports whether it is usable.
 	// If hasHealthCheck is true, the container must reach "healthy" status;
 	// otherwise running state is sufficient.
 	IsReady(ctx context.Context, name string, hasHealthCheck bool) (bool, error)

@@ -78,6 +78,10 @@ func Compute(ctx context.Context, cfg *config.DillConfig, engine orchestrator.En
 			return nil, fmt.Errorf("inspect %s: %w", name, err)
 		}
 
+		if err := orchestrator.CheckOwnership(d.containerName, stackName, name, live); err != nil {
+			return nil, err
+		}
+
 		localImageID, err := engine.LocalImageID(ctx, d.svc.Image)
 		if err != nil {
 			return nil, fmt.Errorf("resolving local image for %s: %w", name, err)

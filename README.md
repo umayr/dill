@@ -174,10 +174,16 @@ Schema properties are camelCase (Pkl convention: `pullPolicy`, `dependsOn`,
 `containerName`). JSON output matches. This is a breaking change in v0.5.0;
 rename the snake_case properties in existing configs.
 
-`pullPolicy` is applied before planning: `always` pulls before the plan is computed,
-and Dill recreates a container when the local image ID differs from the image it is
-running (for example after `dill pull` or a moved tag). `missing` only pulls when the
-image is absent; `never` uses the local image as-is.
+Dill rejects existing containers whose `dill.managed`, `dill.stack`, and
+`dill.service` labels do not match the desired service, even with
+`--force-recreate`. A matching container name does not imply ownership. Choose a
+different name or explicitly remove the conflicting container before deploying.
+
+Ownership is checked before pulling images. With `pullPolicy = "always"`, Dill
+pulls and recomputes the plan, recreating a container when the local image ID
+differs from the image it is running (for example after `dill pull` or a moved
+tag). `missing` only pulls when the image is absent; `never` uses the local image
+as-is.
 
 ### Volumes
 
