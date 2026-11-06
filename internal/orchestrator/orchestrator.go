@@ -69,6 +69,8 @@ type LogOptions struct {
 }
 
 // Engine defines the methods required by Dill to manage containers.
+// Requests must honor their operation context, not the engine initialization
+// context: rollback can use a fresh context after deployment cancellation.
 type Engine interface {
 	// PullImage pulls the named image from its registry, writing download
 	// progress to w. Implementations write one line per progress update.

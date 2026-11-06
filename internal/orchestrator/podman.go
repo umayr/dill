@@ -32,12 +32,36 @@ func NewPodmanEngine(ctx context.Context, socket string) (*PodmanEngine, error) 
 	if err != nil {
 		return nil, err
 	}
-	return &PodmanEngine{conn: conn}, nil
+	// Keep connection values, but do not tie later cleanup to this context's
+	// lifetime. Each request gets cancellation and deadlines from its caller.
+	return &PodmanEngine{conn: context.WithoutCancel(conn)}, nil
+}
+
+// podmanOperationContext supplies SDK connection values without replacing the
+// operation's deadline, cancellation, or request-scoped values.
+type podmanOperationContext struct {
+	context.Context
+	connection context.Context
+}
+
+func (c podmanOperationContext) Value(key any) any {
+	if value := c.Context.Value(key); value != nil {
+		return value
+	}
+	return c.connection.Value(key)
+}
+
+func (p *PodmanEngine) operationContext(ctx context.Context) context.Context {
+	return podmanOperationContext{Context: ctx, connection: p.conn}
 }
 
 func (p *PodmanEngine) PullImage(ctx context.Context, img string, w io.Writer) error {
 	logger.Debug("pulling image", "image", img)
-	_, err := images.Pull(p.conn, img, nil)
+	_, err := images.Pull(p.operationContext(ctx), img, nil)
+	// The SDK can end a cancelled pull stream without returning an error.
+	if err == nil {
+		err = ctx.Err()
+	}
 	if err != nil {
 		return fmt.Errorf("pull %s: %w", img, err)
 	}
@@ -45,7 +69,7 @@ func (p *PodmanEngine) PullImage(ctx context.Context, img string, w io.Writer) e
 }
 
 func (p *PodmanEngine) ImageExists(ctx context.Context, img string) (bool, error) {
-	exists, err := images.Exists(p.conn, img, nil)
+	exists, err := images.Exists(p.operationContext(ctx), img, nil)
 	if err != nil {
 		return false, err
 	}
@@ -54,14 +78,14 @@ func (p *PodmanEngine) ImageExists(ctx context.Context, img string) (bool, error
 
 // LocalImageID returns the local image ID, or "" when the image is absent.
 func (p *PodmanEngine) LocalImageID(ctx context.Context, img string) (string, error) {
-	exists, err := images.Exists(p.conn, img, nil)
+	exists, err := images.Exists(p.operationContext(ctx), img, nil)
 	if err != nil {
 		return "", err
 	}
 	if !exists {
 		return "", nil
 	}
-	data, err := images.GetImage(p.conn, img, nil)
+	data, err := images.GetImage(p.operationContext(ctx), img, nil)
 	if err != nil {
 		return "", err
 	}
@@ -242,19 +266,15 @@ func (p *PodmanEngine) StartService(ctx context.Context, name string, svc *confi
 		}
 	}
 
-	res, err := containers.CreateWithSpec(p.conn, s, nil)
+	res, err := containers.CreateWithSpec(p.operationContext(ctx), s, nil)
 	if err != nil {
 		return "", fmt.Errorf("create %s: %w", name, err)
 	}
-	if err := startCreated(ctx, p.conn, name, res.ID, func() error {
-		startCtx, cancel := context.WithCancel(p.conn)
-		defer cancel()
-		stop := context.AfterFunc(ctx, cancel)
-		defer stop()
-		return containers.Start(startCtx, res.ID, nil)
+	if err := startCreated(ctx, ctx, name, res.ID, func() error {
+		return containers.Start(p.operationContext(ctx), res.ID, nil)
 	}, func(cleanupCtx context.Context, id string) error {
 		force := true
-		_, err := containers.Remove(cleanupCtx, id, &containers.RemoveOptions{Force: &force})
+		_, err := containers.Remove(p.operationContext(cleanupCtx), id, &containers.RemoveOptions{Force: &force})
 		return err
 	}); err != nil {
 		return "", err
@@ -266,18 +286,18 @@ func (p *PodmanEngine) StartService(ctx context.Context, name string, svc *confi
 func (p *PodmanEngine) StopService(ctx context.Context, name string) error {
 	logger.Debug("stopping service", "service", name)
 	timeout := uint(10)
-	return containers.Stop(p.conn, name, &containers.StopOptions{Timeout: &timeout})
+	return containers.Stop(p.operationContext(ctx), name, &containers.StopOptions{Timeout: &timeout})
 }
 
 func (p *PodmanEngine) RemoveService(ctx context.Context, name string) error {
 	logger.Debug("removing container", "name", name)
 	force := true
-	_, err := containers.Remove(p.conn, name, &containers.RemoveOptions{Force: &force})
+	_, err := containers.Remove(p.operationContext(ctx), name, &containers.RemoveOptions{Force: &force})
 	return err
 }
 
 func (p *PodmanEngine) IsReady(ctx context.Context, name string, hasHealthCheck bool) (bool, error) {
-	data, err := containers.Inspect(p.conn, name, nil)
+	data, err := containers.Inspect(p.operationContext(ctx), name, nil)
 	if err != nil {
 		return false, err
 	}
@@ -308,7 +328,7 @@ func (p *PodmanEngine) ListStack(ctx context.Context, stackName string) ([]strin
 		},
 	}
 	all := true
-	list, err := containers.List(p.conn, &containers.ListOptions{
+	list, err := containers.List(p.operationContext(ctx), &containers.ListOptions{
 		All:     &all,
 		Filters: filter,
 	})
@@ -329,7 +349,7 @@ func (p *PodmanEngine) ListStacks(ctx context.Context) ([]StackStatus, error) {
 		"label": {"dill.managed=true"},
 	}
 	all := true
-	list, err := containers.List(p.conn, &containers.ListOptions{
+	list, err := containers.List(p.operationContext(ctx), &containers.ListOptions{
 		All:     &all,
 		Filters: filter,
 	})
@@ -362,7 +382,7 @@ func (p *PodmanEngine) ListStacks(ctx context.Context) ([]StackStatus, error) {
 }
 
 func (p *PodmanEngine) StartExisting(ctx context.Context, name string) error {
-	err := containers.Start(p.conn, name, nil)
+	err := containers.Start(p.operationContext(ctx), name, nil)
 	if err != nil && strings.Contains(err.Error(), "no such container") {
 		return fmt.Errorf("%w: %s", ErrNotFound, name)
 	}
@@ -370,7 +390,7 @@ func (p *PodmanEngine) StartExisting(ctx context.Context, name string) error {
 }
 
 func (p *PodmanEngine) ServiceStatus(ctx context.Context, name string) (*ContainerStatus, error) {
-	data, err := containers.Inspect(p.conn, name, nil)
+	data, err := containers.Inspect(p.operationContext(ctx), name, nil)
 	if err != nil {
 		if strings.Contains(err.Error(), "no such container") {
 			return nil, fmt.Errorf("%w: %s", ErrNotFound, name)
@@ -438,15 +458,18 @@ func (p *PodmanEngine) Logs(ctx context.Context, name string, logOpts LogOptions
 		}
 	}()
 
-	err := containers.Logs(p.conn, name, opts, stdoutCh, stderrCh)
+	err := containers.Logs(p.operationContext(ctx), name, opts, stdoutCh, stderrCh)
 	close(stdoutCh)
 	close(stderrCh)
 	wg.Wait()
+	if err == nil {
+		err = ctx.Err()
+	}
 	return err
 }
 
 func (p *PodmanEngine) InspectConfig(ctx context.Context, name string) (*LiveConfig, error) {
-	data, err := containers.Inspect(p.conn, name, nil)
+	data, err := containers.Inspect(p.operationContext(ctx), name, nil)
 	if err != nil {
 		if strings.Contains(err.Error(), "no such container") {
 			return nil, fmt.Errorf("%w: %s", ErrNotFound, name)
@@ -571,7 +594,7 @@ func (p *PodmanEngine) InspectConfig(ctx context.Context, name string) (*LiveCon
 }
 
 func (p *PodmanEngine) EnsureNetwork(ctx context.Context, name string) error {
-	exists, err := podmannetwork.Exists(p.conn, name, nil)
+	exists, err := podmannetwork.Exists(p.operationContext(ctx), name, nil)
 	if err != nil {
 		return fmt.Errorf("checking network: %w", err)
 	}
@@ -579,7 +602,7 @@ func (p *PodmanEngine) EnsureNetwork(ctx context.Context, name string) error {
 		logger.Debug("network already exists", "name", name)
 		return nil
 	}
-	_, err = podmannetwork.Create(p.conn, &nettypes.Network{
+	_, err = podmannetwork.Create(p.operationContext(ctx), &nettypes.Network{
 		Name:   name,
 		Driver: "bridge",
 		Labels: map[string]string{
@@ -595,7 +618,7 @@ func (p *PodmanEngine) EnsureNetwork(ctx context.Context, name string) error {
 }
 
 func (p *PodmanEngine) RemoveNetwork(ctx context.Context, name string) error {
-	_, err := podmannetwork.Remove(p.conn, name, nil)
+	_, err := podmannetwork.Remove(p.operationContext(ctx), name, nil)
 	if err != nil {
 		if strings.Contains(err.Error(), "no such network") {
 			return nil
@@ -608,7 +631,7 @@ func (p *PodmanEngine) RemoveNetwork(ctx context.Context, name string) error {
 
 func (p *PodmanEngine) RemoveImage(ctx context.Context, image string, force bool) error {
 	opts := new(images.RemoveOptions).WithForce(force)
-	_, errs := images.Remove(p.conn, []string{image}, opts)
+	_, errs := images.Remove(p.operationContext(ctx), []string{image}, opts)
 	for _, err := range errs {
 		if err != nil && !strings.Contains(err.Error(), "image not known") {
 			return fmt.Errorf("removing image %s: %w", image, err)
@@ -621,14 +644,14 @@ func (p *PodmanEngine) RemoveImage(ctx context.Context, image string, force bool
 // EnsureVolume creates a stack-owned volume with dill labels if it does not
 // exist. Existing volumes (including Compose-created ones) are left untouched.
 func (p *PodmanEngine) EnsureVolume(ctx context.Context, name, stackName string) error {
-	exists, err := podmanvolumes.Exists(p.conn, name, nil)
+	exists, err := podmanvolumes.Exists(p.operationContext(ctx), name, nil)
 	if err != nil {
 		return err
 	}
 	if exists {
 		return nil
 	}
-	_, err = podmanvolumes.Create(p.conn, entitiesTypes.VolumeCreateOptions{
+	_, err = podmanvolumes.Create(p.operationContext(ctx), entitiesTypes.VolumeCreateOptions{
 		Name: name,
 		Labels: map[string]string{
 			"dill.managed": "true",
@@ -648,7 +671,7 @@ func (p *PodmanEngine) ListStackVolumes(ctx context.Context, stackName string) (
 	opts := new(podmanvolumes.ListOptions).WithFilters(map[string][]string{
 		"label": {"dill.stack=" + stackName},
 	})
-	reports, err := podmanvolumes.List(p.conn, opts)
+	reports, err := podmanvolumes.List(p.operationContext(ctx), opts)
 	if err != nil {
 		return nil, err
 	}
@@ -662,7 +685,7 @@ func (p *PodmanEngine) ListStackVolumes(ctx context.Context, stackName string) (
 
 func (p *PodmanEngine) RemoveVolume(ctx context.Context, name string, force bool) error {
 	opts := new(podmanvolumes.RemoveOptions).WithForce(force)
-	if err := podmanvolumes.Remove(p.conn, name, opts); err != nil {
+	if err := podmanvolumes.Remove(p.operationContext(ctx), name, opts); err != nil {
 		if strings.Contains(err.Error(), "no such volume") {
 			return nil
 		}
