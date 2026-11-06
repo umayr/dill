@@ -246,11 +246,18 @@ func (p *PodmanEngine) StartService(ctx context.Context, name string, svc *confi
 	if err != nil {
 		return "", fmt.Errorf("create %s: %w", name, err)
 	}
-	if err := containers.Start(p.conn, res.ID, nil); err != nil {
-		if isPortConflict(err) {
-			return "", fmt.Errorf("port conflict: another process is bound to one of the requested host ports (%w)", err)
-		}
-		return "", fmt.Errorf("start %s: %w", name, err)
+	if err := startCreated(ctx, p.conn, name, res.ID, func() error {
+		startCtx, cancel := context.WithCancel(p.conn)
+		defer cancel()
+		stop := context.AfterFunc(ctx, cancel)
+		defer stop()
+		return containers.Start(startCtx, res.ID, nil)
+	}, func(cleanupCtx context.Context, id string) error {
+		force := true
+		_, err := containers.Remove(cleanupCtx, id, &containers.RemoveOptions{Force: &force})
+		return err
+	}); err != nil {
+		return "", err
 	}
 	logger.Debug("container started", "service", name, "id", res.ID[:12])
 	return res.ID, nil

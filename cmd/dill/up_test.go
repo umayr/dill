@@ -169,7 +169,7 @@ func TestRunUpConfigPullBeforePlanAndCreate(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := []string{"pull:a", "inspect", "network", "start:a"}
+	want := []string{"inspect", "pull:a", "inspect", "network", "start:a"}
 	if !reflect.DeepEqual(f.events, want) {
 		t.Fatalf("events = %v, want %v", f.events, want)
 	}

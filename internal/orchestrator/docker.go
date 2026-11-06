@@ -273,11 +273,12 @@ func (d *DockerEngine) StartService(ctx context.Context, name string, svc *confi
 	if err != nil {
 		return "", fmt.Errorf("create %s: %w", name, err)
 	}
-	if err := d.cli.ContainerStart(ctx, resp.ID, container.StartOptions{}); err != nil {
-		if isPortConflict(err) {
-			return "", fmt.Errorf("port conflict: another process is bound to one of the requested host ports (%w)", err)
-		}
-		return "", fmt.Errorf("start %s: %w", name, err)
+	if err := startCreated(ctx, ctx, name, resp.ID, func() error {
+		return d.cli.ContainerStart(ctx, resp.ID, container.StartOptions{})
+	}, func(cleanupCtx context.Context, id string) error {
+		return d.cli.ContainerRemove(cleanupCtx, id, container.RemoveOptions{Force: true})
+	}); err != nil {
+		return "", err
 	}
 	logger.Debug("container started", "service", name, "id", resp.ID[:12])
 	return resp.ID, nil
