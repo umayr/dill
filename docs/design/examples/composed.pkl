@@ -1,0 +1,61 @@
+// Runnable Pkl authoring fixture only; current Dill cannot apply this model.
+import "Model.pkl"
+import "Postgres.pkl"
+
+local first = new Postgres.Component {
+  database = "catalog"
+  storage = "catalog-data"
+  password = "catalog-password"
+}
+local second = new Postgres.Component {
+  database = "metrics"
+  storage = "metrics-data"
+  password = "metrics-password"
+}
+
+deployment = new Model.Deployment {
+  target = "lab"
+  application {
+    name = "two-databases"
+    storage {
+      ["catalog-data"] {}
+      ["metrics-data"] {}
+    }
+    secrets {
+      ["catalog-password"] {}
+      ["metrics-password"] {}
+    }
+    services {
+      ["catalog"] = (first.service) {
+        resources { memory = 512.mib }
+      }
+      ["metrics"] = second.service
+    }
+    jobs {
+      ["initialize"] {
+        image = "postgres:17"
+        dependencies {
+          new { node = "catalog"; condition = "healthy" }
+        }
+        // Harmless illustration, not database initialization logic.
+        process { entrypoint = List("/bin/sh", "-ec"); args = List("exit 0") }
+        trigger = "manual"
+      }
+    }
+  }
+  bindings {
+    storage {
+      ["catalog-data"] = new Model.ExistingVolume { name = "existing-catalog-data" }
+      ["metrics-data"] = new Model.ExistingVolume { name = "existing-metrics-data" }
+    }
+    secrets {
+      ["catalog-password"] { provider = "host-files"; key = "catalog/password" }
+      ["metrics-password"] { provider = "host-files"; key = "metrics/password" }
+    }
+  }
+}
+
+output {
+  value = deployment
+  renderer = Model.renderer
+}

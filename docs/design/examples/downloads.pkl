@@ -1,0 +1,47 @@
+// Synthetic Gluetun/qBittorrent fixture; no real host or credential values.
+import "Model.pkl"
+
+deployment = new Model.Deployment {
+  target = "lab"
+  application {
+    name = "downloads"
+    storage { ["downloads"] {} }
+    secrets { ["wireguard"] {} }
+    services {
+      ["vpn"] {
+        image = "qmcgaw/gluetun:latest"
+        capabilities = Set("NET_ADMIN")
+        devices { ["tun"] = "/dev/net/tun" }
+        readiness { kind = "imageHealthcheck" }
+        secretFiles { new { secret = "wireguard"; target = "/gluetun/wireguard/wg0.conf" } }
+        ports { ["web"] = 8080 }
+      }
+      ["torrent"] {
+        image = "lscr.io/linuxserver/qbittorrent:latest"
+        network = new Model.SharedNetwork {
+          service = "vpn"
+          condition = "healthy"
+          onOwnerReplacement = "recreate"
+        }
+        mounts { new { storage = "downloads"; target = "/data" } }
+        temporaryStorage { new { target = "/tmp"; size = 2.gib } }
+      }
+    }
+  }
+  bindings {
+    storage {
+      ["downloads"] = new Model.HostPath {
+        path = "/srv/media/downloads"
+        mountRequirement = "media-storage"
+      }
+    }
+    secrets { ["wireguard"] { provider = "host-files"; key = "vpn/config" } }
+    devices { ["tun"] = "/dev/net/tun" }
+    ports { ["vpn/web"] { address = "127.0.0.1"; port = 8080 } }
+  }
+}
+
+output {
+  value = deployment
+  renderer = Model.renderer
+}

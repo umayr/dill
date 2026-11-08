@@ -1,0 +1,33 @@
+/// Library-style component. The caller owns names, secret bindings and storage.
+module dill.design.postgres
+
+import "Model.pkl"
+
+class Component {
+  image: String = "postgres:17"
+  database: String(!isEmpty)
+  storage: String(!isEmpty)
+  password: String(!isEmpty)
+
+  local componentImage = image
+  local databaseName = database
+  local storageName = storage
+  local passwordName = password
+
+  service: Model.Service = new {
+    image = componentImage
+    environment {
+      ["POSTGRES_DB"] = databaseName
+    }
+    secretEnvironment {
+      ["POSTGRES_PASSWORD"] { secret = passwordName }
+    }
+    mounts {
+      new { storage = storageName; target = "/var/lib/postgresql/data" }
+    }
+    readiness {
+      kind = "command"
+      command = List("pg_isready")
+    }
+  }
+}

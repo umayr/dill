@@ -1,0 +1,161 @@
+/// Experimental design fixture, NOT the supported dill.pkl or a runnable deployment.
+/// Types demonstrate authoring; cross-reference, DAG, policy and host checks belong
+/// to the semantic/target validators specified in ROADMAP.md.
+module dill.design
+
+typealias Name = String(!isEmpty)
+typealias PortNumber = Int(isBetween(1, 65535))
+
+class SecretRef {
+  secret: Name
+}
+
+class Dependency {
+  node: Name
+  condition: "running" | "healthy" | "completed" = "running"
+  required: Boolean = true
+  onReplacement: "none" | "restart" | "recreate" = "none"
+}
+
+class PrivateNetwork {
+  kind: "private" = "private"
+}
+
+class SharedNetwork {
+  kind: "shared" = "shared"
+  service: Name
+  condition: "running" | "healthy" = "healthy"
+  onOwnerReplacement: "recreate" | "fail" = "recreate"
+}
+
+class Process {
+  entrypoint: List<String>?
+  args: List<String>?
+  user: String?
+  workingDirectory: String?
+  init: Boolean = false
+}
+
+class Readiness {
+  kind: "running" | "imageHealthcheck" | "command" = "running"
+  command: List<String>?
+  timeout: Duration(isPositive) = 2.min
+}
+
+class Mount {
+  storage: Name
+  target: String(startsWith("/"))
+  readOnly: Boolean = false
+}
+
+class SecretFile {
+  secret: Name
+  target: String(startsWith("/"))
+}
+
+class TemporaryStorage {
+  target: String(startsWith("/"))
+  size: DataSize(isPositive)
+  permissions: String(matches(Regex("[0-7]{4}"))) = "1777"
+}
+
+class Resources {
+  memory: DataSize(isPositive)?
+  cpuCores: Float(isPositive)?
+  pids: Int(isPositive)?
+}
+
+class Service {
+  image: Name
+  process: Process = new {}
+  environment: Mapping<String, String> = new {}
+  secretEnvironment: Mapping<String, SecretRef> = new {}
+  dependencies: Listing<Dependency> = new {}
+  readiness: Readiness = new {}
+  network: PrivateNetwork | SharedNetwork = new PrivateNetwork {}
+  mounts: Listing<Mount> = new {}
+  secretFiles: Listing<SecretFile> = new {}
+  temporaryStorage: Listing<TemporaryStorage> = new {}
+  resources: Resources = new {}
+  capabilities: Set<String> = Set()
+  devices: Mapping<String, String> = new {}
+  ports: Mapping<String, PortNumber> = new {}
+}
+
+class Job {
+  image: Name
+  process: Process = new {}
+  dependencies: Listing<Dependency> = new {}
+  secretEnvironment: Mapping<String, SecretRef> = new {}
+  trigger: "manual" | "eachDeployment" = "manual"
+  timeout: Duration(isPositive) = 5.min
+  maxAttempts: Int(isPositive) = 1
+  successExitCodes: Set<Int> = Set(0)
+}
+
+class StorageRequirement {
+  access: "readOnly" | "readWrite" = "readWrite"
+}
+
+class SecretRequirement {
+  description: String = ""
+}
+
+class Application {
+  name: Name
+  services: Mapping<String, Service> = new {}
+  jobs: Mapping<String, Job> = new {}
+  storage: Mapping<String, StorageRequirement> = new {}
+  secrets: Mapping<String, SecretRequirement> = new {}
+}
+
+class HostPath {
+  kind: "hostPath" = "hostPath"
+  path: String(startsWith("/"))
+  missing: "fail" = "fail"
+  mountRequirement: String?
+}
+
+class ExistingVolume {
+  kind: "existingVolume" = "existingVolume"
+  name: Name
+}
+
+class SecretBinding {
+  provider: Name
+  key: Name
+}
+
+class PublishedPort {
+  address: Name
+  port: PortNumber
+}
+
+class Bindings {
+  storage: Mapping<String, HostPath | ExistingVolume> = new {}
+  secrets: Mapping<String, SecretBinding> = new {}
+  devices: Mapping<String, String> = new {}
+  ports: Mapping<String, PublishedPort> = new {}
+}
+
+class PolicyRequest {
+  /// These are requests, never authorization. Operator policy is authoritative.
+  orphanedServices: "retain" | "requireApproval" = "retain"
+  storageDeletion: "deny" | "requireApproval" = "deny"
+  unknownChecks: "fail" | "requireApproval" = "fail"
+}
+
+class Deployment {
+  application: Application
+  target: Name
+  bindings: Bindings = new {}
+  policy: PolicyRequest = new {}
+}
+
+/// Demonstrates explicit serialization, not the final versioned IR contract.
+renderer = new JsonRenderer {
+  converters {
+    [Duration] = (d) -> new Dynamic { value = d.value; unit = d.unit }
+    [DataSize] = (d) -> new Dynamic { value = d.value; unit = d.unit }
+  }
+}
