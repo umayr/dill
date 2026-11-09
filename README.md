@@ -191,8 +191,9 @@ as-is.
 
 Named volumes are stack-scoped by default: `pg-data:/var/lib/postgresql/data`
 creates `<stack>_pg-data`. Two stacks declaring the same logical volume get two
-independent volumes, and `dill teardown` only removes volumes labelled as owned by
-the stack.
+independent volumes. `dill teardown` removes volumes labelled as owned by the stack,
+after rechecking ownership. Engine APIs cannot make that check atomic with
+name-based removal; see [lifecycle failures](docs/lifecycle-failures.md).
 
 To reuse a pre-existing volume (for example one Compose created as
 `<project>_pg-data`) or a shared volume, use the full mount form:

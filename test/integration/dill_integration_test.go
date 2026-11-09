@@ -326,8 +326,22 @@ func TestDillStackScopedVolumes(t *testing.T) {
 		t.Fatalf("volumes are not isolated; B saw %q", out)
 	}
 
-	// Tearing down A must not remove B's volume.
-	runDill(t, true, bin, "-f", cfgA, "teardown", "--yes")
+	// B still uses the shared image: teardown A must report the image removal
+	// failure while continuing to remove A's owned volume and container.
+	imageID := strings.TrimSpace(runEngine(t, env.engine, "inspect", "--format", "{{.Image}}", stackB+"_app"))
+	out, err := exec.Command(bin, "-f", cfgA, "teardown", "--yes").CombinedOutput()
+	if err == nil {
+		t.Fatalf("teardown unexpectedly succeeded while B uses image %s: %s", imageID, out)
+	}
+	if !strings.Contains(string(out), "remove image") || !strings.Contains(string(out), "busybox:1.36") || !strings.Contains(string(out), strings.TrimPrefix(imageID, "sha256:")) {
+		t.Fatalf("teardown missing shared image identity: %s", out)
+	}
+	if names := stackContainerNames(t, env.engine, stackA); names != "" {
+		t.Fatalf("A containers retained: %s", names)
+	}
+	if state := containerState(t, env.engine, stackB+"_app"); state != "running" {
+		t.Fatalf("B container state = %s", state)
+	}
 	if volumeExists(t, env.engine, stackA+"_data") {
 		t.Fatal("A's volume survived teardown")
 	}

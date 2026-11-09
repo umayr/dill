@@ -26,7 +26,7 @@ const (
 )
 
 // Progress is called to report user-visible status changes for a service.
-// Pass nil to suppress progress output (e.g. during rollback teardown).
+// Pass nil to suppress progress output (e.g. during failure cleanup).
 type Progress func(service, status string)
 
 // PullSink receives streaming download progress for a single image pull.
@@ -109,20 +109,32 @@ func (g *Graph) Run(ctx context.Context, engine orchestrator.Engine, stackName s
 	}
 
 	var mu sync.Mutex
-	var started []string // immutable container IDs created during this run (for rollback)
+	var started []string // immutable container IDs created during this run (for failure cleanup)
+	var failures []error
 
 	eg, egCtx := errgroup.WithContext(ctx)
+	recordFailure := func(run func() error) func() error {
+		return func() error {
+			err := run()
+			if err != nil {
+				mu.Lock()
+				failures = append(failures, err)
+				mu.Unlock()
+			}
+			return err
+		}
+	}
 
 	for _, n := range g.nodes {
 		n := n
-		eg.Go(func() error {
+		eg.Go(recordFailure(func() error {
 			// Wait for all dependencies to be UP.
 			for _, dep := range n.deps {
 				select {
 				case <-dep.done:
 					logger.Debug("dependency ready", "service", n.name, "dep", dep.name)
 				case <-egCtx.Done():
-					return fmt.Errorf("service %q: context cancelled while waiting for dependency %q", n.name, dep.name)
+					return fmt.Errorf("service %q: waiting for dependency %q: %w", n.name, dep.name, egCtx.Err())
 				}
 			}
 
@@ -175,8 +187,7 @@ func (g *Graph) Run(ctx context.Context, engine orchestrator.Engine, stackName s
 			case ActionRecreate:
 				emit("stopping")
 				if err := engine.StopService(egCtx, containerID); err != nil {
-					logger.Debug("stop failed during recreate (may already be stopped)",
-						"service", n.name, "err", err)
+					return &orchestrator.ResourceError{Operation: "stop before recreate", Resource: containerName, ID: containerID, Err: err}
 				}
 				if err := engine.RemoveService(egCtx, containerID); err != nil {
 					return fmt.Errorf("service %q: remove before recreate: %w", n.name, err)
@@ -231,18 +242,18 @@ func (g *Graph) Run(ctx context.Context, engine orchestrator.Engine, stackName s
 				select {
 				case <-time.After(500 * time.Millisecond):
 				case <-egCtx.Done():
-					return fmt.Errorf("service %q did not become ready within timeout", n.name)
+					return fmt.Errorf("service %q did not become ready: %w", n.name, egCtx.Err())
 				}
 			}
-		})
+		}))
 	}
 
 	if err := eg.Wait(); err != nil {
 		logger.Warn("deployment failed, tearing down started services", "err", err)
-		teardownCtx, teardownCancel := context.WithTimeout(context.Background(), 60*time.Second)
+		teardownCtx, teardownCancel := context.WithTimeout(context.WithoutCancel(ctx), 60*time.Second)
 		defer teardownCancel()
-		teardown(teardownCtx, engine, started, nil)
-		return err
+		failures = append(failures, teardown(teardownCtx, engine, started, nil))
+		return errors.Join(failures...)
 	}
 	return nil
 }
@@ -254,40 +265,42 @@ func Down(ctx context.Context, engine orchestrator.Engine, stackName string, pro
 	if err != nil {
 		return fmt.Errorf("listing stack %q: %w", stackName, err)
 	}
-	if len(names) == 0 {
-		logger.Debug("no containers found for stack", "stack", stackName)
-		return nil
+	var errs []error
+	for _, name := range names {
+		id, err := orchestrator.OwnedID(ctx, engine, name, stackName, "")
+		if err != nil {
+			errs = append(errs, err)
+			continue
+		}
+		if id == "" {
+			continue
+		}
+		if prog != nil {
+			prog(name, "removing")
+		}
+		if err := orchestrator.RemoveContainer(ctx, engine, name, id); err != nil {
+			errs = append(errs, err)
+		}
 	}
-
-	teardown(ctx, engine, names, prog)
-
 	if err := engine.RemoveNetwork(ctx, stackName); err != nil {
-		logger.Warn("failed to remove stack network", "stack", stackName, "err", err)
+		errs = append(errs, &orchestrator.ResourceError{Operation: "remove network (resource may be retained)", Resource: stackName, Err: err})
 	}
-	return nil
+	return errors.Join(errs...)
 }
 
-// teardown stops and removes the named containers concurrently.
+// teardown stops and removes created container IDs during failure cleanup.
 // prog is called with (name, "removing") for each container; pass nil to suppress.
-func teardown(ctx context.Context, engine orchestrator.Engine, names []string, prog Progress) {
-	var wg sync.WaitGroup
-	for _, name := range names {
-		name := name
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			if prog != nil {
-				prog(name, "removing")
-			}
-			if err := engine.StopService(ctx, name); err != nil {
-				logger.Debug("stop failed (may already be stopped)", "name", name, "err", err)
-			}
-			if err := engine.RemoveService(ctx, name); err != nil {
-				logger.Warn("remove failed", "name", name, "err", err)
-			}
-		}()
+func teardown(ctx context.Context, engine orchestrator.Engine, names []string, prog Progress) error {
+	var errs []error
+	for _, id := range names {
+		if prog != nil {
+			prog(id, "removing")
+		}
+		if err := orchestrator.RemoveContainer(ctx, engine, id, id); err != nil {
+			errs = append(errs, err)
+		}
 	}
-	wg.Wait()
+	return errors.Join(errs...)
 }
 
 // maybePull pulls the image based on the service's pullPolicy.

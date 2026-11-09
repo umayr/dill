@@ -309,8 +309,11 @@ func (f *fakeEngine) ServiceStatus(_ context.Context, name string) (*orchestrato
 func (f *fakeEngine) Logs(context.Context, string, orchestrator.LogOptions, io.Writer) error {
 	return nil
 }
-func (f *fakeEngine) InspectConfig(context.Context, string) (*orchestrator.LiveConfig, error) {
-	return nil, orchestrator.ErrNotFound
+func (f *fakeEngine) InspectConfig(_ context.Context, name string) (*orchestrator.LiveConfig, error) {
+	if _, ok := f.statuses[name]; !ok {
+		return nil, orchestrator.ErrNotFound
+	}
+	return &orchestrator.LiveConfig{ID: name, SystemLabels: map[string]string{"dill.managed": "true", "dill.stack": "app", "dill.service": strings.TrimPrefix(name, "app_")}}, nil
 }
 func (f *fakeEngine) ListStack(context.Context, string) ([]string, error) {
 	names := make([]string, 0, len(f.statuses))
@@ -327,6 +330,6 @@ func (f *fakeEngine) RemoveNetwork(context.Context, string) error {
 	f.networkRemoved = true
 	return nil
 }
-func (f *fakeEngine) RemoveImage(context.Context, string, bool) error  { return nil }
-func (f *fakeEngine) RemoveVolume(context.Context, string, bool) error { return nil }
-func (f *fakeEngine) Close() error                                     { return nil }
+func (f *fakeEngine) RemoveImage(context.Context, string, bool) error          { return nil }
+func (f *fakeEngine) RemoveVolume(context.Context, string, string, bool) error { return nil }
+func (f *fakeEngine) Close() error                                             { return nil }

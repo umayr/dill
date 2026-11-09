@@ -271,13 +271,30 @@ func runRm(ctx context.Context, opts commandOptions, args []string) error {
 			return nil
 		}
 	}
+	var errs []error
 	for _, name := range names {
-		cs, err := engine.ServiceStatus(ctx, name)
+		service := ""
+		for _, svc := range args {
+			if serviceContainerName(sn, svc, st.Config.Services[svc]) == name {
+				service = svc
+				break
+			}
+		}
+		id, err := orchestrator.OwnedID(ctx, engine, name, sn, service)
+		if err != nil {
+			errs = append(errs, err)
+			continue
+		}
+		if id == "" {
+			continue
+		}
+		cs, err := engine.ServiceStatus(ctx, id)
 		if err != nil {
 			if errors.Is(err, orchestrator.ErrNotFound) {
 				continue
 			}
-			return err
+			errs = append(errs, &orchestrator.ResourceError{Operation: "status", Resource: name, ID: id, Err: err})
+			continue
 		}
 		if cs.State == "running" {
 			if !opts.Quiet {
@@ -292,11 +309,11 @@ func runRm(ctx context.Context, opts commandOptions, args []string) error {
 		if !opts.Quiet {
 			printProgress(name, "removing")
 		}
-		if err := engine.RemoveService(ctx, name); err != nil {
-			return err
+		if err := engine.RemoveService(ctx, id); err != nil && !errors.Is(err, orchestrator.ErrNotFound) {
+			errs = append(errs, &orchestrator.ResourceError{Operation: "remove (resource may be retained)", Resource: name, ID: id, Err: err})
 		}
 	}
-	return nil
+	return errors.Join(errs...)
 }
 
 func runWait(ctx context.Context, opts commandOptions, args []string) error {

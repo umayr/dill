@@ -2,8 +2,10 @@ package orchestrator
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
+	"net/http"
 	"sort"
 	"strconv"
 	"strings"
@@ -16,12 +18,19 @@ import (
 	"github.com/containers/podman/v5/pkg/bindings/images"
 	podmannetwork "github.com/containers/podman/v5/pkg/bindings/network"
 	podmanvolumes "github.com/containers/podman/v5/pkg/bindings/volumes"
+	"github.com/containers/podman/v5/pkg/domain/entities/reports"
 	entitiesTypes "github.com/containers/podman/v5/pkg/domain/entities/types"
+	"github.com/containers/podman/v5/pkg/errorhandling"
 	"github.com/containers/podman/v5/pkg/specgen"
 	specs "github.com/opencontainers/runtime-spec/specs-go"
 	"github.com/umayr/dill/internal/config"
 	"github.com/umayr/dill/internal/log"
 )
+
+func podmanNotFound(err error) bool {
+	var apiErr *errorhandling.ErrorModel
+	return errors.As(err, &apiErr) && apiErr.Code() == http.StatusNotFound
+}
 
 type PodmanEngine struct {
 	conn context.Context
@@ -268,14 +277,14 @@ func (p *PodmanEngine) StartService(ctx context.Context, name string, svc *confi
 
 	res, err := containers.CreateWithSpec(p.operationContext(ctx), s, nil)
 	if err != nil {
-		return "", fmt.Errorf("create %s: %w", name, err)
+		return "", fmt.Errorf("create %s: outcome may be unknown; container %q may be retained: %w", name, containerName, err)
 	}
 	if err := startCreated(ctx, ctx, name, res.ID, func() error {
 		return containers.Start(p.operationContext(ctx), res.ID, nil)
 	}, func(cleanupCtx context.Context, id string) error {
 		force := true
-		_, err := containers.Remove(p.operationContext(cleanupCtx), id, &containers.RemoveOptions{Force: &force})
-		return err
+		result, err := containers.Remove(p.operationContext(cleanupCtx), id, &containers.RemoveOptions{Force: &force})
+		return errors.Join(err, errors.Join(reports.RmReportsErrs(result)...))
 	}); err != nil {
 		return "", err
 	}
@@ -286,14 +295,21 @@ func (p *PodmanEngine) StartService(ctx context.Context, name string, svc *confi
 func (p *PodmanEngine) StopService(ctx context.Context, name string) error {
 	logger.Debug("stopping service", "service", name)
 	timeout := uint(10)
-	return containers.Stop(p.operationContext(ctx), name, &containers.StopOptions{Timeout: &timeout})
+	err := containers.Stop(p.operationContext(ctx), name, &containers.StopOptions{Timeout: &timeout})
+	if podmanNotFound(err) {
+		return nil
+	}
+	return err
 }
 
 func (p *PodmanEngine) RemoveService(ctx context.Context, name string) error {
 	logger.Debug("removing container", "name", name)
-	force := true
-	_, err := containers.Remove(p.operationContext(ctx), name, &containers.RemoveOptions{Force: &force})
-	return err
+	force := false
+	result, err := containers.Remove(p.operationContext(ctx), name, &containers.RemoveOptions{Force: &force})
+	if podmanNotFound(err) {
+		err = nil
+	}
+	return errors.Join(err, errors.Join(reports.RmReportsErrs(result)...))
 }
 
 func (p *PodmanEngine) IsReady(ctx context.Context, name string, hasHealthCheck bool) (bool, error) {
@@ -618,11 +634,26 @@ func (p *PodmanEngine) EnsureNetwork(ctx context.Context, name string) error {
 }
 
 func (p *PodmanEngine) RemoveNetwork(ctx context.Context, name string) error {
-	_, err := podmannetwork.Remove(p.operationContext(ctx), name, nil)
+	live, err := podmannetwork.Inspect(p.operationContext(ctx), name, nil)
 	if err != nil {
-		if strings.Contains(err.Error(), "no such network") {
+		if podmanNotFound(err) {
 			return nil
 		}
+		return fmt.Errorf("inspect network %s: %w", name, err)
+	}
+	if live.Labels["dill.managed"] != "true" || live.Labels["dill.stack"] != name || live.ID == "" {
+		return fmt.Errorf("network %q is not owned by stack %q", name, name)
+	}
+	result, err := podmannetwork.Remove(p.operationContext(ctx), live.ID, nil)
+	if podmanNotFound(err) {
+		err = nil
+	}
+	for _, report := range result {
+		if report != nil && report.Err != nil {
+			err = errors.Join(err, report.Err)
+		}
+	}
+	if err != nil {
 		return fmt.Errorf("removing network %s: %w", name, err)
 	}
 	logger.Debug("network removed", "name", name)
@@ -632,10 +663,14 @@ func (p *PodmanEngine) RemoveNetwork(ctx context.Context, name string) error {
 func (p *PodmanEngine) RemoveImage(ctx context.Context, image string, force bool) error {
 	opts := new(images.RemoveOptions).WithForce(force)
 	_, errs := images.Remove(p.operationContext(ctx), []string{image}, opts)
+	var failures []error
 	for _, err := range errs {
-		if err != nil && !strings.Contains(err.Error(), "image not known") {
-			return fmt.Errorf("removing image %s: %w", image, err)
+		if err != nil && !podmanNotFound(err) {
+			failures = append(failures, err)
 		}
+	}
+	if err := errors.Join(failures...); err != nil {
+		return fmt.Errorf("removing image %s: %w", image, err)
 	}
 	logger.Debug("image removed", "image", image)
 	return nil
@@ -669,7 +704,7 @@ func (p *PodmanEngine) EnsureVolume(ctx context.Context, name, stackName string)
 // ListStackVolumes returns volumes labelled as owned by the stack.
 func (p *PodmanEngine) ListStackVolumes(ctx context.Context, stackName string) ([]string, error) {
 	opts := new(podmanvolumes.ListOptions).WithFilters(map[string][]string{
-		"label": {"dill.stack=" + stackName},
+		"label": {"dill.stack=" + stackName, "dill.managed=true"},
 	})
 	reports, err := podmanvolumes.List(p.operationContext(ctx), opts)
 	if err != nil {
@@ -683,15 +718,24 @@ func (p *PodmanEngine) ListStackVolumes(ctx context.Context, stackName string) (
 	return names, nil
 }
 
-func (p *PodmanEngine) RemoveVolume(ctx context.Context, name string, force bool) error {
+func (p *PodmanEngine) RemoveVolume(ctx context.Context, name, stackName string, force bool) error {
+	live, err := podmanvolumes.Inspect(p.operationContext(ctx), name, nil)
+	if podmanNotFound(err) {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("inspect volume %s: %w", name, err)
+	}
+	if live == nil {
+		return fmt.Errorf("inspect volume %s: empty response", name)
+	}
+	if live.Labels["dill.managed"] != "true" || live.Labels["dill.stack"] != stackName || stackName == "" {
+		return fmt.Errorf("volume %q is not owned by stack %q; retained", name, stackName)
+	}
 	opts := new(podmanvolumes.RemoveOptions).WithForce(force)
-	if err := podmanvolumes.Remove(p.operationContext(ctx), name, opts); err != nil {
-		if strings.Contains(err.Error(), "no such volume") {
-			return nil
-		}
+	if err := podmanvolumes.Remove(p.operationContext(ctx), name, opts); err != nil && !podmanNotFound(err) {
 		return fmt.Errorf("removing volume %s: %w", name, err)
 	}
-	logger.Debug("volume removed", "name", name)
 	return nil
 }
 
