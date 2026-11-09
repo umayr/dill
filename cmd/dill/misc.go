@@ -83,7 +83,12 @@ func runValidate(ctx context.Context, opts commandOptions, args []string) (retEr
 		target = tmp.Name()
 	}
 
-	validateErr := config.Validate(ctx, target)
+	cfg, validateErr := config.Load(ctx, target)
+	if validateErr == nil {
+		if err := config.ValidateContainerNames(cfg.Services, resolveStackNameWithOptions(cfg, opts)); err != nil {
+			validateErr = &config.InvalidError{Err: err}
+		}
+	}
 
 	if *format == "json" {
 		enc := json.NewEncoder(os.Stdout)

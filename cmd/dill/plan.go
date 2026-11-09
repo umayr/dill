@@ -78,6 +78,10 @@ func runPlanNamed(ctx context.Context, opts commandOptions, args []string, name 
 }
 
 func failureKind(err error) string {
+	var evaluator *config.EvaluatorError
+	if errors.As(err, &evaluator) {
+		return "evaluator_failure"
+	}
 	var invalid *config.InvalidError
 	if errors.As(err, &invalid) {
 		return "invalid_input"

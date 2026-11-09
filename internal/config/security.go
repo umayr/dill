@@ -66,6 +66,31 @@ func ValidateRuntime(cfg *DillConfig) error {
 	return ValidateGraph(cfg.Services)
 }
 
+// ValidateContainerNames checks names after stack-name overrides are resolved.
+func ValidateContainerNames(services map[string]*Service, stack string) error {
+	names := make([]string, 0, len(services))
+	for name := range services {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	used := make(map[string]string, len(names))
+	for _, name := range names {
+		svc := services[name]
+		if svc == nil {
+			return fmt.Errorf("service %q is nil", name)
+		}
+		container := svc.ContainerName
+		if container == "" {
+			container = stack + "_" + name
+		}
+		if previous, exists := used[container]; exists {
+			return fmt.Errorf("service %q containerName %q conflicts with service %q", name, container, previous)
+		}
+		used[container] = name
+	}
+	return nil
+}
+
 // ValidateGraph checks the entire declared dependency graph before target access.
 // networkMode remains engine-native; managed namespace edges are deferred to #9.
 func ValidateGraph(services map[string]*Service) error {

@@ -109,13 +109,21 @@ mount targets must be absolute container paths. `validate --stdin` resolves
 relative imports against the directory of `-f` and requires it to be writable.
 
 `validate --format json` returns `valid: false`, an `error` string, and a `kind`
-(`invalid_input` or `operational_failure`) on failure. Plan/diff JSON failures
-return an `error` string and the same `kind`; successful plan/diff JSON retains
+(`invalid_input`, `evaluator_failure`, or `operational_failure`) on failure.
+Plan/diff JSON failures return an `error` string and the same `kind`; successful plan/diff JSON retains
 its existing shape. Diagnostics are written to stderr. JSON doctor retains its
 checks array but now exits nonzero if a check fails. These failure shapes are
 unversioned CLI output, not the future #19 operation protocol. Scripts that
 previously relied on successful JSON validation/doctor exits for failed checks
-must handle the new nonzero exit.
+must handle the new nonzero exit. A Pkl process failure is reported as
+`evaluator_failure` with exit 1: syntax, import, trust and other evaluator
+failures cannot be reliably distinguished without parsing Pkl's prose. This
+changes the earlier draft's exit 2 / `invalid_input` classification for these
+failures. Invalid rendered configuration still exits 2. Unknown configuration,
+service and nested schema-object properties and duplicate JSON keys are rejected;
+additional top-level Pkl module properties remain supported. Effective container
+names must be unique after applying stack-name overrides, including names derived
+from service IDs. Existing colliding configurations must be renamed before use.
 
 Legacy `networkMode` values continue to be passed to the engine unchanged;
 managed namespace-sharing edges are not inferred or validated and are deferred

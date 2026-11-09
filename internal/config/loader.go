@@ -17,10 +17,11 @@ type InvalidError struct{ Err error }
 func (e *InvalidError) Error() string { return e.Err.Error() }
 func (e *InvalidError) Unwrap() error { return e.Err }
 
-// root is the top-level pkl module output wrapping DillConfig.
-type root struct {
-	Config *DillConfig `json:"config"`
-}
+// EvaluatorError is a Pkl process failure whose cause cannot be reliably classified.
+type EvaluatorError struct{ Err error }
+
+func (e *EvaluatorError) Error() string { return e.Err.Error() }
+func (e *EvaluatorError) Unwrap() error { return e.Err }
 
 // Load evaluates a .pkl config file and returns the parsed DillConfig.
 // The pkl binary is located automatically (see internal/pklbin).
@@ -38,17 +39,24 @@ func Load(ctx context.Context, path string) (*DillConfig, error) {
 		}
 		var exitErr *exec.ExitError
 		if errors.As(err, &exitErr) {
-			return nil, &InvalidError{Err: fmt.Errorf("pkl eval failed:\n%s", exitErr.Stderr)}
+			return nil, &EvaluatorError{Err: fmt.Errorf("pkl eval failed:\n%s", exitErr.Stderr)}
 		}
 		return nil, fmt.Errorf("pkl eval: %w", err)
 	}
 
-	var r root
+	if err := rejectDuplicateKeys(out); err != nil {
+		return nil, &InvalidError{Err: fmt.Errorf("parsing pkl output: %w", err)}
+	}
+	var r map[string]json.RawMessage
 	if err := json.Unmarshal(out, &r); err != nil {
 		return nil, &InvalidError{Err: fmt.Errorf("parsing pkl output: %w", err)}
 	}
-	if r.Config == nil {
+	if len(r["config"]) == 0 || string(r["config"]) == "null" {
 		return nil, &InvalidError{Err: fmt.Errorf("pkl output missing 'config' field")}
+	}
+	var cfg DillConfig
+	if err := decodeStrict(r["config"], &cfg); err != nil {
+		return nil, &InvalidError{Err: fmt.Errorf("parsing pkl output: %w", err)}
 	}
 	// Populate BaseDir on every service so relative bind-mount paths can be
 	// resolved correctly regardless of the caller's working directory.
@@ -57,13 +65,13 @@ func Load(ctx context.Context, path string) (*DillConfig, error) {
 		absPath = path
 	}
 	baseDir := filepath.Dir(absPath)
-	for _, svc := range r.Config.Services {
+	for _, svc := range cfg.Services {
 		if svc != nil {
 			svc.BaseDir = baseDir
 		}
 	}
-	if err := ValidateRuntime(r.Config); err != nil {
+	if err := ValidateRuntime(&cfg); err != nil {
 		return nil, &InvalidError{Err: err}
 	}
-	return r.Config, nil
+	return &cfg, nil
 }
