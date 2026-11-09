@@ -2,6 +2,7 @@ BINARY  := bin/dill
 CMD     := ./cmd/dill
 TAGS    := containers_image_openpgp,exclude_graphdriver_devicemapper,exclude_graphdriver_btrfs
 DIST    := dist
+PKL     ?= pkl
 
 VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo "dev")
 LDFLAGS := -ldflags "-X main.version=$(VERSION)"
@@ -34,12 +35,15 @@ fmt:
 	done
 
 validate:
-	pkl project package . --output-path /tmp/dill-out --skip-publish-check
-	@for f in examples/**/compose.pkl; do \
+	PKL=$(PKL) python3 scripts/package-schema.py --version 0.0.0 --output /tmp/dill-out
+	@set -e; for f in examples/**/compose.pkl; do \
 		[ -f "$$f" ] || continue; \
 		echo "eval $$f"; \
-		pkl eval "$$f" > /dev/null; \
+		$(PKL) eval "$$f" > /dev/null; \
 	done
+	DB_USER=test DB_PASSWORD=test $(PKL) eval examples/overrides/my-server.pkl > /dev/null
+	PKL=$(PKL) python3 docs/design/check_examples.py
+	PKL=$(PKL) python3 -m unittest discover -s scripts -p 'test_*.py'
 
 clean:
 	rm -rf bin $(DIST)

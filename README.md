@@ -8,21 +8,19 @@ Dill is a strictly-typed, configuration-as-code orchestrator built with Pkl and 
 
 ## Setup
 
-1. **Install Pkl:** Follow the official instructions at `pkl-lang.org`.
-2. **Install Go dependencies:**
-   `go mod tidy`
-3. **Build the binary:**
-   `go build -tags containers_image_openpgp -o dill ./cmd/dill`
+Install Go and run `make build`. The verified Pkl toolchain pin and release-asset
+SHA-256 digests live in `internal/loader/pkl-toolchain.json`. To install the
+pinned Pkl locally, run `python3 scripts/install-pkl.py /path/to/pkl` and use
+`PKL=/path/to/pkl make validate`.
 
-> The `-tags containers_image_openpgp` flag uses a pure-Go OpenPGP implementation,
-> avoiding a C dependency on `libgpgme`. Omit it only if you have `pkg-config` and
-> `gpgme` installed (e.g. `brew install pkg-config gpgme` on macOS).
-
-If Dill cannot find `pkl` on `PATH`, it can download the pinned Pkl release, but
-it now requires checksum verification. Prefer installing Pkl yourself or setting
-`DILL_PKL_PATH`. For automated installs, set `DILL_PKL_SHA256` to the expected
-binary hash. `DILL_ALLOW_UNVERIFIED_PKL_DOWNLOAD=1` exists only as an explicit
-escape hatch for disposable environments.
+Dill uses `DILL_PKL_PATH`, then `pkl` on `PATH`, before downloading the pinned
+binary. Explicit and PATH binaries are operator-managed and are not verified or
+version-checked by Dill. Managed downloads and their versioned cache are checked
+against the embedded digests; the legacy unversioned cache is not reused.
+`DILL_PKL_SHA256`, its platform-specific variant, and
+`DILL_ALLOW_UNVERIFIED_PKL_DOWNLOAD` are no longer supported and cause an
+explicit error; unset them or use `DILL_PKL_PATH` for a separately managed binary.
+See [schema release and migration notes](docs/schema-release.md).
 
 ## Usage
 

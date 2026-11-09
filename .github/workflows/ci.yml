@@ -17,10 +17,8 @@ jobs:
           go-version-file: go.mod
       - name: Install Pkl
         run: |
-          curl -L \
-            -o /usr/local/bin/pkl \
-            https://github.com/apple/pkl/releases/latest/download/pkl-linux-amd64
-          chmod +x /usr/local/bin/pkl
+          python3 scripts/install-pkl.py "$RUNNER_TEMP/pkl"
+          echo "$RUNNER_TEMP" >> "$GITHUB_PATH"
       - name: Check gofmt
         run: |
           unformatted=$(gofmt -l .)
@@ -82,11 +80,9 @@ jobs:
           go-version-file: go.mod
       - name: Install Pkl
         run: |
-          curl -fsSL \
-            -o /usr/local/bin/pkl \
-            https://github.com/apple/pkl/releases/download/0.31.1/pkl-linux-amd64
-          chmod +x /usr/local/bin/pkl
-          pkl --version
+          python3 scripts/install-pkl.py "$RUNNER_TEMP/pkl"
+          echo "$RUNNER_TEMP" >> "$GITHUB_PATH"
+          "$RUNNER_TEMP/pkl" --version
       - name: Verify Docker
         run: docker version
       - name: Run integration tests
@@ -114,11 +110,9 @@ jobs:
           go-version-file: go.mod
       - name: Install Pkl and Podman
         run: |
-          curl -fsSL \
-            -o /usr/local/bin/pkl \
-            https://github.com/apple/pkl/releases/download/0.31.1/pkl-linux-amd64
-          chmod +x /usr/local/bin/pkl
-          pkl --version
+          python3 scripts/install-pkl.py "$RUNNER_TEMP/pkl"
+          echo "$RUNNER_TEMP" >> "$GITHUB_PATH"
+          "$RUNNER_TEMP/pkl" --version
           sudo apt-get update
           sudo apt-get install -y podman
           podman version
@@ -155,13 +149,11 @@ jobs:
       - uses: actions/checkout@v4
       - name: Install Pkl
         run: |
-          curl -L \
-            -o /usr/local/bin/pkl \
-            https://github.com/apple/pkl/releases/latest/download/pkl-linux-amd64
-          chmod +x /usr/local/bin/pkl
-          pkl --version
+          python3 scripts/install-pkl.py "$RUNNER_TEMP/pkl"
+          echo "$RUNNER_TEMP" >> "$GITHUB_PATH"
+          "$RUNNER_TEMP/pkl" --version
       - name: Package
-        run: pkl project package . --output-path /tmp/out --skip-publish-check
+        run: make validate
 
   examples:
     name: Validate Examples
@@ -170,11 +162,9 @@ jobs:
       - uses: actions/checkout@v4
       - name: Install Pkl
         run: |
-          curl -L \
-            -o /usr/local/bin/pkl \
-            https://github.com/apple/pkl/releases/latest/download/pkl-linux-amd64
-          chmod +x /usr/local/bin/pkl
-          pkl --version
+          python3 scripts/install-pkl.py "$RUNNER_TEMP/pkl"
+          echo "$RUNNER_TEMP" >> "$GITHUB_PATH"
+          "$RUNNER_TEMP/pkl" --version
       - name: Eval examples
         run: |
           for f in examples/**/compose.pkl; do

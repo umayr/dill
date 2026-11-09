@@ -93,15 +93,38 @@ func TestFindPkl_Cached(t *testing.T) {
 	}
 }
 
-func TestVerifyDownloadedPklRequiresChecksum(t *testing.T) {
+func TestVerifyDownloadedPklRejectsMismatch(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "pkl")
 	if err := os.WriteFile(path, []byte("fake"), 0o755); err != nil {
 		t.Fatal(err)
 	}
+	if err := verifyDownloadedPkl(path); err == nil {
+		t.Fatal("expected checksum mismatch")
+	}
+}
+
+func TestResolveRejectsTamperedManagedCache(t *testing.T) {
+	t.Setenv("DILL_PKL_PATH", "")
 	t.Setenv("DILL_PKL_SHA256", "")
 	t.Setenv("DILL_ALLOW_UNVERIFIED_PKL_DOWNLOAD", "")
-	if err := verifyDownloadedPkl(path); err == nil {
-		t.Fatal("expected missing checksum error")
+	t.Setenv("PATH", "")
+	t.Setenv("XDG_DATA_HOME", t.TempDir())
+	path := cachePath()
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte("tampered"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := resolve(context.Background()); err == nil || !strings.Contains(err.Error(), "cached pkl failed verification") {
+		t.Fatalf("expected cache verification error, got %v", err)
+	}
+}
+
+func TestResolveRejectsLegacyDownloadOverrides(t *testing.T) {
+	t.Setenv("DILL_ALLOW_UNVERIFIED_PKL_DOWNLOAD", "1")
+	if _, err := resolve(context.Background()); err == nil || !strings.Contains(err.Error(), "no longer supported") {
+		t.Fatalf("expected explicit migration error, got %v", err)
 	}
 }
 
@@ -112,7 +135,14 @@ func TestVerifyDownloadedPklAcceptsChecksum(t *testing.T) {
 		t.Fatal(err)
 	}
 	sum := sha256.Sum256(content)
-	t.Setenv("DILL_PKL_SHA256", hex.EncodeToString(sum[:]))
+	url, err := releaseURL()
+	if err != nil {
+		t.Skip(err)
+	}
+	asset := filepath.Base(url)
+	old := toolchain.SHA256[asset]
+	toolchain.SHA256[asset] = hex.EncodeToString(sum[:])
+	t.Cleanup(func() { toolchain.SHA256[asset] = old })
 	if err := verifyDownloadedPkl(path); err != nil {
 		t.Fatal(err)
 	}

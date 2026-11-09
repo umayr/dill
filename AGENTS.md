@@ -29,11 +29,11 @@ A plain `go build`/`go test` fails or misleads. Integration tests additionally
 need the `integration` tag; prefer `make integration-test`.
 
 Toolchain: `go.mod` declares the minimum Go version (currently 1.25.0).
-The Pkl download version is pinned in `internal/loader/pkl.go` (currently 0.31.1);
-integration CI uses that version, while other Pkl jobs currently use `latest`.
-If `pkl` is not on `PATH`, Dill can download the pinned release but requires
-checksum verification (`DILL_PKL_SHA256`); prefer `DILL_PKL_PATH` pointing at a
-local binary.
+The Pkl version and trusted release asset digests are pinned in
+`internal/loader/pkl-toolchain.json`, embedded by the runtime and consumed by
+CI and release scripts. `python3 scripts/install-pkl.py /path/to/pkl` installs
+it with checksum verification. Use `PKL=/path/to/pkl make validate` for local
+validation; `DILL_PKL_PATH` selects an operator-managed runtime binary.
 
 ## Architecture map
 
