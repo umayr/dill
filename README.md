@@ -1,5 +1,9 @@
 # Dill
 
+See the [roadmap](ROADMAP.md) for the Dill/Brine vision, ownership boundaries,
+phased implementation tickets, and evaluated experimental Pkl design examples.
+The roadmap describes planned work, not additional features of the current schema.
+
 Dill is a strictly-typed, configuration-as-code orchestrator built with Pkl and Go. It serves as a modern alternative to Docker Compose, catching validation errors before runtime and providing native support for both Podman and Docker.
 
 ## Setup
