@@ -3,7 +3,6 @@ set -euo pipefail
 
 instance="${LIMA_INSTANCE:-dill-podman}"
 go_version="${GO_VERSION:-1.25.0}"
-pkl_version="${PKL_VERSION:-0.31.1}"
 podman_socket="${PODMAN_SOCKET:-unix:///tmp/dill-podman-${USER:-user}.sock}"
 repo="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
@@ -36,16 +35,8 @@ if ! command -v go >/dev/null 2>&1 || ! go version | grep -q 'go${go_version}'; 
   sudo tar -C /usr/local -xzf /tmp/go.tgz
 fi
 
-if ! command -v pkl >/dev/null 2>&1; then
-  arch=\$(uname -m)
-  case \"\$arch\" in
-    x86_64) pkl_arch=amd64 ;;
-    aarch64|arm64) pkl_arch=aarch64 ;;
-    *) echo \"unsupported architecture: \$arch\" >&2; exit 1 ;;
-  esac
-  sudo curl -fsSL \"https://github.com/apple/pkl/releases/download/${pkl_version}/pkl-linux-\${pkl_arch}\" -o /usr/local/bin/pkl
-  sudo chmod +x /usr/local/bin/pkl
-fi
+python3 '$repo/scripts/install-pkl.py' /tmp/dill-pkl-verified
+export DILL_PKL_PATH=/tmp/dill-pkl-verified
 
 export PATH=/usr/local/go/bin:\$PATH
 sock_path=\"${podman_socket#unix://}\"

@@ -5,84 +5,67 @@ on:
     tags:
       - "v*.*.*"
 
+# Serialize all registry writes, including retries for different versions.
+concurrency:
+  group: pkl-schema-publication
+  cancel-in-progress: false
+
 jobs:
   build-and-publish:
     runs-on: ubuntu-latest
-
     permissions:
       contents: write
-
+    env:
+      GH_TOKEN: ${{ github.token }}
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
         with:
-          fetch-depth: 0  # needed for git describe --tags
-
-      - name: Set up Go
-        uses: actions/setup-go@v5
+          fetch-depth: 0
+      - uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
-
-      - name: Install Pkl
+      - name: Install verified pinned Pkl
         run: |
-          curl -L \
-            -o /usr/local/bin/pkl \
-            https://github.com/apple/pkl/releases/latest/download/pkl-linux-amd64
-          chmod +x /usr/local/bin/pkl
-          pkl --version
-
-      - name: Stamp PklProject version
+          python3 scripts/install-pkl.py "$RUNNER_TEMP/pkl"
+          echo "$RUNNER_TEMP" >> "$GITHUB_PATH"
+      - name: Test and package allowlisted schema
         run: |
-          VERSION="${GITHUB_REF_NAME#v}"
-          sed -i "s/version = \"[^\"]*\"/version = \"$VERSION\"/" PklProject
-
-      - name: Build Pkl package
-        run: |
-          mkdir -p .out
-          pkl project package . --output-path .out --skip-publish-check
-          echo "Generated files:"
-          ls -lah .out
-
-      - name: Verify archive contents
-        run: unzip -l .out/*.zip
-
-      - name: Build Go binaries
-        run: make dist VERSION="${GITHUB_REF_NAME}"
-
-      - name: Publish GitHub Release
-        uses: softprops/action-gh-release@v2
-        with:
-          generate_release_notes: true
-          files: |
-            .out/*.zip
-            .out/*.sha256
-            dist/bin/dill-darwin-arm64
-            dist/bin/dill-darwin-amd64
-            dist/bin/dill-linux-amd64
-            dist/bin/dill-linux-arm64
-
-      - name: Upload Pkl metadata file
-        run: |
-          # Upload the extension-less metadata file that Pkl's package resolver needs.
-          # softprops/action-gh-release globs skip files with no extension, so we use gh CLI.
-          METADATA=$(find .out -maxdepth 1 -type f ! -name "*.zip" ! -name "*.sha256")
-          gh release upload "${GITHUB_REF_NAME}" $METADATA --clobber
-        env:
-          GH_TOKEN: ${{ github.token }}
-
-      - name: Publish metadata to pkg.ushd.ca
+          make validate
+          PKL=pkl python3 scripts/package-schema.py --version "${GITHUB_REF_NAME#v}" --output .out
+          make dist VERSION="$GITHUB_REF_NAME"
+      - name: Checkout registry
         uses: actions/checkout@v4
         with:
           repository: umayr/pkl-registry
           token: ${{ secrets.PKL_REGISTRY_TOKEN }}
-          path: gh-pages
-
-      - name: Push metadata files
+          path: .registry
+      - name: Ensure release exists without replacing assets
         run: |
-          find .out -maxdepth 1 -type f ! -name "*.zip*" -exec cp {} gh-pages/ \;
-          cd gh-pages
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add "dill@"*
-          git diff --cached --quiet || git commit -m "pkg: publish dill@${GITHUB_REF_NAME}"
-          git push
+          if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
+            echo 'Using existing release; assets will be compared before retry'
+          else
+            set +e
+            response=$(gh api "repos/$GITHUB_REPOSITORY/releases/tags/$GITHUB_REF_NAME" 2>&1)
+            status=$?
+            set -e
+            if [ "$status" -eq 0 ] || ! printf '%s' "$response" | grep -q 'HTTP 404'; then
+              echo "Cannot establish release absence: $response" >&2
+              exit 1
+            fi
+            gh release create "$GITHUB_REF_NAME" --verify-tag --generate-notes
+          fi
+      - name: Publish immutable artifacts before registry discovery
+        run: |
+          git -C .registry config user.name 'github-actions[bot]'
+          git -C .registry config user.email 'github-actions[bot]@users.noreply.github.com'
+          python3 scripts/publish-schema.py --tag "$GITHUB_REF_NAME" --artifacts .out --registry .registry \
+            --binary dist/bin/dill-darwin-arm64 --binary dist/bin/dill-darwin-amd64 \
+            --binary dist/bin/dill-linux-arm64 --binary dist/bin/dill-linux-amd64
+      - name: Verify real HTTPS publication from empty cache
+        run: |
+          for attempt in $(seq 1 12); do
+            if python3 scripts/smoke-schema.py "${GITHUB_REF_NAME#v}"; then exit 0; fi
+            sleep 10
+          done
+          echo 'Published package did not pass clean-cache smoke' >&2
+          exit 1

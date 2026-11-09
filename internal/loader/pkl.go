@@ -10,7 +10,9 @@ package loader
 import (
 	"context"
 	"crypto/sha256"
+	_ "embed"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
@@ -24,11 +26,25 @@ import (
 	"github.com/umayr/dill/internal/log"
 )
 
-const (
-	// PklVersion is the pkl release fetched when no system pkl is found.
-	// Corresponds to the binary shipped at https://github.com/apple/pkl/releases.
-	PklVersion = "0.31.1"
-)
+//go:embed pkl-toolchain.json
+var toolchainJSON []byte
+
+var toolchain = func() struct {
+	Version string            `json:"version"`
+	SHA256  map[string]string `json:"sha256"`
+} {
+	var result struct {
+		Version string            `json:"version"`
+		SHA256  map[string]string `json:"sha256"`
+	}
+	if err := json.Unmarshal(toolchainJSON, &result); err != nil || result.Version == "" {
+		panic("invalid embedded Pkl toolchain manifest")
+	}
+	return result
+}()
+
+// PklVersion is the pinned release used for managed downloads.
+var PklVersion = toolchain.Version
 
 var (
 	pklMu     sync.Mutex
@@ -59,6 +75,12 @@ func FindPkl(ctx context.Context) (string, error) {
 }
 
 func resolve(ctx context.Context) (string, error) {
+	for _, entry := range os.Environ() {
+		key, value, _ := strings.Cut(entry, "=")
+		if value != "" && (key == "DILL_PKL_SHA256" || strings.HasPrefix(key, "DILL_PKL_SHA256_") || key == "DILL_ALLOW_UNVERIFIED_PKL_DOWNLOAD") {
+			return "", fmt.Errorf("%s is no longer supported; managed downloads use pinned checksums; use DILL_PKL_PATH for an explicitly installed binary", key)
+		}
+	}
 	// 1. Explicit env override.
 	if p := os.Getenv("DILL_PKL_PATH"); p != "" {
 		return p, nil
@@ -72,6 +94,9 @@ func resolve(ctx context.Context) (string, error) {
 	// 3. Previously downloaded copy.
 	dst := cachePath()
 	if _, err := os.Stat(dst); err == nil {
+		if err := verifyDownloadedPkl(dst); err != nil {
+			return "", fmt.Errorf("cached pkl failed verification: %w", err)
+		}
 		return dst, nil
 	}
 
@@ -89,7 +114,7 @@ func cachePath() string {
 	if runtime.GOOS == "windows" {
 		name = "pkl.exe"
 	}
-	return filepath.Join(base, "dill", name)
+	return filepath.Join(base, "dill", PklVersion, name)
 }
 
 func downloadPkl(ctx context.Context, dst string) (string, error) {
@@ -104,10 +129,15 @@ func downloadPkl(ctx context.Context, dst string) (string, error) {
 		return "", fmt.Errorf("creating cache dir: %w", err)
 	}
 
-	tmp := dst + ".tmp"
-	f, err := os.OpenFile(tmp, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o755)
+	f, err := os.CreateTemp(filepath.Dir(dst), ".pkl-*")
 	if err != nil {
 		return "", fmt.Errorf("creating temp file: %w", err)
+	}
+	tmp := f.Name()
+	if err := f.Chmod(0o755); err != nil {
+		f.Close()
+		os.Remove(tmp)
+		return "", fmt.Errorf("setting pkl permissions: %w", err)
 	}
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
@@ -187,17 +217,13 @@ func releaseURL() (string, error) {
 }
 
 func verifyDownloadedPkl(path string) error {
-	expected := os.Getenv("DILL_PKL_SHA256")
-	if expected == "" {
-		key := "DILL_PKL_SHA256_" + strings.ToUpper(runtime.GOOS) + "_" + strings.ToUpper(runtime.GOARCH)
-		expected = os.Getenv(key)
+	url, err := releaseURL()
+	if err != nil {
+		return err
 	}
+	expected := toolchain.SHA256[filepath.Base(url)]
 	if expected == "" {
-		if os.Getenv("DILL_ALLOW_UNVERIFIED_PKL_DOWNLOAD") == "1" {
-			logger.Warn("allowing unverified pkl download because DILL_ALLOW_UNVERIFIED_PKL_DOWNLOAD=1")
-			return nil
-		}
-		return fmt.Errorf("refusing to install downloaded pkl without a SHA-256 checksum; install pkl on PATH, set DILL_PKL_PATH, set DILL_PKL_SHA256, or set DILL_ALLOW_UNVERIFIED_PKL_DOWNLOAD=1")
+		return fmt.Errorf("no trusted checksum for %s", filepath.Base(url))
 	}
 
 	f, err := os.Open(path)
