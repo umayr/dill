@@ -5,18 +5,20 @@ deployment = new Model.Deployment {
   target = "lab"
   application {
     name = "downloads"
-    storage { ["downloads"] {} }
-    secrets { ["wireguard"] {} }
+    storage { new { name = "downloads" } }
+    secrets { new { name = "wireguard" } }
     services {
-      ["vpn"] {
+      new {
+        name = "vpn"
         image = "qmcgaw/gluetun:latest"
         capabilities = Set("NET_ADMIN")
-        devices { ["tun"] = "/dev/net/tun" }
+        devices { new { name = "tun"; target = "/dev/net/tun" } }
         readiness { kind = "imageHealthcheck" }
         secretFiles { new { secret = "wireguard"; target = "/gluetun/wireguard/wg0.conf" } }
-        ports { ["web"] = 8080 }
+        ports { new { name = "web"; target = 8080 } }
       }
-      ["torrent"] {
+      new {
+        name = "torrent"
         image = "lscr.io/linuxserver/qbittorrent:latest"
         network = new Model.SharedNetwork {
           service = "vpn"
@@ -30,14 +32,15 @@ deployment = new Model.Deployment {
   }
   bindings {
     storage {
-      ["downloads"] = new Model.HostPath {
+      new Model.HostPath {
+        name = "downloads"
         path = "/srv/media/downloads"
         mountRequirement = "media-storage"
       }
     }
-    secrets { ["wireguard"] { provider = "host-files"; key = "vpn/config" } }
-    devices { ["tun"] = "/dev/net/tun" }
-    ports { ["vpn/web"] { address = "127.0.0.1"; port = 8080 } }
+    secrets { new { name = "wireguard"; provider = "host-files"; key = "vpn/config" } }
+    devices { new { name = "tun"; path = "/dev/net/tun" } }
+    ports { new { name = "vpn/web"; address = "127.0.0.1"; port = 8080 } }
   }
 }
 

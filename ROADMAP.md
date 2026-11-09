@@ -46,7 +46,7 @@ Separate four kinds of information:
 3. **Trusted tool/operator configuration:** contexts, provider registrations, host mount assertions, effective authorization. A project cannot override this trust boundary.
 4. **Operational state:** resolved candidates, outcomes, job records and history. Not application source; never contains plaintext secrets by default.
 
-Use camelCase, classes, constrained types, `Mapping` for named objects, `Listing` for ordered object collections, and explicit amendments. Do not use shell-string parsing or unstructured option bags as the canonical interface. Prefer disjoint classes for mutually exclusive networking/storage forms. Normalize quantities to explicit units in a versioned JSON IR; Pkl `Duration`/`DataSize` require deliberate conversion. Unknown IR versions must not bypass validation.
+Use camelCase, classes, constrained types, and typed `Listing`s with explicit `name` properties for public declarations and bindings: services, jobs, storage, secrets, devices and ports. Use `Mapping` for naturally keyed values such as environment variables and labels, not empty keyed declarations such as `["wireguard"] {}`. Amend component objects before inserting them into listings; do not patch services by list position. Do not use shell-string parsing or unstructured option bags as the canonical interface. Prefer disjoint classes for mutually exclusive networking/storage forms. Normalize quantities to explicit units in a versioned JSON IR; Pkl `Duration`/`DataSize` require deliberate conversion. Unknown IR versions must not bypass validation.
 
 The examples demonstrate this syntax:
 
@@ -55,18 +55,23 @@ import "Model.pkl"
 import "Postgres.pkl"
 
 local database = new Postgres.Component {
+  name = "catalog"
   database = "catalog"
   storage = "catalog-data"
   password = "catalog-password"
 }
 
-// Within application.services; caller chooses the identity.
-// ["catalog"] = (database.service) {
-//   resources { memory = 512.mib }
-// }
+local catalogService = (database.service) {
+  resources { memory = 512.mib }
+}
+
+// Within application.services: insert catalogService as a Listing element.
+// services { catalogService }
 ```
 
 Read the executable [two-component fixture](docs/design/examples/composed.pkl) rather than treating this fragment as a runnable module. The same component is instantiated twice; one instance is amended without modifying the package. Libraries must agree on a compatible canonical schema dependency. Cross-package type identity and Pkl minimum-version selection must be tested, not assumed.
+
+Declaration order is authoring order, **not startup order**. Normalize named listings into internal indexes only after rejecting duplicate names (including service/job collisions in their shared graph namespace), missing required bindings and conflicting bindings. Never use last-write-wins map construction. Reordering declarations alone must not change semantic hashes or recreate workloads; preserve order where it is meaningful, such as process arguments. DAG edges alone determine lifecycle ordering.
 
 **Types are not all validation.** A typed `String` reference still needs semantic lookup. Pkl checks shape/ranges; Dill checks references, uniqueness, graph cycles, effective policy, target support and observed state. Design fixtures do not yet implement those Go validators.
 

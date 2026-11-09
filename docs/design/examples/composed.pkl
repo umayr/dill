@@ -3,14 +3,21 @@ import "Model.pkl"
 import "Postgres.pkl"
 
 local first = new Postgres.Component {
+  name = "catalog"
   database = "catalog"
   storage = "catalog-data"
   password = "catalog-password"
 }
 local second = new Postgres.Component {
+  name = "metrics"
   database = "metrics"
   storage = "metrics-data"
   password = "metrics-password"
+}
+
+// Amend the component result before insertion; no positional list patching.
+local catalogService = (first.service) {
+  resources { memory = 512.mib }
 }
 
 deployment = new Model.Deployment {
@@ -18,21 +25,20 @@ deployment = new Model.Deployment {
   application {
     name = "two-databases"
     storage {
-      ["catalog-data"] {}
-      ["metrics-data"] {}
+      new { name = "catalog-data" }
+      new { name = "metrics-data" }
     }
     secrets {
-      ["catalog-password"] {}
-      ["metrics-password"] {}
+      new { name = "catalog-password" }
+      new { name = "metrics-password" }
     }
     services {
-      ["catalog"] = (first.service) {
-        resources { memory = 512.mib }
-      }
-      ["metrics"] = second.service
+      catalogService
+      second.service
     }
     jobs {
-      ["initialize"] {
+      new {
+        name = "initialize"
         image = "postgres:17"
         dependencies {
           new { node = "catalog"; condition = "healthy" }
@@ -45,12 +51,12 @@ deployment = new Model.Deployment {
   }
   bindings {
     storage {
-      ["catalog-data"] = new Model.ExistingVolume { name = "existing-catalog-data" }
-      ["metrics-data"] = new Model.ExistingVolume { name = "existing-metrics-data" }
+      new Model.ExistingVolume { name = "catalog-data"; volume = "existing-catalog-data" }
+      new Model.ExistingVolume { name = "metrics-data"; volume = "existing-metrics-data" }
     }
     secrets {
-      ["catalog-password"] { provider = "host-files"; key = "catalog/password" }
-      ["metrics-password"] { provider = "host-files"; key = "metrics/password" }
+      new { name = "catalog-password"; provider = "host-files"; key = "catalog/password" }
+      new { name = "metrics-password"; provider = "host-files"; key = "metrics/password" }
     }
   }
 }

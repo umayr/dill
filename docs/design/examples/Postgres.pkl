@@ -4,17 +4,20 @@ module dill.design.postgres
 import "Model.pkl"
 
 class Component {
+  name: String(!isEmpty)
   image: String = "postgres:17"
   database: String(!isEmpty)
   storage: String(!isEmpty)
   password: String(!isEmpty)
 
+  local serviceName = name
   local componentImage = image
   local databaseName = database
   local storageName = storage
   local passwordName = password
 
   service: Model.Service = new {
+    name = serviceName
     image = componentImage
     environment {
       ["POSTGRES_DB"] = databaseName

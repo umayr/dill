@@ -65,7 +65,18 @@ class Resources {
   pids: Int(isPositive)?
 }
 
+class Device {
+  name: Name
+  target: String(startsWith("/"))
+}
+
+class Port {
+  name: Name
+  target: PortNumber
+}
+
 class Service {
+  name: Name
   image: Name
   process: Process = new {}
   environment: Mapping<String, String> = new {}
@@ -78,11 +89,12 @@ class Service {
   temporaryStorage: Listing<TemporaryStorage> = new {}
   resources: Resources = new {}
   capabilities: Set<String> = Set()
-  devices: Mapping<String, String> = new {}
-  ports: Mapping<String, PortNumber> = new {}
+  devices: Listing<Device> = new {}
+  ports: Listing<Port> = new {}
 }
 
 class Job {
+  name: Name
   image: Name
   process: Process = new {}
   dependencies: Listing<Dependency> = new {}
@@ -94,22 +106,25 @@ class Job {
 }
 
 class StorageRequirement {
+  name: Name
   access: "readOnly" | "readWrite" = "readWrite"
 }
 
 class SecretRequirement {
+  name: Name
   description: String = ""
 }
 
 class Application {
   name: Name
-  services: Mapping<String, Service> = new {}
-  jobs: Mapping<String, Job> = new {}
-  storage: Mapping<String, StorageRequirement> = new {}
-  secrets: Mapping<String, SecretRequirement> = new {}
+  services: Listing<Service> = new {}
+  jobs: Listing<Job> = new {}
+  storage: Listing<StorageRequirement> = new {}
+  secrets: Listing<SecretRequirement> = new {}
 }
 
 class HostPath {
+  name: Name
   kind: "hostPath" = "hostPath"
   path: String(startsWith("/"))
   missing: "fail" = "fail"
@@ -117,25 +132,34 @@ class HostPath {
 }
 
 class ExistingVolume {
-  kind: "existingVolume" = "existingVolume"
   name: Name
+  kind: "existingVolume" = "existingVolume"
+  volume: Name
 }
 
 class SecretBinding {
+  name: Name
   provider: Name
   key: Name
 }
 
+class DeviceBinding {
+  name: Name
+  path: String(startsWith("/"))
+}
+
 class PublishedPort {
+  /// Qualified service/port name, e.g. vpn/web; checked by semantic validation.
+  name: Name
   address: Name
   port: PortNumber
 }
 
 class Bindings {
-  storage: Mapping<String, HostPath | ExistingVolume> = new {}
-  secrets: Mapping<String, SecretBinding> = new {}
-  devices: Mapping<String, String> = new {}
-  ports: Mapping<String, PublishedPort> = new {}
+  storage: Listing<HostPath | ExistingVolume> = new {}
+  secrets: Listing<SecretBinding> = new {}
+  devices: Listing<DeviceBinding> = new {}
+  ports: Listing<PublishedPort> = new {}
 }
 
 class PolicyRequest {
