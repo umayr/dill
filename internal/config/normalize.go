@@ -54,6 +54,9 @@ func NormalizeVolumes(raw []json.RawMessage, baseDir string) ([]VolumeMount, err
 		if err != nil {
 			return nil, fmt.Errorf("volume[%d]: %w", i, err)
 		}
+		if !strings.HasPrefix(vm.Target, "/") {
+			return nil, fmt.Errorf("volume[%d]: target %q must be an absolute container path", i, vm.Target)
+		}
 		out = append(out, vm)
 	}
 	return out, nil

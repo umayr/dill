@@ -147,12 +147,23 @@ func runDoctor(ctx context.Context, opts commandOptions, args []string) error {
 		}
 	}
 
+	ok := true
+	for _, c := range checks {
+		if !c.OK {
+			ok = false
+		}
+	}
 	if *format == "json" {
 		enc := json.NewEncoder(os.Stdout)
 		enc.SetIndent("", "  ")
-		return enc.Encode(checks)
+		if err := enc.Encode(checks); err != nil {
+			return err
+		}
+		if !ok {
+			return errDoctorFoundIssues
+		}
+		return nil
 	}
-	ok := true
 	for _, c := range checks {
 		status := "ok"
 		if !c.OK {

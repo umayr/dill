@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -19,6 +20,64 @@ func TestValidateFormatRejectsUnknownValue(t *testing.T) {
 	var ue usageError
 	if !errors.As(err, &ue) {
 		t.Fatalf("validateFormat returned %T, want usageError", err)
+	}
+}
+
+func TestValidateJSONFailureReturnsError(t *testing.T) {
+	out, _, err := captureCommand(t, "", func() error {
+		return runValidate(context.Background(), commandOptions{ConfigFile: "missing-validation-test.pkl"}, []string{"--format", "json"})
+	})
+	if err == nil {
+		t.Fatal("invalid config returned success")
+	}
+	var result struct {
+		Valid bool   `json:"valid"`
+		Error string `json:"error"`
+	}
+	if err := json.Unmarshal([]byte(out), &result); err != nil || result.Valid || result.Error == "" {
+		t.Fatalf("invalid JSON result %q: %+v, %v", out, result, err)
+	}
+}
+
+func TestPlanJSONOperationalFailure(t *testing.T) {
+	oldLoader, oldEngine := configLoader, engineFactory
+	configLoader = func(context.Context, string) (*config.DillConfig, error) { return testConfig(), nil }
+	engineFactory = func(context.Context, string) (orchestrator.Engine, error) {
+		return nil, errors.New("engine unavailable")
+	}
+	defer func() { configLoader, engineFactory = oldLoader, oldEngine }()
+	for _, name := range []string{"plan", "diff"} {
+		out, _, err := captureCommand(t, "", func() error { return run([]string{name, "--format", "json"}) })
+		var result map[string]any
+		if err == nil || exitCodeFor(err) != 1 || json.Unmarshal([]byte(out), &result) != nil || result["kind"] != "operational_failure" {
+			t.Fatalf("%s: err=%v output=%q", name, err, out)
+		}
+	}
+}
+
+func TestDoctorJSONReportsFailure(t *testing.T) {
+	oldLoader, oldEngine := configLoader, engineFactory
+	configLoader = func(context.Context, string) (*config.DillConfig, error) { return nil, errors.New("bad config") }
+	engineFactory = func(context.Context, string) (orchestrator.Engine, error) { return newFakeEngine(), nil }
+	defer func() { configLoader, engineFactory = oldLoader, oldEngine }()
+	out, _, err := captureCommand(t, "", func() error {
+		return runDoctor(context.Background(), commandOptions{ConfigFile: "missing"}, []string{"--format", "json"})
+	})
+	var checks []struct {
+		Name string `json:"name"`
+		OK   bool   `json:"ok"`
+	}
+	if !errors.Is(err, errDoctorFoundIssues) || json.Unmarshal([]byte(out), &checks) != nil {
+		t.Fatalf("err=%v output=%q", err, out)
+	}
+	found := false
+	for _, check := range checks {
+		if check.Name == "config" && !check.OK {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("missing failed config check: %s", out)
 	}
 }
 

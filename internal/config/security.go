@@ -3,6 +3,7 @@ package config
 import (
 	"encoding/json"
 	"fmt"
+	"sort"
 	"strings"
 )
 
@@ -15,9 +16,22 @@ func ValidateRuntime(cfg *DillConfig) error {
 	if cfg == nil {
 		return fmt.Errorf("config is nil")
 	}
-	for name, svc := range cfg.Services {
+	containerNames := make(map[string]string)
+	names := make([]string, 0, len(cfg.Services))
+	for name := range cfg.Services {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	for _, name := range names {
+		svc := cfg.Services[name]
 		if svc == nil {
 			return fmt.Errorf("service %q is nil", name)
+		}
+		if svc.ContainerName != "" {
+			if previous, exists := containerNames[svc.ContainerName]; exists {
+				return fmt.Errorf("service %q containerName %q duplicates service %q", name, svc.ContainerName, previous)
+			}
+			containerNames[svc.ContainerName] = name
 		}
 		for label := range svc.Labels {
 			if strings.HasPrefix(label, SystemLabelPrefix) {
@@ -47,6 +61,47 @@ func ValidateRuntime(cfg *DillConfig) error {
 			if _, err := NormalizeHealthCheckTest(svc.HealthCheck.Test); err != nil {
 				return fmt.Errorf("service %q: %w", name, err)
 			}
+		}
+	}
+	return ValidateGraph(cfg.Services)
+}
+
+// ValidateGraph checks the entire declared dependency graph before target access.
+// networkMode remains engine-native; managed namespace edges are deferred to #9.
+func ValidateGraph(services map[string]*Service) error {
+	names := make([]string, 0, len(services))
+	for name := range services {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	state := make(map[string]uint8, len(names))
+	var visit func(string) error
+	visit = func(name string) error {
+		if state[name] == 1 {
+			return fmt.Errorf("cycle detected involving service %q dependsOn", name)
+		}
+		if state[name] == 2 {
+			return nil
+		}
+		svc := services[name]
+		if svc == nil {
+			return fmt.Errorf("service %q is nil", name)
+		}
+		state[name] = 1
+		for i, dep := range svc.DependsOn {
+			if _, ok := services[dep]; !ok {
+				return fmt.Errorf("service %q dependsOn[%d]: %q is not defined", name, i, dep)
+			}
+			if err := visit(dep); err != nil {
+				return err
+			}
+		}
+		state[name] = 2
+		return nil
+	}
+	for _, name := range names {
+		if err := visit(name); err != nil {
+			return err
 		}
 	}
 	return nil

@@ -40,7 +40,7 @@ func runInit(opts commandOptions, args []string) error {
 	return nil
 }
 
-func runValidate(ctx context.Context, opts commandOptions, args []string) error {
+func runValidate(ctx context.Context, opts commandOptions, args []string) (retErr error) {
 	fs := flag.NewFlagSet("validate", flag.ContinueOnError)
 	addFileFlag(fs, &opts)
 	format := fs.String("format", "text", "output format: text or json")
@@ -54,6 +54,14 @@ func runValidate(ctx context.Context, opts commandOptions, args []string) error 
 	if err := ensureNoArgs(fs.Args(), "validate"); err != nil {
 		return err
 	}
+
+	defer func() {
+		if *format == "json" && retErr != nil {
+			if err := json.NewEncoder(os.Stdout).Encode(map[string]any{"valid": false, "error": retErr.Error(), "kind": failureKind(retErr)}); err != nil {
+				retErr = fmt.Errorf("rendering failure: %w", err)
+			}
+		}
+	}()
 
 	target := opts.ConfigFile
 	if *stdin {
@@ -82,7 +90,7 @@ func runValidate(ctx context.Context, opts commandOptions, args []string) error 
 		if validateErr == nil {
 			return enc.Encode(map[string]any{"valid": true})
 		}
-		return enc.Encode(map[string]any{"valid": false, "error": validateErr.Error()})
+		return validateErr
 	}
 
 	if validateErr != nil {

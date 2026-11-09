@@ -102,7 +102,26 @@ included.
 
 `plan` is CI-oriented: it exits non-zero when changes are detected. `diff`
 renders the same desired-vs-live information but exits zero unless the command
-itself fails. `rm` and `teardown` prompt before destructive removal; pass
+itself fails. Validation evaluates the current schema and checks normalized
+ports, mounts, resources, reserved labels and the entire `dependsOn` graph before
+engine access, including when selecting services or using `--no-deps`. Invalid
+mount targets must be absolute container paths. `validate --stdin` resolves
+relative imports against the directory of `-f` and requires it to be writable.
+
+`validate --format json` returns `valid: false`, an `error` string, and a `kind`
+(`invalid_input` or `operational_failure`) on failure. Plan/diff JSON failures
+return an `error` string and the same `kind`; successful plan/diff JSON retains
+its existing shape. Diagnostics are written to stderr. JSON doctor retains its
+checks array but now exits nonzero if a check fails. These failure shapes are
+unversioned CLI output, not the future #19 operation protocol. Scripts that
+previously relied on successful JSON validation/doctor exits for failed checks
+must handle the new nonzero exit.
+
+Legacy `networkMode` values continue to be passed to the engine unchanged;
+managed namespace-sharing edges are not inferred or validated and are deferred
+to #9. Offline validation does not inspect target capabilities or state.
+
+`rm` and `teardown` prompt before destructive removal; pass
 `--yes`/`-y` for automation. `stop` and `down` do not prompt.
 
 #### Notes
@@ -119,7 +138,7 @@ itself fails. `rm` and `teardown` prompt before destructive removal; pass
 |------|---------|
 | `0`  | Success (including `diff` with drift and `doctor` with no issues) |
 | `1`  | Operational failure, `plan`/`doctor` detected drift or issues |
-| `2`  | Usage error (unknown command, bad flag, unknown service, invalid format) |
+| `2`  | Invalid configuration or usage error (unknown command, bad flag, unknown service, invalid format) |
 
 ## Integration Tests
 

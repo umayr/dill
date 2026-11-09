@@ -2,11 +2,13 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
 	"os"
 
+	"github.com/umayr/dill/internal/config"
 	"github.com/umayr/dill/internal/plan"
 )
 
@@ -18,7 +20,7 @@ func runDiff(ctx context.Context, opts commandOptions, args []string) error {
 	return runPlanNamed(ctx, opts, args, "diff")
 }
 
-func runPlanNamed(ctx context.Context, opts commandOptions, args []string, name string) error {
+func runPlanNamed(ctx context.Context, opts commandOptions, args []string, name string) (retErr error) {
 	fs := flag.NewFlagSet(name, flag.ContinueOnError)
 	addConfigFlags(fs, &opts)
 	format := fs.String("format", "text", "output format: text or json")
@@ -31,6 +33,15 @@ func runPlanNamed(ctx context.Context, opts commandOptions, args []string, name 
 	if err := ensureNoArgs(fs.Args(), name); err != nil {
 		return err
 	}
+	// Once JSON mode is selected, failures before rendering still produce one
+	// JSON document. Successful plan output and drift exits remain unchanged.
+	defer func() {
+		if *format == "json" && retErr != nil && !errors.Is(retErr, errPlanHasChanges) {
+			if err := json.NewEncoder(os.Stdout).Encode(map[string]any{"error": retErr.Error(), "kind": failureKind(retErr)}); err != nil {
+				retErr = fmt.Errorf("rendering failure: %w", err)
+			}
+		}
+	}()
 
 	cfg, err := loadConfig(ctx, opts)
 	if err != nil {
@@ -64,6 +75,14 @@ func runPlanNamed(ctx context.Context, opts commandOptions, args []string, name 
 		}
 	}
 	return nil
+}
+
+func failureKind(err error) string {
+	var invalid *config.InvalidError
+	if errors.As(err, &invalid) {
+		return "invalid_input"
+	}
+	return "operational_failure"
 }
 
 // errPlanHasChanges is returned by runPlan when drift is detected.
