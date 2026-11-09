@@ -110,12 +110,69 @@ func TestAdapterContainerRemovalFailures(t *testing.T) {
 	}
 }
 
-func TestVolumeRemovalExplicitlyUnsupported(t *testing.T) {
-	engines := []Engine{&DockerEngine{}, &PodmanEngine{}}
-	for _, e := range engines {
-		err := e.RemoveVolume(context.Background(), "protected", false)
-		if err == nil || !strings.Contains(err.Error(), "protected") || !strings.Contains(err.Error(), "retained") {
-			t.Fatalf("%T: %v", e, err)
+func TestVolumeRemovalRechecksOwnership(t *testing.T) {
+	for _, adapter := range []string{"docker", "podman"} {
+		for _, tc := range []struct {
+			name, labels                string
+			inspectStatus, deleteStatus int
+			wantDelete, wantErr         bool
+		}{
+			{"owned", `{"dill.managed":"true","dill.stack":"stack"}`, 200, 204, true, false},
+			{"absent", ``, 404, 204, false, false},
+			{"foreign", `{"dill.managed":"true","dill.stack":"other"}`, 200, 204, false, true},
+			{"replaced by unlabelled", `{}`, 200, 204, false, true},
+			{"inspect failure", ``, 500, 204, false, true},
+			{"delete failure", `{"dill.managed":"true","dill.stack":"stack"}`, 200, 500, true, true},
+			{"removed concurrently", `{"dill.managed":"true","dill.stack":"stack"}`, 200, 404, true, false},
+		} {
+			t.Run(adapter+"/"+tc.name, func(t *testing.T) {
+				var calls []string
+				transport := contextTransport(func(r *http.Request) (*http.Response, error) {
+					calls = append(calls, r.Method+" "+r.URL.Path)
+					if r.Method == http.MethodGet {
+						if strings.HasSuffix(r.URL.Path, "/volumes/json") || strings.HasSuffix(r.URL.Path, "/volumes") {
+							body := `{"Volumes":[{"Name":"vol","Labels":{"dill.managed":"true","dill.stack":"stack"}}]}`
+							if adapter == "podman" {
+								body = `[{"Name":"vol","Labels":{"dill.managed":"true","dill.stack":"stack"}}]`
+							}
+							return contextResponse(r, 200, body), nil
+						}
+						if tc.inspectStatus != 200 {
+							return contextResponse(r, tc.inspectStatus, fmt.Sprintf(`{"message":"inspect injected","response":%d}`, tc.inspectStatus)), nil
+						}
+						return contextResponse(r, 200, `{"Name":"vol","Labels":`+tc.labels+`}`), nil
+					}
+					return contextResponse(r, tc.deleteStatus, fmt.Sprintf(`{"message":"delete injected","response":%d}`, tc.deleteStatus)), nil
+				})
+				var engine Engine
+				if adapter == "docker" {
+					cli, err := client.NewClientWithOpts(client.WithHost("http://localhost"), client.WithVersion("1.44"), client.WithHTTPClient(&http.Client{Transport: transport}))
+					if err != nil {
+						t.Fatal(err)
+					}
+					defer cli.Close()
+					engine = &DockerEngine{cli: cli}
+				} else {
+					p, conn := newContextTestEngine(t, context.Background())
+					conn.Client.Transport = transport
+					engine = p
+				}
+				listed, err := engine.ListStackVolumes(context.Background(), "stack")
+				if err != nil || len(listed) != 1 || listed[0] != "vol" {
+					t.Fatalf("list %v: %v", listed, err)
+				}
+				err = engine.RemoveVolume(context.Background(), "vol", "stack", false)
+				if (err != nil) != tc.wantErr {
+					t.Fatalf("error %v calls %v", err, calls)
+				}
+				if tc.wantErr && !strings.Contains(err.Error(), "vol") {
+					t.Fatalf("missing volume identity: %v", err)
+				}
+				deleted := len(calls) == 3 && strings.HasPrefix(calls[2], "DELETE ")
+				if deleted != tc.wantDelete {
+					t.Fatalf("calls %v", calls)
+				}
+			})
 		}
 	}
 }

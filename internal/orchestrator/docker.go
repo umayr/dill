@@ -655,8 +655,21 @@ func (d *DockerEngine) ListStackVolumes(ctx context.Context, stackName string) (
 	return names, nil
 }
 
-func (d *DockerEngine) RemoveVolume(ctx context.Context, name string, force bool) error {
-	return fmt.Errorf("volume %q retained: safe conditional deletion is unsupported by Docker; remove it explicitly after verifying ownership", name)
+func (d *DockerEngine) RemoveVolume(ctx context.Context, name, stackName string, force bool) error {
+	live, err := d.cli.VolumeInspect(ctx, name)
+	if client.IsErrNotFound(err) {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("inspect volume %s: %w", name, err)
+	}
+	if live.Labels["dill.managed"] != "true" || live.Labels["dill.stack"] != stackName || stackName == "" {
+		return fmt.Errorf("volume %q is not owned by stack %q; retained", name, stackName)
+	}
+	if err := d.cli.VolumeRemove(ctx, name, force); err != nil && !client.IsErrNotFound(err) {
+		return fmt.Errorf("removing volume %s: %w", name, err)
+	}
+	return nil
 }
 
 func (d *DockerEngine) Close() error { return d.cli.Close() }

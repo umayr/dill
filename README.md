@@ -34,7 +34,7 @@ dill [flags] [command]
 Commands:
   up        Start all services (default)
   down      Stop and remove all dill-managed services
-  teardown  Remove containers, images, and network; report retained volumes
+  teardown  Remove containers, images, volumes, and network
   stop      Stop services without removing containers
   start     Start previously stopped containers
   restart   Restart services
@@ -193,9 +193,9 @@ as-is.
 
 Named volumes are stack-scoped by default: `pg-data:/var/lib/postgresql/data`
 creates `<stack>_pg-data`. Two stacks declaring the same logical volume get two
-independent volumes. `dill teardown` currently retains named volumes and exits
-nonzero if any are discovered: the engines cannot condition removal on an immutable
-volume identity. See [lifecycle failures](docs/lifecycle-failures.md).
+independent volumes. `dill teardown` removes volumes labelled as owned by the stack,
+after rechecking ownership. Engine APIs cannot make that check atomic with
+name-based removal; see [lifecycle failures](docs/lifecycle-failures.md).
 
 To reuse a pre-existing volume (for example one Compose created as
 `<project>_pg-data`) or a shared volume, use the full mount form:
@@ -214,8 +214,7 @@ Dill never creates, labels, or removes it. A `name` without `externalVolume` use
 an explicit engine name but keeps the volume managed.
 
 `dill volumes` lists the volumes owned by the stack. Legacy and Compose-created
-volumes are unlabelled and are left untouched by teardown. All named volumes are
-currently retained as described above. If the stack name matches
+volumes are unlabelled and are left untouched by teardown. If the stack name matches
 the Compose project name, the default `<stack>_<volume>` already points at the
 existing volume.
 

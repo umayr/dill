@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -33,8 +34,8 @@ func (f *failingLifecycleEngine) RemoveNetwork(_ context.Context, id string) err
 func (f *failingLifecycleEngine) ListStackVolumes(context.Context, string) ([]string, error) {
 	return []string{"vol"}, nil
 }
-func (f *failingLifecycleEngine) RemoveVolume(_ context.Context, id string, _ bool) error {
-	f.calls = append(f.calls, "volume "+id)
+func (f *failingLifecycleEngine) RemoveVolume(_ context.Context, id, stack string, _ bool) error {
+	f.calls = append(f.calls, "volume "+id+" "+stack)
 	return f.failure
 }
 func (f *failingLifecycleEngine) LocalImageID(_ context.Context, id string) (string, error) {
@@ -44,6 +45,31 @@ func (f *failingLifecycleEngine) RemoveImage(_ context.Context, id string, _ boo
 	f.calls = append(f.calls, "image "+id)
 	return f.failure
 }
+func TestTeardownVolumePromptAndDryRun(t *testing.T) {
+	for _, dry := range []bool{false, true} {
+		t.Run(fmt.Sprintf("dry=%t", dry), func(t *testing.T) {
+			f := &failingLifecycleEngine{fakeEngine: newFakeEngine(), failure: errors.New("must not mutate")}
+			withTestRuntime(t, f, testConfig(), func() {
+				stdout, stderr, err := captureCommand(t, "n\n", func() error {
+					return runTeardown(context.Background(), commandOptions{ConfigFile: "compose.pkl", DryRun: dry}, nil)
+				})
+				if err != nil {
+					t.Fatal(err)
+				}
+				if len(f.calls) != 0 {
+					t.Fatalf("unexpected mutations: %v", f.calls)
+				}
+				if dry && !strings.Contains(stdout, "would remove volumes: vol") {
+					t.Fatalf("dry-run %q", stdout)
+				}
+				if !dry && (!strings.Contains(stderr, "1 named volume(s)") || !strings.Contains(stderr, "vol")) {
+					t.Fatalf("prompt %q", stderr)
+				}
+			})
+		})
+	}
+}
+
 func TestOrphanFailuresAbortDeployment(t *testing.T) {
 	f := &failingLifecycleEngine{fakeEngine: newFakeEngine(), failure: errors.New("orphan failure")}
 	f.statuses["app_old"] = &orchestrator.ContainerStatus{Name: "app_old", State: "exited"}
@@ -84,6 +110,9 @@ func TestLifecycleFailuresAreReturned(t *testing.T) {
 					t.Fatalf("missing identity: %v", err)
 				}
 				if name == "teardown" {
+					if !strings.Contains(strings.Join(f.calls, ","), "volume vol app") {
+						t.Fatalf("missing stack-bound volume removal: %v", f.calls)
+					}
 					for _, id := range []string{"vol", "busybox", "app"} {
 						if !strings.Contains(err.Error(), id) {
 							t.Errorf("missing %s: %v", id, err)

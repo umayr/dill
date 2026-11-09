@@ -718,8 +718,25 @@ func (p *PodmanEngine) ListStackVolumes(ctx context.Context, stackName string) (
 	return names, nil
 }
 
-func (p *PodmanEngine) RemoveVolume(ctx context.Context, name string, force bool) error {
-	return fmt.Errorf("volume %q retained: safe conditional deletion is unsupported by Podman; remove it explicitly after verifying ownership", name)
+func (p *PodmanEngine) RemoveVolume(ctx context.Context, name, stackName string, force bool) error {
+	live, err := podmanvolumes.Inspect(p.operationContext(ctx), name, nil)
+	if podmanNotFound(err) {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("inspect volume %s: %w", name, err)
+	}
+	if live == nil {
+		return fmt.Errorf("inspect volume %s: empty response", name)
+	}
+	if live.Labels["dill.managed"] != "true" || live.Labels["dill.stack"] != stackName || stackName == "" {
+		return fmt.Errorf("volume %q is not owned by stack %q; retained", name, stackName)
+	}
+	opts := new(podmanvolumes.RemoveOptions).WithForce(force)
+	if err := podmanvolumes.Remove(p.operationContext(ctx), name, opts); err != nil && !podmanNotFound(err) {
+		return fmt.Errorf("removing volume %s: %w", name, err)
+	}
+	return nil
 }
 
 func (p *PodmanEngine) Close() error { return nil }

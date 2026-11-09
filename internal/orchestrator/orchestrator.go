@@ -138,9 +138,9 @@ type Engine interface {
 	// ListStackVolumes returns the volumes labelled as owned by the stack.
 	ListStackVolumes(ctx context.Context, stackName string) ([]string, error)
 
-	// RemoveVolume reports unsupported when safe conditional removal is unavailable.
-	// Named volumes lack an immutable identity and must not be removed by reused name.
-	RemoveVolume(ctx context.Context, name string, force bool) error
+	// RemoveVolume rechecks ownership immediately before removing the named volume.
+	// Engines cannot make this check atomic with deletion; names can be reused.
+	RemoveVolume(ctx context.Context, name, stackName string, force bool) error
 
 	// Close releases any resources held by the engine client.
 	Close() error

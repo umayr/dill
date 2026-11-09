@@ -330,6 +330,6 @@ func (f *fakeEngine) RemoveNetwork(context.Context, string) error {
 	f.networkRemoved = true
 	return nil
 }
-func (f *fakeEngine) RemoveImage(context.Context, string, bool) error  { return nil }
-func (f *fakeEngine) RemoveVolume(context.Context, string, bool) error { return nil }
-func (f *fakeEngine) Close() error                                     { return nil }
+func (f *fakeEngine) RemoveImage(context.Context, string, bool) error          { return nil }
+func (f *fakeEngine) RemoveVolume(context.Context, string, string, bool) error { return nil }
+func (f *fakeEngine) Close() error                                             { return nil }
