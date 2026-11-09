@@ -11,10 +11,17 @@ import (
 	"github.com/umayr/dill/internal/loader"
 )
 
-// root is the top-level pkl module output wrapping DillConfig.
-type root struct {
-	Config *DillConfig `json:"config"`
-}
+// InvalidError identifies invalid evaluated configuration independently of operational failures.
+type InvalidError struct{ Err error }
+
+func (e *InvalidError) Error() string { return e.Err.Error() }
+func (e *InvalidError) Unwrap() error { return e.Err }
+
+// EvaluatorError is a Pkl process failure whose cause cannot be reliably classified.
+type EvaluatorError struct{ Err error }
+
+func (e *EvaluatorError) Error() string { return e.Err.Error() }
+func (e *EvaluatorError) Unwrap() error { return e.Err }
 
 // Load evaluates a .pkl config file and returns the parsed DillConfig.
 // The pkl binary is located automatically (see internal/pklbin).
@@ -27,19 +34,29 @@ func Load(ctx context.Context, path string) (*DillConfig, error) {
 	cmd := exec.CommandContext(ctx, pkl, "eval", path)
 	out, err := cmd.Output()
 	if err != nil {
+		if ctx.Err() != nil {
+			return nil, fmt.Errorf("pkl eval: %w", ctx.Err())
+		}
 		var exitErr *exec.ExitError
 		if errors.As(err, &exitErr) {
-			return nil, fmt.Errorf("pkl eval failed:\n%s", exitErr.Stderr)
+			return nil, &EvaluatorError{Err: fmt.Errorf("pkl eval failed:\n%s", exitErr.Stderr)}
 		}
 		return nil, fmt.Errorf("pkl eval: %w", err)
 	}
 
-	var r root
-	if err := json.Unmarshal(out, &r); err != nil {
-		return nil, fmt.Errorf("parsing pkl output: %w", err)
+	if err := rejectDuplicateKeys(out); err != nil {
+		return nil, &InvalidError{Err: fmt.Errorf("parsing pkl output: %w", err)}
 	}
-	if r.Config == nil {
-		return nil, fmt.Errorf("pkl output missing 'config' field")
+	var r map[string]json.RawMessage
+	if err := json.Unmarshal(out, &r); err != nil {
+		return nil, &InvalidError{Err: fmt.Errorf("parsing pkl output: %w", err)}
+	}
+	if len(r["config"]) == 0 || string(r["config"]) == "null" {
+		return nil, &InvalidError{Err: fmt.Errorf("pkl output missing 'config' field")}
+	}
+	var cfg DillConfig
+	if err := decodeStrict(r["config"], &cfg); err != nil {
+		return nil, &InvalidError{Err: fmt.Errorf("parsing pkl output: %w", err)}
 	}
 	// Populate BaseDir on every service so relative bind-mount paths can be
 	// resolved correctly regardless of the caller's working directory.
@@ -48,11 +65,13 @@ func Load(ctx context.Context, path string) (*DillConfig, error) {
 		absPath = path
 	}
 	baseDir := filepath.Dir(absPath)
-	for _, svc := range r.Config.Services {
-		svc.BaseDir = baseDir
+	for _, svc := range cfg.Services {
+		if svc != nil {
+			svc.BaseDir = baseDir
+		}
 	}
-	if err := ValidateRuntime(r.Config); err != nil {
-		return nil, err
+	if err := ValidateRuntime(&cfg); err != nil {
+		return nil, &InvalidError{Err: err}
 	}
-	return r.Config, nil
+	return &cfg, nil
 }

@@ -161,6 +161,9 @@ func loadConfig(ctx context.Context, opts commandOptions) (*config.DillConfig, e
 	if opts.Engine != "" {
 		cfg.Engine = opts.Engine
 	}
+	if err := config.ValidateContainerNames(cfg.Services, resolveStackNameWithOptions(cfg, opts)); err != nil {
+		return nil, &config.InvalidError{Err: err}
+	}
 	return cfg, nil
 }
 

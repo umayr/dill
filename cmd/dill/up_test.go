@@ -141,8 +141,8 @@ func TestRunUpConfigPreflight(t *testing.T) {
 		{"missing", map[string]*config.Service{"a": {Image: "a", PullPolicy: "always", DependsOn: []string{"missing"}}}, nil, false, false, true, false},
 		{"cycle dry run", map[string]*config.Service{"a": {Image: "a", DependsOn: []string{"a"}}}, nil, false, true, true, false},
 		{"bad duration", map[string]*config.Service{"a": {Image: "a", PullPolicy: "always", HealthCheck: &config.HealthCheck{Test: json.RawMessage(`"ok"`), Interval: &badDuration}}}, nil, false, false, true, false},
-		{"unselected cycle", map[string]*config.Service{"a": {Image: "a"}, "b": {Image: "b", DependsOn: []string{"b"}}}, []string{"a"}, false, true, false, true},
-		{"no deps cycle", map[string]*config.Service{"a": {Image: "a", DependsOn: []string{"a"}}}, []string{"a"}, true, true, false, true},
+		{"unselected cycle", map[string]*config.Service{"a": {Image: "a"}, "b": {Image: "b", DependsOn: []string{"b"}}}, []string{"a"}, false, true, true, false},
+		{"no deps cycle", map[string]*config.Service{"a": {Image: "a", DependsOn: []string{"a"}}}, []string{"a"}, true, true, true, false},
 		{"selected dependency cycle", map[string]*config.Service{"a": {Image: "a", DependsOn: []string{"b"}}, "b": {Image: "b", DependsOn: []string{"a"}}}, []string{"a"}, false, true, true, false},
 	}
 	for _, tc := range tests {

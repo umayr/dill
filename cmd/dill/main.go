@@ -8,6 +8,7 @@ import (
 	"os"
 	"time"
 
+	"github.com/umayr/dill/internal/config"
 	"github.com/umayr/dill/internal/log"
 )
 
@@ -63,7 +64,8 @@ func exitCodeFor(err error) int {
 		return 0
 	}
 	var ue usageError
-	if errors.As(err, &ue) {
+	var invalid *config.InvalidError
+	if errors.As(err, &ue) || errors.As(err, &invalid) {
 		return 2
 	}
 	return 1

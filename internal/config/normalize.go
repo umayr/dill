@@ -54,6 +54,9 @@ func NormalizeVolumes(raw []json.RawMessage, baseDir string) ([]VolumeMount, err
 		if err != nil {
 			return nil, fmt.Errorf("volume[%d]: %w", i, err)
 		}
+		if !strings.HasPrefix(vm.Target, "/") {
+			return nil, fmt.Errorf("volume[%d]: target %q must be an absolute container path", i, vm.Target)
+		}
 		out = append(out, vm)
 	}
 	return out, nil
@@ -91,7 +94,7 @@ func ParsePklDuration(raw *json.RawMessage) (time.Duration, error) {
 		return 0, nil
 	}
 	var d pklDuration
-	if err := json.Unmarshal(*raw, &d); err != nil {
+	if err := decodeStrict(*raw, &d); err != nil {
 		return 0, fmt.Errorf("parsing pkl duration: %w", err)
 	}
 	var unit time.Duration
@@ -128,7 +131,7 @@ func normalizePort(raw json.RawMessage) (PortBinding, error) {
 	}
 
 	var p Port
-	if err := json.Unmarshal(raw, &p); err != nil {
+	if err := decodeStrict(raw, &p); err != nil {
 		return PortBinding{}, fmt.Errorf("invalid Port object: %w", err)
 	}
 	pb := PortBinding{
@@ -226,7 +229,7 @@ func normalizeVolume(raw json.RawMessage, baseDir string) (VolumeMount, error) {
 	}
 
 	var m Mount
-	if err := json.Unmarshal(raw, &m); err != nil {
+	if err := decodeStrict(raw, &m); err != nil {
 		return VolumeMount{}, fmt.Errorf("invalid Mount object: %w", err)
 	}
 	if m.Type == "" {
