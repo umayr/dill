@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"flag"
 	"fmt"
 	"os"
@@ -35,8 +36,7 @@ func runUp(ctx context.Context, opts commandOptions, args []string) error {
 		return usageError{fmt.Sprintf("unknown pull policy %q (supported: always, missing, never)", *pullPolicy)}
 	}
 
-	// Cancel the context on SIGINT/SIGTERM so the existing rollback path in
-	// dag.Run fires automatically rather than leaving partial state.
+	// Cancel on SIGINT/SIGTERM so dag.Run performs bounded failure cleanup.
 	ctx, stop := signal.NotifyContext(ctx, os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
@@ -136,34 +136,46 @@ func runUpConfig(ctx context.Context, opts commandOptions, cfg *config.DillConfi
 		return nil
 	}
 
-	// Remove orphaned containers first.
+	// Remove orphaned containers first. Do not proceed with deployment if any
+	// orphan operation fails, but attempt other independent orphans.
+	var orphanErrors []error
 	for _, ch := range p.Changes {
 		if ch.Kind != plan.KindRemove {
 			continue
 		}
 		live, err := engine.InspectConfig(ctx, ch.Service)
+		if errors.Is(err, orchestrator.ErrNotFound) {
+			continue
+		}
 		if err != nil {
-			return fmt.Errorf("inspect orphan %q: %w", ch.Service, err)
+			orphanErrors = append(orphanErrors, fmt.Errorf("inspect orphan %q: %w", ch.Service, err))
+			continue
 		}
 		if live == nil {
-			return fmt.Errorf("inspect orphan %q: empty configuration", ch.Service)
+			orphanErrors = append(orphanErrors, fmt.Errorf("inspect orphan %q: empty configuration", ch.Service))
+			continue
 		}
 		if err := orchestrator.CheckOwnership(ch.Service, sn, live.SystemLabels["dill.service"], live); err != nil {
-			return err
+			orphanErrors = append(orphanErrors, err)
+			continue
 		}
 		if live.ID == "" {
-			return fmt.Errorf("inspect orphan %q: empty container ID", ch.Service)
+			orphanErrors = append(orphanErrors, fmt.Errorf("inspect orphan %q: empty container ID", ch.Service))
+			continue
 		}
 		display := strings.TrimPrefix(ch.Service, sn+"_")
 		if !opts.Quiet {
 			printProgress(display, "removing orphan")
 		}
 		if err := engine.StopService(ctx, live.ID); err != nil {
-			logger.Debug("stop orphan failed", "container", ch.Service, "err", err)
+			orphanErrors = append(orphanErrors, fmt.Errorf("stop orphan %q (%s): %w", ch.Service, live.ID, err))
 		}
 		if err := engine.RemoveService(ctx, live.ID); err != nil {
-			logger.Warn("remove orphan failed", "container", ch.Service, "err", err)
+			orphanErrors = append(orphanErrors, fmt.Errorf("remove orphan %q (%s): %w", ch.Service, live.ID, err))
 		}
+	}
+	if err := errors.Join(orphanErrors...); err != nil {
+		return err
 	}
 
 	actions := make(map[string]dag.Action, len(selected))

@@ -2,13 +2,14 @@ package main
 
 import (
 	"context"
+	"errors"
 	"flag"
 	"fmt"
 	"os"
 	"strings"
 
 	"github.com/umayr/dill/internal/dag"
-	"github.com/umayr/dill/internal/log"
+	"github.com/umayr/dill/internal/orchestrator"
 )
 
 func runDown(ctx context.Context, opts commandOptions, args []string) error {
@@ -43,6 +44,7 @@ func runDown(ctx context.Context, opts commandOptions, args []string) error {
 		if _, err := selectServices(cfg.Services, args, false); err != nil {
 			return err
 		}
+		var errs []error
 		for _, svc := range args {
 			containerName := serviceContainerName(sn, svc, cfg.Services[svc])
 			if opts.DryRun {
@@ -52,17 +54,19 @@ func runDown(ctx context.Context, opts commandOptions, args []string) error {
 			if !opts.Quiet {
 				printProgress(svc, "stopping")
 			}
-			if err := engine.StopService(ctx, containerName); err != nil {
-				logger.Debug("stop failed", "name", containerName, "err", err)
+			id, err := orchestrator.OwnedID(ctx, engine, containerName, sn, svc)
+			if err != nil {
+				errs = append(errs, err)
+				continue
 			}
-			if !opts.Quiet {
-				printProgress(svc, "removing")
+			if id == "" {
+				continue
 			}
-			if err := engine.RemoveService(ctx, containerName); err != nil {
-				logger.Warn("remove failed", "name", containerName, "err", err)
+			if err := orchestrator.RemoveContainer(ctx, engine, containerName, id); err != nil {
+				errs = append(errs, err)
 			}
 		}
-		return nil
+		return errors.Join(errs...)
 	}
 
 	if opts.DryRun {
@@ -101,17 +105,16 @@ func runTeardown(ctx context.Context, opts commandOptions, args []string) error 
 	}
 	defer engine.Close()
 
-	vols, err := engine.ListStackVolumes(ctx, sn)
-	if err != nil {
-		logger.Warn("could not list stack volumes", "err", err)
-		vols = nil
+	vols, listErr := engine.ListStackVolumes(ctx, sn)
+	if listErr != nil {
+		listErr = fmt.Errorf("list volumes for stack %q: %w", sn, listErr)
 	}
 
 	if !opts.DryRun {
 		msg := fmt.Sprintf("This will remove containers, images, and network for stack %s", sn)
 		if len(vols) > 0 {
-			msg = fmt.Sprintf("This will remove containers, images, %d named volume(s), and network for stack %s\nvolumes: %s",
-				len(vols), sn, strings.Join(vols, ", "))
+			msg = fmt.Sprintf("This will remove containers, images, and network for stack %s; %d named volume(s) will be retained\nvolumes: %s",
+				sn, len(vols), strings.Join(vols, ", "))
 		}
 		ok, err := confirmDestructive(msg, opts)
 		if err != nil {
@@ -128,21 +131,20 @@ func runTeardown(ctx context.Context, opts commandOptions, args []string) error 
 	if opts.DryRun {
 		fmt.Printf("would remove stack %s containers, network, and images\n", sn)
 		if len(vols) > 0 {
-			fmt.Printf("would remove volumes: %s\n", strings.Join(vols, ", "))
+			fmt.Printf("would retain volumes (safe deletion unsupported): %s\n", strings.Join(vols, ", "))
+			return errors.Join(listErr, fmt.Errorf("safe automatic volume deletion is unsupported; volumes retained: %s", strings.Join(vols, ", ")))
 		}
-		return nil
+		return listErr
 	}
 
-	if err := dag.Down(ctx, engine, sn, opts.downProgress(sn)); err != nil {
-		return err
-	}
+	errs := []error{listErr, dag.Down(ctx, engine, sn, opts.downProgress(sn))}
 
 	for _, name := range vols {
 		if !opts.Quiet {
-			printProgress(name, "removing volume")
+			printProgress(name, "checking volume removal")
 		}
 		if err := engine.RemoveVolume(ctx, name, *force); err != nil {
-			logger.Warn("remove volume failed", "name", name, "err", err)
+			errs = append(errs, &orchestrator.ResourceError{Operation: "remove volume (resource may be retained)", Resource: name, Err: err})
 		}
 	}
 
@@ -155,10 +157,18 @@ func runTeardown(ctx context.Context, opts commandOptions, args []string) error 
 		if !opts.Quiet {
 			printProgress(svc.Image, "removing image")
 		}
-		if err := engine.RemoveImage(ctx, svc.Image, *force); err != nil {
-			logger.Warn("remove image failed", "image", svc.Image, "err", err)
+		id, err := engine.LocalImageID(ctx, svc.Image)
+		if err != nil {
+			errs = append(errs, &orchestrator.ResourceError{Operation: "inspect image", Resource: svc.Image, Err: err})
+			continue
+		}
+		if id == "" {
+			continue
+		}
+		if err := engine.RemoveImage(ctx, id, *force); err != nil {
+			errs = append(errs, &orchestrator.ResourceError{Operation: "remove image (resource may be retained)", Resource: svc.Image, ID: id, Err: err})
 		}
 	}
 
-	return nil
+	return errors.Join(errs...)
 }

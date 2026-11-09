@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"flag"
 	"fmt"
 	"strings"
@@ -9,6 +10,7 @@ import (
 
 	"github.com/umayr/dill/internal/dag"
 	"github.com/umayr/dill/internal/log"
+	"github.com/umayr/dill/internal/orchestrator"
 )
 
 func runStop(ctx context.Context, opts commandOptions, services []string) error {
@@ -58,6 +60,7 @@ func runStop(ctx context.Context, opts commandOptions, services []string) error 
 		}
 	}
 
+	var errs []error
 	for _, name := range names {
 		if opts.DryRun {
 			fmt.Printf("would stop %s\n", name)
@@ -67,11 +70,28 @@ func runStop(ctx context.Context, opts commandOptions, services []string) error 
 			display := strings.TrimPrefix(name, sn+"_")
 			printProgress(display, "stopping")
 		}
-		if err := engine.StopService(ctx, name); err != nil {
-			logger.Warn("stop failed", "name", name, "err", err)
+		service := ""
+		if len(services) > 0 {
+			for _, svc := range services {
+				if serviceContainerName(sn, svc, st.Config.Services[svc]) == name {
+					service = svc
+					break
+				}
+			}
+		}
+		id, err := orchestrator.OwnedID(ctx, engine, name, sn, service)
+		if err != nil {
+			errs = append(errs, err)
+			continue
+		}
+		if id == "" {
+			continue
+		}
+		if err := engine.StopService(ctx, id); err != nil && !errors.Is(err, orchestrator.ErrNotFound) {
+			errs = append(errs, &orchestrator.ResourceError{Operation: "stop", Resource: name, ID: id, Err: err})
 		}
 	}
-	return nil
+	return errors.Join(errs...)
 }
 
 // runStart starts all stopped containers in dependency order.

@@ -136,7 +136,6 @@ func TestPodmanOperationsCancelInflightRequests(t *testing.T) {
 		{"volume exists", "", func(ctx context.Context, e *PodmanEngine) error { return e.EnsureVolume(ctx, "volume", "app") }},
 		{"volume create", "/volumes/volume/exists", func(ctx context.Context, e *PodmanEngine) error { return e.EnsureVolume(ctx, "volume", "app") }},
 		{"volume list", "", func(ctx context.Context, e *PodmanEngine) error { _, err := e.ListStackVolumes(ctx, "app"); return err }},
-		{"volume remove", "", func(ctx context.Context, e *PodmanEngine) error { return e.RemoveVolume(ctx, "volume", false) }},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()

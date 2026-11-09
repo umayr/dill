@@ -90,7 +90,7 @@ func run(args []string) error {
 Commands:
   up        Start all services (default)
   down      Stop and remove all dill-managed services
-  teardown  Remove containers, images, volumes, and network (--force to force-remove images)
+  teardown  Remove containers, images, and network; report retained volumes (--force for images)
   stop      Stop services without removing containers
   start     Start previously stopped containers
   restart   Restart services

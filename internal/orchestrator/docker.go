@@ -18,6 +18,7 @@ import (
 	"github.com/docker/docker/api/types/strslice"
 	volumetypes "github.com/docker/docker/api/types/volume"
 	"github.com/docker/docker/client"
+	"github.com/docker/docker/errdefs"
 	"github.com/docker/docker/pkg/stdcopy"
 	"github.com/docker/go-connections/nat"
 	"github.com/umayr/dill/internal/config"
@@ -271,7 +272,7 @@ func (d *DockerEngine) StartService(ctx context.Context, name string, svc *confi
 
 	resp, err := d.cli.ContainerCreate(ctx, containerCfg, hostCfg, netCfg, nil, containerName)
 	if err != nil {
-		return "", fmt.Errorf("create %s: %w", name, err)
+		return "", fmt.Errorf("create %s: outcome may be unknown; container %q may be retained: %w", name, containerName, err)
 	}
 	if err := startCreated(ctx, ctx, name, resp.ID, func() error {
 		return d.cli.ContainerStart(ctx, resp.ID, container.StartOptions{})
@@ -287,12 +288,20 @@ func (d *DockerEngine) StartService(ctx context.Context, name string, svc *confi
 func (d *DockerEngine) StopService(ctx context.Context, name string) error {
 	logger.Debug("stopping service", "service", name)
 	timeout := int(10 * time.Second / time.Second)
-	return d.cli.ContainerStop(ctx, name, container.StopOptions{Timeout: &timeout})
+	err := d.cli.ContainerStop(ctx, name, container.StopOptions{Timeout: &timeout})
+	if client.IsErrNotFound(err) || errdefs.IsNotModified(err) {
+		return nil
+	}
+	return err
 }
 
 func (d *DockerEngine) RemoveService(ctx context.Context, name string) error {
 	logger.Debug("removing container", "name", name)
-	return d.cli.ContainerRemove(ctx, name, container.RemoveOptions{Force: true})
+	err := d.cli.ContainerRemove(ctx, name, container.RemoveOptions{})
+	if client.IsErrNotFound(err) {
+		return nil
+	}
+	return err
 }
 
 func (d *DockerEngine) IsReady(ctx context.Context, name string, hasHealthCheck bool) (bool, error) {
@@ -487,8 +496,14 @@ func (d *DockerEngine) StartExisting(ctx context.Context, name string) error {
 }
 
 func (d *DockerEngine) ServiceStatus(ctx context.Context, name string) (*ContainerStatus, error) {
-	f := filters.NewArgs(filters.Arg("name", "^/"+name+"$"))
-	list, err := d.cli.ContainerList(ctx, container.ListOptions{All: true, Filters: f})
+	inspected, err := d.cli.ContainerInspect(ctx, name)
+	if client.IsErrNotFound(err) {
+		return nil, fmt.Errorf("%w: %s", ErrNotFound, name)
+	}
+	if err != nil {
+		return nil, err
+	}
+	list, err := d.cli.ContainerList(ctx, container.ListOptions{All: true, Filters: filters.NewArgs(filters.Arg("id", inspected.ID))})
 	if err != nil {
 		return nil, err
 	}
@@ -569,7 +584,17 @@ func (d *DockerEngine) EnsureNetwork(ctx context.Context, name string) error {
 }
 
 func (d *DockerEngine) RemoveNetwork(ctx context.Context, name string) error {
-	if err := d.cli.NetworkRemove(ctx, name); err != nil {
+	live, err := d.cli.NetworkInspect(ctx, name, dockertypes.NetworkInspectOptions{})
+	if client.IsErrNotFound(err) {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("inspect network %s: %w", name, err)
+	}
+	if live.Labels["dill.managed"] != "true" || live.Labels["dill.stack"] != name || live.ID == "" {
+		return fmt.Errorf("network %q is not owned by stack %q", name, name)
+	}
+	if err := d.cli.NetworkRemove(ctx, live.ID); err != nil {
 		if client.IsErrNotFound(err) {
 			return nil
 		}
@@ -617,7 +642,7 @@ func (d *DockerEngine) EnsureVolume(ctx context.Context, name, stackName string)
 
 // ListStackVolumes returns volumes labelled as owned by the stack.
 func (d *DockerEngine) ListStackVolumes(ctx context.Context, stackName string) ([]string, error) {
-	f := filters.NewArgs(filters.Arg("label", "dill.stack="+stackName))
+	f := filters.NewArgs(filters.Arg("label", "dill.stack="+stackName), filters.Arg("label", "dill.managed=true"))
 	resp, err := d.cli.VolumeList(ctx, volumetypes.ListOptions{Filters: f})
 	if err != nil {
 		return nil, err
@@ -631,14 +656,7 @@ func (d *DockerEngine) ListStackVolumes(ctx context.Context, stackName string) (
 }
 
 func (d *DockerEngine) RemoveVolume(ctx context.Context, name string, force bool) error {
-	if err := d.cli.VolumeRemove(ctx, name, force); err != nil {
-		if client.IsErrNotFound(err) {
-			return nil
-		}
-		return fmt.Errorf("removing volume %s: %w", name, err)
-	}
-	logger.Debug("volume removed", "name", name)
-	return nil
+	return fmt.Errorf("volume %q retained: safe conditional deletion is unsupported by Docker; remove it explicitly after verifying ownership", name)
 }
 
 func (d *DockerEngine) Close() error { return d.cli.Close() }

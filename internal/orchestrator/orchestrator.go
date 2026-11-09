@@ -70,7 +70,7 @@ type LogOptions struct {
 
 // Engine defines the methods required by Dill to manage containers.
 // Requests must honor their operation context, not the engine initialization
-// context: rollback can use a fresh context after deployment cancellation.
+// context: failure cleanup can use a fresh context after deployment cancellation.
 type Engine interface {
 	// PullImage pulls the named image from its registry, writing download
 	// progress to w. Implementations write one line per progress update.
@@ -138,8 +138,8 @@ type Engine interface {
 	// ListStackVolumes returns the volumes labelled as owned by the stack.
 	ListStackVolumes(ctx context.Context, stackName string) ([]string, error)
 
-	// RemoveVolume removes a named volume.
-	// If force is true the volume is removed even if in use.
+	// RemoveVolume reports unsupported when safe conditional removal is unavailable.
+	// Named volumes lack an immutable identity and must not be removed by reused name.
 	RemoveVolume(ctx context.Context, name string, force bool) error
 
 	// Close releases any resources held by the engine client.
