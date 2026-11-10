@@ -1,10 +1,11 @@
 # Current-feature conformance and deferred acceptance
 
-This is evidence for the current `dill.pkl` API, not completion of #18. Both integration CI jobs run the same `test/integration` suite; capability contract integration depends on #15 and must be reviewed before use. No Brine repository consumes these tests or a golden protocol today.
+This is evidence for the current `dill.pkl` API, not completion of #18. Both integration CI jobs run the same `test/integration` suite; capability contract integration depends on draft #15 and must be reviewed before use. No Brine repository consumes these tests or a golden protocol today.
 
 | Area | Existing evidence | Additional evidence / limit |
 |---|---|---|
 | Graph and preflight | `TestRunUpConfigPreflight` checks invalid whole graphs before engine open; `TestDillRealEngineUpPreflightPreservesOrphans` checks orphan identity and state. | `TestConformanceInvalidPartialSelectionPreservesStack` checks all three running container IDs/states and network ID for invalid unselected cycles in selected, no-deps and dry-run operations. This is not exhaustive mutation tracing on a real engine. |
+| Capability preflight | #15 provides static adapter discovery and pre-engine-open rejection. | Shared conformance checks Docker/Podman static expectations; on Podman selected unsupported device, network mode and unpublished-port intent fails before engine open and preserves real containers, network and volume. Static Docker acceptance is not runtime or host support. |
 | Ownership and failure | `TestDillForeignContainerOwnership`, `TestRunUpConfigOwnershipBeforePullAndCreate`, and `TestDillRealEngineFailedStartCleanup` cover ownership, ordering and failed-start cleanup. | Cleanup is not restoration of replaced containers or application data. |
 | Cancellation | `TestDillCancelledUpRollsBack` tests timeout and SIGTERM during readiness and absence of stack containers. | Does not establish durable outcomes or cross-process locking. |
 | Partial and no-op | `TestDillPartialUpKeepsOtherServices`, `TestDillOwnedContainerReconciles`, and lifecycle tests cover current selection and convergence. | `--no-deps` is current legacy behavior, not future hard namespace-edge semantics. |
