@@ -102,7 +102,10 @@ jobs:
 
   integration-podman:
     name: Integration / Podman
-    runs-on: ubuntu-latest
+    # Keep the verified rootless baseline explicit. Ubuntu 26.04 / Podman 5.7
+    # currently fails network-process cleanup with permission denied, including
+    # direct podman rm. Do not suppress lifecycle errors to accommodate it.
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
