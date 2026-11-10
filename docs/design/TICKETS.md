@@ -4,12 +4,10 @@ This is the coordinated backlog for the [roadmap](../../ROADMAP.md). Issues desc
 
 ## #19 staged dependency gate
 
-The operator-approved **`protocol-foundation-1`** gate is defined in the
-[protocol foundation contract](protocol-contract-19-proposal.md). **It is
-implemented under review, not passed or released.** The main orchestrator
-released implementation after #31/#32 verification, without closing their
-broader work. Gate passage still requires main verification and CI for the
-discovery/check/codec behavior.
+The implemented experimental foundation provides metadata-only protocol
+discovery/check/codec behavior. Its **`protocol-foundation-1`** gate is defined
+in the [protocol foundation contract](protocol-contract-19-proposal.md) and
+passes after independent review, passing full final-head CI and merge to main.
 
 For downstream **contract work**, the #19 prerequisite links below may be
 satisfied by that named foundation gate rather than full #19 closure. This

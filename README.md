@@ -112,8 +112,8 @@ relative imports against the directory of `-f` and requires it to be writable.
 Plan/diff JSON failures return an `error` string and the same `kind`; successful plan/diff JSON retains
 its existing shape. Diagnostics are written to stderr. JSON doctor retains its
 checks array but now exits nonzero if a check fails. These failure shapes are
-unversioned CLI output, not the future #19 operation protocol. Scripts that
-previously relied on successful JSON validation/doctor exits for failed checks
+unversioned CLI output, not the experimental metadata-only operation protocol.
+Scripts that previously relied on successful JSON validation/doctor exits for failed checks
 must handle the new nonzero exit. A Pkl process failure is reported as
 `evaluator_failure` with exit 1: syntax, import, trust and other evaluator
 failures cannot be reliably distinguished without parsing Pkl's prose. This
@@ -135,8 +135,10 @@ to #9. Offline validation does not inspect target capabilities or state.
 
 `dill protocol` discovers `dill.dev/1`; `dill protocol run` checks one strict
 metadata request through EOF. No flags, config, Pkl, engines, artifacts or
-providers are accessed. `dill caps` is unchanged. This is **under review**, not
-a passed `protocol-foundation-1` gate; #19 remains open. See the
+providers are accessed. `dill caps` is unchanged. This implemented experimental
+foundation is metadata-only. Its `protocol-foundation-1` gate passes after
+independent review, passing full final-head CI and merge to main; #19 remains open for
+its full acceptance criteria. See the
 [wire contract and support matrix](docs/design/protocol-contract-19-proposal.md).
 
 Only connected Unix stream sockets on **Linux** are supported. macOS currently

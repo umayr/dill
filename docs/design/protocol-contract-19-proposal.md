@@ -1,10 +1,10 @@
 # Dill protocol foundation
 
-**Status: implemented under review on the protocol branch; not a passed dependency gate or release.** The main orchestrator released implementation after #31/#32 verification; those broader tickets retain their accepted limitations. Gate passage still requires main-orchestrator verification and CI. [#19](https://github.com/umayr/dill/issues/19) remains OPEN until its full acceptance criteria are met.
+**Implemented experimental metadata-only foundation.** This contract defines discovery, protocol agreement and shared codecs, not deployable artifacts. [#19](https://github.com/umayr/dill/issues/19) remains OPEN until its full acceptance criteria are met.
 
 ## Dependency gate
 
-The named **`protocol-foundation-1`** gate separates protocol plumbing from deployable artifacts. Once implemented, tested and reviewed, downstream contracts may depend on this gate without waiting for all of #19. Approval of this document alone does not pass the gate. Other ticket prerequisites still apply; a codec is not a runtime capability.
+The named **`protocol-foundation-1`** gate separates protocol plumbing from deployable artifacts. It passes after independent implementation review, passing full final-head CI and merge to main. Downstream contracts may depend on the passed gate without waiting for all of #19. Approval of this document alone does not pass the gate. Other ticket prerequisites still apply; a codec is not a runtime capability.
 
 Foundation scope is discovery, one metadata-only check, and shared envelope codecs/fixtures. It establishes exact compatibility, bounded framing, safe errors and independent outcome axes. It provides **no IR, artifact render/validation/apply, target discovery, engine/provider access, secret resolution, locking, persistence or durable control**. `dill caps` keeps its existing static adapter-discovery name, output and semantics.
 
@@ -155,7 +155,7 @@ Later #38/#16/#10 work must establish typed references, independent semantic val
 
 ## Acceptance for `protocol-foundation-1`
 
-Gate passage requires implementation review plus recorded passing build/test/vet and contract evidence after the #31/#32 release:
+Gate passage requires independent implementation review, recorded passing build/test/vet/validation and contract evidence, passing full final-head CI (including both engine integration suites), and merge to main:
 
 1. Discovery and check match these schemas; strict success emits accepted + one final. Unsupported protocol/operation/required feature and invalid arguments fail closed with fixed errors and exits.
 2. Boundary tests cover size/depth/string/feature limits, duplicates including escaped keys, unknown fields, null/type/case errors, UTF-8/surrogates, trailing/multiple/truncated values, EOF/deadline, cancellation, entropy failure, unsupported transports (including blocking pipes/files) and broken/full sockets. Subprocess tests verify budgets with scheduling tolerance, parent access/nonblocking modes unchanged and no detached I/O workers. No input-bearing stderr or legacy setup side effects.
@@ -164,4 +164,4 @@ Gate passage requires implementation review plus recorded passing build/test/vet
 5. The [versioned fixture manifest](../../internal/protocol/testdata/manifest.json) records bootstrap/wire identifiers and expected records/exits for future Brine consumption. Dill owns semantics; no cross-repo implementation/publication is required to pass this foundation. Actual Brine consumer tests remain a full-#19 integration gate.
 6. Regression tests preserve existing caps, plan/diff exit behavior and destructive prompts. No deployable IR or target/provider/apply capability is offered; no legacy secret-bearing output is routed through the new namespace.
 
-Until that evidence is reviewed, `protocol-foundation-1` remains **not passed**. Full #19 remains open after foundation passage. Any additional operation, artifact path, target identity/security policy, provider, durable control or changed wire rule requires a separate scope review; none is authorized here.
+Foundation gate passage does not close full #19; its remaining acceptance criteria still apply. Any additional operation, artifact path, target identity/security policy, provider, durable control or changed wire rule requires a separate scope review; none is authorized here.
