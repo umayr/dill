@@ -1,0 +1,2 @@
+{"protocolVersion":"dill.dev/1","recordType":"accepted","operationId":"op_0123456789abcdef0123456789abcdef","operation":"protocol.check","sequence":1}
+{"protocolVersion":"dill.dev/1","recordType":"result","operationId":"op_0123456789abcdef0123456789abcdef","operation":"protocol.check","sequence":2,"outcome":"failed","effects":"partial","cleanup":"failed","changesDetected":false,"errors":[{"code":"INTERNAL_ERROR","message":"Protocol check could not complete."},{"code":"INTERNAL_ERROR","message":"Protocol check could not complete."}]}

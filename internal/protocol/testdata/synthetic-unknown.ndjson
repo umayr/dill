@@ -1,0 +1,2 @@
+{"protocolVersion":"dill.dev/1","recordType":"accepted","operationId":"op_0123456789abcdef0123456789abcdef","operation":"protocol.check","sequence":1}
+{"protocolVersion":"dill.dev/1","recordType":"result","operationId":"op_0123456789abcdef0123456789abcdef","operation":"protocol.check","sequence":2,"outcome":"unknown","effects":"unknown","cleanup":"unknown","changesDetected":false,"errors":[]}

@@ -22,6 +22,7 @@ const (
 	cmdStatus   = "status"
 	cmdDoctor   = "doctor"
 	cmdCaps     = "caps"
+	cmdProtocol = "protocol"
 	cmdDiff     = "diff"
 	cmdStacks   = "stacks"
 	cmdLs       = "ls"
@@ -31,3 +32,5 @@ const (
 	cmdTop      = "top"
 	cmdCp       = "cp"
 )
+
+const cmdProtocolRun = "run"

@@ -112,8 +112,8 @@ relative imports against the directory of `-f` and requires it to be writable.
 Plan/diff JSON failures return an `error` string and the same `kind`; successful plan/diff JSON retains
 its existing shape. Diagnostics are written to stderr. JSON doctor retains its
 checks array but now exits nonzero if a check fails. These failure shapes are
-unversioned CLI output, not the future #19 operation protocol. Scripts that
-previously relied on successful JSON validation/doctor exits for failed checks
+unversioned CLI output, not the experimental metadata-only operation protocol.
+Scripts that previously relied on successful JSON validation/doctor exits for failed checks
 must handle the new nonzero exit. A Pkl process failure is reported as
 `evaluator_failure` with exit 1: syntax, import, trust and other evaluator
 failures cannot be reliably distinguished without parsing Pkl's prose. This
@@ -130,6 +130,71 @@ to #9. Offline validation does not inspect target capabilities or state.
 
 `rm` and `teardown` prompt before destructive removal; pass
 `--yes`/`-y` for automation. `stop` and `down` do not prompt.
+
+### Experimental protocol foundation
+
+`dill protocol` discovers `dill.dev/1`; `dill protocol run` checks one strict
+metadata request through EOF. No flags, config, Pkl, engines, artifacts or
+providers are accessed. `dill caps` is unchanged. This implemented experimental
+foundation is metadata-only. Its `protocol-foundation-1` gate passes after
+independent review, passing full final-head CI and merge to main; #19 remains open for
+its full acceptance criteria. See the
+[wire contract and support matrix](docs/design/protocol-contract-19-proposal.md).
+
+Only connected Unix stream sockets on **Linux** are supported. macOS currently
+fails closed for all descriptors: its public per-call `MSG_DONTWAIT` send flag
+did not prevent blocking under pressure. Ordinary shell pipes, files and
+terminals also fail closed (exit 1), even for discovery. On Linux, a small
+Python launcher can pass three socketpairs without changing shared fd flags.
+Python 3 sockets are non-inheritable by default; keep both ends non-inheritable
+so the child receives only the endpoints explicitly mapped to stdin/out/stderr,
+not the launcher's peers (which would suppress EOF/EPIPE):
+
+```python
+import select, socket, subprocess, time
+
+pairs = [socket.socketpair() for _ in range(3)]  # non-inheritable by default
+assert all(not s.get_inheritable() for pair in pairs for s in pair)
+parents, children = zip(*pairs)  # stdin, stdout, stderr
+try:
+    with subprocess.Popen(["./bin/dill", "protocol", "run"],
+                          stdin=children[0], stdout=children[1],
+                          stderr=children[2], close_fds=True) as child:
+        try:
+            for s in children:
+                s.close()
+            parents[0].sendall(b'{"protocolVersion":"dill.dev/1",'
+                               b'"operation":"protocol.check","requiredFeatures":[]}')
+            parents[0].shutdown(socket.SHUT_WR)  # EOF is mandatory
+            pending, data = list(parents[1:]), [bytearray(), bytearray()]
+            deadline = time.monotonic() + 8  # launcher guard, not server implementation
+            while pending:
+                left = deadline - time.monotonic()
+                if left <= 0:
+                    raise TimeoutError("protocol child")
+                ready, _, _ = select.select(pending, [], [], left)
+                for s in ready:
+                    chunk = s.recv(4096)
+                    if chunk:
+                        data[parents[1:].index(s)].extend(chunk)
+                    else:
+                        pending.remove(s)
+            code = child.wait(timeout=max(0.01, deadline - time.monotonic()))
+            print(code, data[0].decode(), data[1].decode())
+        finally:
+            if child.poll() is None:
+                child.kill()
+                child.wait()
+finally:
+    for pair in pairs:
+        for s in pair:
+            s.close()
+```
+
+A client must validate the NDJSON sequence and final, not infer success solely
+from exit 0. Missing/truncated output is unknown. Acquisition has a 5-second
+budget, then output has **one total 1-second budget** (including stderr), subject
+to normal OS scheduling. A broken/full output may prevent any final/diagnostic.
 
 #### Notes
 

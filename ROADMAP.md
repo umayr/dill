@@ -146,6 +146,8 @@ Docker/Podman remain primary. Explore Apple `container` only after capability co
 
 The [ticket index](docs/design/TICKETS.md) is authoritative for prerequisite links; phases describe outcomes, not permission to skip dependencies.
 
+The implemented experimental [#19 foundation](docs/design/protocol-contract-19-proposal.md#dependency-gate) is limited to protocol discovery/check/codec behavior, with no IR, apply, target or provider capability. Its **`protocol-foundation-1`** gate passes after independent review, passing full final-head CI and merge to main. Downstream contracts may use that passed gate instead of waiting for full #19 closure, allowing #38/#16/#10 to establish the secret-safe artifact prerequisites without a circular sequencing requirement. Other prerequisites and runtime safety gates remain mandatory. #19 stays OPEN until its full artifact, Pkl-free execution, target/outcome and Brine acceptance is met; foundation fixtures do not establish those features.
+
 | Phase | Outcome | Exit gate |
 |---|---|---|
 | 0: correctness | Honest exits, pinned toolchain, audited engine behavior | Invalid config causes zero mutations; failures never masquerade as success |

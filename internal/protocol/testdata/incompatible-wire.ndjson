@@ -1,0 +1,1 @@
+{"bootstrapVersion":"dill.bootstrap/1","recordType":"result","outcome":"rejected","effects":"none","cleanup":"notNeeded","changesDetected":false,"errors":[{"code":"UNSUPPORTED_PROTOCOL","message":"Unsupported protocol. Use discovery to select a supported version."}]}

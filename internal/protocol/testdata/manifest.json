@@ -1,0 +1,17 @@
+{
+  "bootstrapVersion": "dill.bootstrap/1",
+  "protocolVersion": "dill.dev/1",
+  "scope": "metadata-only foundation codecs; no deployment or Brine integration evidence",
+  "fixtures": [
+    {"name":"discovery","file":"discovery.ndjson","invocation":"discovery","expectedExitCode":0,"synthetic":false},
+    {"name":"check-success","file":"check-success.ndjson","invocation":"run","request":{"protocolVersion":"dill.dev/1","operation":"protocol.check","requiredFeatures":[]},"expectedExitCode":0,"synthetic":false},
+    {"name":"validation-rejection","file":"validation-rejection.ndjson","invocation":"run","request":{"unknown":"fixture-sentinel"},"expectedExitCode":2,"synthetic":false},
+    {"name":"incompatible-wire","file":"incompatible-wire.ndjson","invocation":"run","request":{"protocolVersion":"unsupported","operation":"protocol.check","requiredFeatures":[]},"expectedExitCode":2,"synthetic":false},
+    {"name":"synthetic-event","file":"synthetic-event.ndjson","synthetic":true},
+    {"name":"synthetic-cancelled","file":"synthetic-cancelled.ndjson","synthetic":true},
+    {"name":"synthetic-partial-cleanup-failure","file":"synthetic-partial.ndjson","synthetic":true},
+    {"name":"synthetic-changes","file":"synthetic-changes.ndjson","synthetic":true},
+    {"name":"synthetic-unknown","file":"synthetic-unknown.ndjson","synthetic":true}
+  ],
+  "limitations": ["IDs in fixtures are deterministic test data, not runtime IDs", "synthetic fixtures specify no production operation or exit behavior", "no target/provider/IR/apply or durable cancellation capability", "consumers must separately verify supported Unix stream socket transport", "Brine has not consumed these fixtures"]
+}
