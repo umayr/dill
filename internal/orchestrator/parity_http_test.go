@@ -6,10 +6,11 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
-	"strings"
+	"strconv"
 	"testing"
 	"time"
 
+	timetypes "github.com/docker/docker/api/types/time"
 	"github.com/docker/docker/client"
 )
 
@@ -74,16 +75,74 @@ func TestDockerInspectCancellation(t *testing.T) {
 	}
 }
 
-func TestPodmanLogSinceRequest(t *testing.T) {
+func TestAdapterLogSinceWire(t *testing.T) {
 	p, conn := newContextTestEngine(t, context.Background())
+	var podmanSince string
 	conn.Client.Transport = contextTransport(func(r *http.Request) (*http.Response, error) {
-		s := r.URL.Query().Get("since")
-		if _, err := time.Parse(time.RFC3339Nano, s); err != nil {
-			t.Errorf("since=%q: %v", s, err)
-		}
+		podmanSince = r.URL.Query().Get("since")
 		return contextResponse(r, 200, ""), nil
 	})
-	if err := p.Logs(context.Background(), "app", LogOptions{Since: "1h"}, io.Discard); err != nil && !strings.Contains(err.Error(), "EOF") {
+	var dockerSince string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { dockerSince = r.URL.Query().Get("since") }))
+	defer server.Close()
+	cli, err := client.NewClientWithOpts(client.WithHost(server.URL), client.WithVersion("1.43"))
+	if err != nil {
 		t.Fatal(err)
+	}
+	defer cli.Close()
+	d := &DockerEngine{cli: cli}
+	for _, tc := range []struct {
+		input    string
+		duration time.Duration
+		relative bool
+	}{
+		{"1h", time.Hour, true}, {"0s", 0, true}, {"-1h", -time.Hour, true},
+		{"2024-01-01T00:00:00Z", 0, false}, {"1700000000", 0, false}, {"invalid-value", 0, false},
+	} {
+		t.Run(tc.input, func(t *testing.T) {
+			before := time.Now()
+			for _, adapter := range []struct {
+				name string
+				call func() error
+				got  *string
+			}{
+				{"docker", func() error { return d.Logs(context.Background(), "app", LogOptions{Since: tc.input}, io.Discard) }, &dockerSince},
+				{"podman", func() error { return p.Logs(context.Background(), "app", LogOptions{Since: tc.input}, io.Discard) }, &podmanSince},
+			} {
+				*adapter.got = "not-sent"
+				err := adapter.call()
+				if tc.input == "invalid-value" {
+					if err == nil || *adapter.got != "not-sent" {
+						t.Fatalf("%s: invalid error=%v wire=%q", adapter.name, err, *adapter.got)
+					}
+					continue
+				}
+				if err != nil {
+					t.Fatalf("%s: %v", adapter.name, err)
+				}
+				wire, err := timetypes.GetTimestamp(*adapter.got, before)
+				if err != nil {
+					t.Fatalf("%s: wire %q: %v", adapter.name, *adapter.got, err)
+				}
+				seconds, err := strconv.ParseFloat(wire, 64)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if !tc.relative {
+					want, err := timetypes.GetTimestamp(tc.input, before)
+					if err != nil {
+						t.Fatal(err)
+					}
+					if wire != want {
+						t.Fatalf("%s: got %q want %q", adapter.name, wire, want)
+					}
+					continue
+				}
+				got := time.Unix(0, int64(seconds*float64(time.Second)))
+				if got.Before(before.Add(-tc.duration).Add(-time.Second)) || got.After(time.Now().Add(-tc.duration).Add(time.Second)) {
+					t.Fatalf("%s: unexpected timestamp %s", adapter.name, got)
+				}
+			}
+		})
 	}
 }

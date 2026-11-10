@@ -435,6 +435,10 @@ func (p *PodmanEngine) ServiceStatus(ctx context.Context, name string) (*Contain
 }
 
 func (p *PodmanEngine) Logs(ctx context.Context, name string, logOpts LogOptions, w io.Writer) error {
+	since, err := normalizeLogSince(logOpts.Since)
+	if err != nil {
+		return err
+	}
 	tailStr := "all"
 	if logOpts.Tail > 0 {
 		tailStr = strconv.Itoa(logOpts.Tail)
@@ -445,7 +449,7 @@ func (p *PodmanEngine) Logs(ctx context.Context, name string, logOpts LogOptions
 		WithStdout(true).
 		WithStderr(true)
 	if logOpts.Since != "" {
-		opts.WithSince(normalizeLogSince(logOpts.Since))
+		opts.WithSince(since)
 	}
 	if logOpts.Timestamps {
 		opts.WithTimestamps(true)
@@ -468,7 +472,7 @@ func (p *PodmanEngine) Logs(ctx context.Context, name string, logOpts LogOptions
 	go writeLines(stdoutCh)
 	go writeLines(stderrCh)
 
-	err := containers.Logs(p.operationContext(ctx), name, opts, stdoutCh, stderrCh)
+	err = containers.Logs(p.operationContext(ctx), name, opts, stdoutCh, stderrCh)
 	close(stdoutCh)
 	close(stderrCh)
 	wg.Wait()
@@ -558,7 +562,9 @@ func (p *PodmanEngine) InspectConfig(ctx context.Context, name string) (*LiveCon
 	cpuset := ""
 	init := false
 	if data.HostConfig != nil {
-		restartPolicy = data.HostConfig.RestartPolicy.Name
+		if data.HostConfig.RestartPolicy != nil {
+			restartPolicy = data.HostConfig.RestartPolicy.Name
+		}
 		networkMode = data.HostConfig.NetworkMode
 		capAdd = data.HostConfig.CapAdd
 		cpuset = data.HostConfig.CpusetCpus

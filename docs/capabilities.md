@@ -28,10 +28,14 @@ still performed by the existing full-config validator.
 
 `exec`, `top`, and `cp` pin the subprocess to the same endpoint as the SDK.
 Docker CLI TLS environment must be consistent with the SDK; Podman CLI must be
-installed and able to use the selected URL. Relative `logs --since` durations
-are converted to an absolute UTC timestamp before either API call; absolute
-values remain engine-validated. Status ports are sorted; Podman now uses HTTP
-404 rather than error text for missing-container results. Docker's human status
+installed and able to use the selected URL. Each command inspects the configured
+container name, verifies stack/service ownership, and uses the immutable ID;
+missing or foreign containers fail without launching the command. Relative
+`logs --since` durations are converted to an absolute UTC timestamp before either
+API call. Zero means now and negative durations denote future timestamps;
+recognized absolute values are accepted and invalid values are rejected
+consistently before an API request. Status ports are sorted; Podman now uses
+HTTP 404 rather than error text for missing-container results. Docker's human status
 string and Podman's state string are intentionally not presented as equivalent.
 
 This is a migration change: configurations that relied on Podman silently

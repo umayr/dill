@@ -537,6 +537,10 @@ func (d *DockerEngine) ServiceStatus(ctx context.Context, name string) (*Contain
 }
 
 func (d *DockerEngine) Logs(ctx context.Context, name string, opts LogOptions, w io.Writer) error {
+	since, err := normalizeLogSince(opts.Since)
+	if err != nil {
+		return err
+	}
 	tailStr := "all"
 	if opts.Tail > 0 {
 		tailStr = strconv.Itoa(opts.Tail)
@@ -546,7 +550,7 @@ func (d *DockerEngine) Logs(ctx context.Context, name string, opts LogOptions, w
 		ShowStderr: true,
 		Follow:     opts.Follow,
 		Tail:       tailStr,
-		Since:      normalizeLogSince(opts.Since),
+		Since:      since,
 		Timestamps: opts.Timestamps,
 	})
 	if err != nil {
