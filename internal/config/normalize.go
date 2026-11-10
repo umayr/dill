@@ -3,6 +3,7 @@ package config
 import (
 	"encoding/json"
 	"fmt"
+	"math"
 	"net"
 	"path/filepath"
 	"strconv"
@@ -116,7 +117,11 @@ func ParsePklDuration(raw *json.RawMessage) (time.Duration, error) {
 	default:
 		return 0, fmt.Errorf("unknown pkl duration unit %q", d.Unit)
 	}
-	return time.Duration(d.Value * float64(unit)), nil
+	ns := d.Value * float64(unit)
+	if ns < 0 || math.IsNaN(ns) || math.IsInf(ns, 0) || ns >= math.Exp2(63) {
+		return 0, fmt.Errorf("duration must be non-negative and fit in int64 nanoseconds")
+	}
+	return time.Duration(ns), nil
 }
 
 func normalizePort(raw json.RawMessage) (PortBinding, error) {
