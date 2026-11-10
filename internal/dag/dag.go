@@ -170,18 +170,13 @@ func (g *Graph) Run(ctx context.Context, engine orchestrator.Engine, stackName s
 			case ActionNoop:
 				emit("unchanged")
 				if err := engine.StartExisting(egCtx, containerID); err != nil {
-					logger.Debug("start existing returned error (may already be running)",
-						"service", n.name, "err", err)
+					return &orchestrator.ResourceError{Operation: "start service " + n.name, Resource: containerName, ID: containerID, Err: err}
 				}
 
 			case ActionStart:
 				emit("starting")
 				if err := engine.StartExisting(egCtx, containerID); err != nil {
-					if errors.Is(err, orchestrator.ErrNotFound) {
-						return fmt.Errorf("service %q: container does not exist, run 'dill up' first", n.name)
-					}
-					logger.Debug("start existing returned error",
-						"service", n.name, "err", err)
+					return &orchestrator.ResourceError{Operation: "start service " + n.name, Resource: containerName, ID: containerID, Err: err}
 				}
 
 			case ActionRecreate:
