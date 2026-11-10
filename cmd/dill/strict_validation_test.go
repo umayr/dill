@@ -20,6 +20,21 @@ func TestUntrustedPklOutputRejectedBeforeEngine(t *testing.T) {
 		{"port field", `{"config":{"services":{"app":{"image":"x","ports":[{"target":80,"unsupported":true}]}}}}`, `unknown property "unsupported"`},
 		{"mount field", `{"config":{"services":{"app":{"image":"x","volumes":[{"target":"/data","unsupported":true}]}}}}`, `unknown property "unsupported"`},
 		{"duration field", `{"config":{"services":{"app":{"image":"x","healthcheck":{"test":"ok","interval":{"value":1,"unit":"s","unsupported":true}}}}}}`, `unknown property "unsupported"`},
+		{"null command element", `{"config":{"services":{"app":{"image":"x","command":[null]}}}}`, `config.services["app"].command[0]`},
+		{"null environment value", `{"config":{"services":{"app":{"image":"x","environment":{"X":null}}}}}`, `config.services["app"].environment["X"]`},
+		{"null port element", `{"config":{"services":{"app":{"image":"x","ports":[null]}}}}`, `config.services["app"].ports[0]`},
+		{"missing mount target", `{"config":{"services":{"app":{"image":"x","volumes":[{}]}}}}`, `target`},
+		{"missing duration value", `{"config":{"services":{"app":{"image":"x","healthcheck":{"test":"ok","interval":{"unit":"s"}}}}}}`, `value`},
+		{"missing services", `{"config":{}}`, `config.services`},
+		{"null services", `{"config":{"services":null}}`, `config.services`},
+		{"missing image", `{"config":{"services":{"app":{}}}}`, `.image`},
+		{"empty image", `{"config":{"services":{"app":{"image":""}}}}`, `.image`},
+		{"bad engine", `{"config":{"engine":"invalid","services":{}}}`, `config.engine`},
+		{"bad restart", `{"config":{"services":{"app":{"image":"x","restart":"invalid"}}}}`, `.restart`},
+		{"bad pull policy", `{"config":{"services":{"app":{"image":"x","pullPolicy":"invalid"}}}}`, `.pullPolicy`},
+		{"missing probe", `{"config":{"services":{"app":{"image":"x","healthcheck":{}}}}}`, `.healthcheck.test`},
+		{"negative retries", `{"config":{"services":{"app":{"image":"x","healthcheck":{"test":"ok","retries":-1}}}}}`, `healthcheck retries`},
+		{"duration overflow", `{"config":{"services":{"app":{"image":"x","healthcheck":{"test":"ok","interval":{"value":1e30,"unit":"s"}}}}}}`, `healthcheck interval`},
 		{"duplicate service", `{"config":{"services":{"app":{"image":"x"},"app":{"image":"y"}}}}`, `duplicate key "app"`},
 		{"duplicate label", `{"config":{"services":{"app":{"image":"x","labels":{"foo":"x","foo":"y"}}}}}`, `duplicate key "foo"`},
 	}
@@ -37,13 +52,27 @@ func TestUntrustedPklOutputRejectedBeforeEngine(t *testing.T) {
 			if err := os.WriteFile(path, []byte(body), 0600); err != nil {
 				t.Fatal(err)
 			}
+			for _, format := range []string{"text", "json"} {
+				out, _, err := captureCommand(t, body, func() error {
+					return run([]string{"-f", path, "validate", "--stdin", "--format", format})
+				})
+				if err == nil || !strings.Contains(err.Error(), tc.want) || exitCodeFor(err) != 2 {
+					t.Fatalf("stdin %s: err=%v output=%s", format, err, out)
+				}
+				if format == "json" {
+					var v map[string]any
+					if json.Unmarshal([]byte(out), &v) != nil || v["kind"] != "invalid_input" {
+						t.Fatalf("stdin JSON output=%s", out)
+					}
+				}
+			}
 			for _, command := range []string{"validate", "plan", "diff", "up"} {
 				args := []string{"-f", path, command}
 				if command != "up" {
 					args = append(args, "--format", "json")
 				}
 				out, _, err := captureCommand(t, "", func() error { return run(args) })
-				if err == nil || !strings.Contains(err.Error(), tc.want) {
+				if err == nil || !strings.Contains(err.Error(), tc.want) || exitCodeFor(err) != 2 {
 					t.Fatalf("%s: err=%v output=%s", command, err, out)
 				}
 				if command != "up" {

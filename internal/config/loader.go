@@ -58,6 +58,9 @@ func Load(ctx context.Context, path string) (*DillConfig, error) {
 	if err := decodeStrict(r["config"], &cfg); err != nil {
 		return nil, &InvalidError{Err: fmt.Errorf("parsing pkl output: %w", err)}
 	}
+	if err := validateDecodedShape(r["config"], &cfg); err != nil {
+		return nil, &InvalidError{Err: err}
+	}
 	// Populate BaseDir on every service so relative bind-mount paths can be
 	// resolved correctly regardless of the caller's working directory.
 	absPath, err := filepath.Abs(path)
