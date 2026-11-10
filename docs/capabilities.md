@@ -1,6 +1,6 @@
 # Current adapter capabilities
 
-`dill capabilities --engine docker` (or `podman`) emits a JSON snapshot of
+`dill caps --engine docker` (or `podman`) emits a JSON snapshot of
 known **adapter-level** limits without contacting a host. `devices` and
 `unpublishedPorts` indicate whether that representation is passed through;
 `networkModes` lists Podman explicit modes accepted by preflight. For Docker a
