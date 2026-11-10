@@ -1,0 +1,1 @@
+{"bootstrapVersion":"dill.bootstrap/1","recordType":"discovery","protocolVersions":["dill.dev/1"],"operations":["protocol.check"],"features":["ndjson","resultAxes"],"irVersions":[],"targetCapabilities":[],"providerCapabilities":[]}

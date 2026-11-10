@@ -131,6 +131,65 @@ to #9. Offline validation does not inspect target capabilities or state.
 `rm` and `teardown` prompt before destructive removal; pass
 `--yes`/`-y` for automation. `stop` and `down` do not prompt.
 
+### Experimental protocol foundation
+
+`dill protocol` discovers `dill.dev/1`; `dill protocol run` checks one strict
+metadata request through EOF. No flags, config, Pkl, engines, artifacts or
+providers are accessed. `dill caps` is unchanged. This is **under review**, not
+a passed `protocol-foundation-1` gate; #19 remains open. See the
+[wire contract and support matrix](docs/design/protocol-contract-19-proposal.md).
+
+Only connected Unix stream sockets on **Linux** are supported. macOS currently
+fails closed for all descriptors: its public per-call `MSG_DONTWAIT` send flag
+did not prevent blocking under pressure. Ordinary shell pipes, files and
+terminals also fail closed (exit 1), even for discovery. On Linux, a small
+Python launcher can pass three socketpairs without changing shared fd flags:
+
+```python
+import select, socket, subprocess, time
+
+pairs = [socket.socketpair() for _ in range(3)]
+parents, children = zip(*pairs)  # stdin, stdout, stderr
+try:
+    with subprocess.Popen(["./bin/dill", "protocol", "run"],
+                          stdin=children[0], stdout=children[1],
+                          stderr=children[2]) as child:
+        try:
+            for s in children:
+                s.close()
+            parents[0].sendall(b'{"protocolVersion":"dill.dev/1",'
+                               b'"operation":"protocol.check","requiredFeatures":[]}')
+            parents[0].shutdown(socket.SHUT_WR)  # EOF is mandatory
+            pending, data = list(parents[1:]), [bytearray(), bytearray()]
+            deadline = time.monotonic() + 8  # launcher guard, not server implementation
+            while pending:
+                left = deadline - time.monotonic()
+                if left <= 0:
+                    raise TimeoutError("protocol child")
+                ready, _, _ = select.select(pending, [], [], left)
+                for s in ready:
+                    chunk = s.recv(4096)
+                    if chunk:
+                        data[parents[1:].index(s)].extend(chunk)
+                    else:
+                        pending.remove(s)
+            code = child.wait(timeout=max(0.01, deadline - time.monotonic()))
+            print(code, data[0].decode(), data[1].decode())
+        finally:
+            if child.poll() is None:
+                child.kill()
+                child.wait()
+finally:
+    for pair in pairs:
+        for s in pair:
+            s.close()
+```
+
+A client must validate the NDJSON sequence and final, not infer success solely
+from exit 0. Missing/truncated output is unknown. Acquisition has a 5-second
+budget, then output has **one total 1-second budget** (including stderr), subject
+to normal OS scheduling. A broken/full output may prevent any final/diagnostic.
+
 #### Notes
 
 - `logs` uses `--follow` (short form `-n`/`--tail` still apply). `-f` is

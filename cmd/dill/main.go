@@ -37,13 +37,19 @@ type usageError struct{ msg string }
 func (e usageError) Error() string { return e.msg }
 
 func main() {
+	if isProtocolInvocation(os.Args[1:]) {
+		os.Exit(runProtocol(os.Args[1:]))
+	}
 	verbosity, remaining := logger.ParseVerbosity(os.Args[1:])
 	logger.Init(verbosity)
 
 	err := run(remaining)
 	if err != nil {
 		var ue usageError
+		var pe protocolExit
 		switch {
+		case errors.As(err, &pe):
+			// Protocol output is already complete or undeliverable; no prose.
 		case errors.Is(err, errPlanHasChanges) || errors.Is(err, errDoctorFoundIssues):
 			// The command already rendered its result. The non-zero exit code
 			// is the machine-readable signal (plan drift / failing checks).
@@ -63,6 +69,10 @@ func exitCodeFor(err error) int {
 	if err == nil {
 		return 0
 	}
+	var pe protocolExit
+	if errors.As(err, &pe) {
+		return pe.code
+	}
 	var ue usageError
 	var invalid *config.InvalidError
 	if errors.As(err, &ue) || errors.As(err, &invalid) {
@@ -72,6 +82,12 @@ func exitCodeFor(err error) int {
 }
 
 func run(args []string) error {
+	if isProtocolInvocation(args) {
+		if code := runProtocol(args); code != 0 {
+			return protocolExit{code}
+		}
+		return nil
+	}
 	fs := flag.NewFlagSet("dill", flag.ContinueOnError)
 	opts := commandOptions{}
 	fs.StringVar(&opts.ConfigFile, "f", "compose.pkl", "path to the .pkl config file")
@@ -108,6 +124,7 @@ Commands:
   stacks    List dill-managed stacks (alias: ls)
   doctor    Check local dill, Pkl, and engine readiness
   caps      Show known adapter limitations as JSON
+  protocol  Discover the experimental metadata-only operation protocol
   rm        Remove stopped containers in the stack
   wait      Wait for services to become ready
   port      Print published ports for a service

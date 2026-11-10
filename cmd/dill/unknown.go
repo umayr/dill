@@ -3,7 +3,7 @@ package main
 var allCommands = []string{
 	cmdUp, cmdDown, cmdTeardown, cmdStop, cmdStart, cmdRestart,
 	cmdPs, cmdLogs, cmdPull, cmdImages, cmdExec, cmdPlan, cmdConfig,
-	cmdInit, cmdValidate, cmdFmt, cmdVersion, cmdStatus, cmdDoctor, cmdCaps,
+	cmdInit, cmdValidate, cmdFmt, cmdVersion, cmdStatus, cmdDoctor, cmdCaps, cmdProtocol,
 	cmdDiff, cmdStacks, cmdLs, cmdRm, cmdWait, cmdPort, cmdTop, cmdCp,
 }
 

@@ -1,6 +1,6 @@
 # Dill protocol foundation
 
-**Status: approved staged scope; concrete implementation contract for review. Not implemented, shipped or a passed dependency gate.** No implementation may start until the main orchestrator verifies #31/#32 and explicitly releases that gate. [#19](https://github.com/umayr/dill/issues/19) remains OPEN until its full acceptance criteria are met.
+**Status: implemented under review on the protocol branch; not a passed dependency gate or release.** The main orchestrator released implementation after #31/#32 verification; those broader tickets retain their accepted limitations. Gate passage still requires main-orchestrator verification and CI. [#19](https://github.com/umayr/dill/issues/19) remains OPEN until its full acceptance criteria are met.
 
 ## Dependency gate
 
@@ -45,7 +45,28 @@ Implementation limits for this foundation:
 | Strings and features | Decoded property names/string values at most **64 UTF-8 bytes**; at most **8** required features, with no duplicates. |
 | JSON representation | One UTF-8 JSON object followed only by JSON whitespace and EOF. Reject BOM, invalid UTF-8, unpaired Unicode surrogate escapes, comments, trailing values, malformed/incomplete JSON and duplicate keys at every level. Compare decoded keys before mapping; escaped spellings cannot bypass duplicate detection. |
 | Schema | Reject unknown properties, wrong case/types, missing properties and **all nulls**. Do not coerce scalars, ignore fields or use last-write-wins decoding. |
-| Time and output | **5 seconds** from command entry for request acquisition/validation and ID generation, followed by at most **1 second total** for output; **6 seconds maximum command lifetime**. At most **4,096 bytes per output record including newline**, **16 KiB total stdout**. Deadlines must interrupt blocked input/output; no request override or unbounded draining. |
+| Time and output | **5 seconds** for acquisition/validation/ID generation and **1 second total** for output on the supported socket transport below. These are elapsed-time budgets under normal OS scheduling/kernel progress, not a universal hard-real-time process-lifetime guarantee. At most **4,096 bytes per record including newline**, **16 KiB total stdout**; no request override or unbounded draining. |
+
+### Supported subprocess I/O
+
+The deliberately narrow support matrix is:
+
+| Platform / descriptor | Support |
+| --- | --- |
+| Linux connected `AF_UNIX`, `SOCK_STREAM` sockets (e.g. `socketpair`) | Supported, whether inherited with blocking or nonblocking OFD flags |
+| macOS (all descriptors, including sockets) | Rejected: no safe documented per-call send mechanism established |
+| Anonymous pipes, named FIFOs (including already nonblocking ones) | Rejected |
+| Regular files, TTY/devices, directories, invalid descriptors | Rejected |
+| Listening/unconnected sockets, datagram/seqpacket sockets, TCP/other families | Rejected |
+| Other platforms | Rejected |
+
+For `run`, stdin and stdout must be supported sockets. Discovery does not inspect/read stdin. Stderr is used only if supported and distinct from stdout. Unsupported input with supported stdout yields a bootstrap `UNSUPPORTED_TRANSPORT` result (exit 1); unsupported stdout permits only the fixed diagnostic on supported stderr. No delivery is promised to unsupported, broken or full endpoints. Ordinary shell pipelines and file redirection are deliberately unsupported; use a socketpair launcher (see [CLI example](../../README.md#experimental-protocol-foundation)). There is **no regular-file best-effort exception**.
+
+The trusted launcher supplies distinct endpoints: Dill is the sole stdin reader and sole stdout/stderr writer, with no concurrent close/replacement/reconfiguration of borrowed descriptors. Peers may write, drain, half-close or close their opposite ends. Send one request then close or `shutdown(SHUT_WR)` the input peer to deliver EOF. Closing only one peer fd while a writable duplicate remains open does not deliver EOF and must not cause acceptance; explicit `SHUT_WR` half-closes the shared socket endpoint, including its duplicates. No ancillary descriptor passing is part of this protocol. These are launcher obligations, not protection against a malicious parent controlling the process.
+
+On Linux every receive/send uses **per-call `MSG_DONTWAIT`**, and every send also uses **`MSG_NOSIGNAL`**. This suppresses SIGPIPE for that call without changing process signal dispositions or shared socket options. No `F_SETFL`, `O_NONBLOCK`, `SO_NOSIGPIPE`, borrowed-fd close, Go poller registration or detached blocking-I/O worker is used. Poll is only a short (at most 10ms) readiness hint between nonblocking attempts; stale readiness cannot turn a recv/send into a wait for data or capacity. Partial sends advance the byte offset; a failed partial record is never followed by a replacement final. One absolute output deadline covers accepted, final and any diagnostic.
+
+`PIPE_BUF` proves atomicity, **not bounded blocking I/O**. In particular XNU pipe readiness can reflect maximum rather than currently allocated capacity; the previous poll + blocking small-write strategy is not supported. The supported socket per-call behavior is specified by [Linux send(2)](https://man7.org/linux/man-pages/man2/send.2.html). **macOS is deliberately unsupported**: a blocking socketpair send with `MSG_DONTWAIT | MSG_NOSIGNAL` blocked under pressure on Darwin 24.5.0, independently reproduced with Go and Python. XNU [sosendcheck](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.121.6/bsd/kern/uipc_socket.c) uses `MSG_DONTWAIT` for the socket-buffer lock wait, but checks `SS_NBIO` or private `MSG_NBIO` for the capacity wait. Public `MSG_DONTWAIT` alone does not establish the required guarantee; private flags, shared `O_NONBLOCK` changes and watchdog-abandoned I/O are not accepted alternatives. Preexisting nonblocking descriptors are not a separate exception in this foundation. Budgets remain practical elapsed-time limits subject to OS scheduling/kernel progress, not hard realtime.
 
 Validate the complete request and EOF before generating an ID or emitting `accepted`. Input read/decode/schema failures produce fixed errors, never quoted tokens, field names, offsets, parser text or input snippets. After syntax/schema validation, validate protocol, operation, then required features in that order. Early size/depth/encoding failures may terminate parsing immediately; no further input drain is required. Encoding, depth, string/array bounds and schema violations use `INVALID_REQUEST`; size overflow uses `REQUEST_TOO_LARGE`. EOF without a complete request is `INVALID_REQUEST`; other input I/O failures use `INTERNAL_ERROR`; failure to reach EOF before the deadline is `DEADLINE_EXCEEDED`.
 
@@ -98,6 +119,7 @@ Messages are exact curated constants. No `err.Error()`, random-input content, ca
 | `UNSUPPORTED_PROTOCOL` | `Unsupported protocol. Use discovery to select a supported version.` | 2 |
 | `UNSUPPORTED_OPERATION` | `Unsupported operation. Only protocol.check is available.` | 2 |
 | `UNSUPPORTED_FEATURE` | `A required protocol feature is unavailable.` | 2 |
+| `UNSUPPORTED_TRANSPORT` | `Protocol transport is unavailable. Use Unix stream sockets on Linux.` | 1 |
 | `INTERNAL_ERROR` | `Protocol check could not complete.` | 1 |
 | `CANCELLED` | `Protocol check was cancelled.` | 1 |
 | `DEADLINE_EXCEEDED` | `Protocol check exceeded its deadline.` | 1 |
@@ -122,10 +144,10 @@ Later #38/#16/#10 work must establish typed references, independent semantic val
 Gate passage requires implementation review plus recorded passing build/test/vet and contract evidence after the #31/#32 release:
 
 1. Discovery and check match these schemas; strict success emits accepted + one final. Unsupported protocol/operation/required feature and invalid arguments fail closed with fixed errors and exits.
-2. Boundary tests cover size/depth/string/feature limits, duplicates including escaped keys, unknown fields, null/type/case errors, UTF-8/surrogates, trailing/multiple/truncated values, EOF/deadline, cancellation, entropy failure and broken/blocked output. No input-bearing stderr or legacy setup side effects.
+2. Boundary tests cover size/depth/string/feature limits, duplicates including escaped keys, unknown fields, null/type/case errors, UTF-8/surrogates, trailing/multiple/truncated values, EOF/deadline, cancellation, entropy failure, unsupported transports (including blocking pipes/files) and broken/full sockets. Subprocess tests verify budgets with scheduling tolerance, parent access/nonblocking modes unchanged and no detached I/O workers. No input-bearing stderr or legacy setup side effects.
 3. Negative sentinel tests place arbitrary strings in keys/values/argv and injected errors; emitted output contains only constants/executor IDs, never those bytes or their hashes. Test spies prove zero config/env-file loading, Pkl resolution/download/evaluation, engine open or provider access on every path.
 4. Shared codec fixtures cover accepted/events/final order and **synthetic-only** cancellation, partial effects, changes and unknown outcomes, including failure plus cleanup failure. They must be labelled contract-only, not evidence of deploy/apply/cancel support. Fixed fixture IDs are not runtime ID expectations.
-5. A versioned fixture manifest records bootstrap/wire identifiers and expected records/exits for future Brine consumption. Dill owns semantics; no cross-repo implementation/publication is required to pass this foundation. Actual Brine consumer tests remain a full-#19 integration gate.
+5. The [versioned fixture manifest](../../internal/protocol/testdata/manifest.json) records bootstrap/wire identifiers and expected records/exits for future Brine consumption. Dill owns semantics; no cross-repo implementation/publication is required to pass this foundation. Actual Brine consumer tests remain a full-#19 integration gate.
 6. Regression tests preserve existing caps, plan/diff exit behavior and destructive prompts. No deployable IR or target/provider/apply capability is offered; no legacy secret-bearing output is routed through the new namespace.
 
 Until that evidence is reviewed, `protocol-foundation-1` remains **not passed**. Full #19 remains open after foundation passage. Any additional operation, artifact path, target identity/security policy, provider, durable control or changed wire rule requires a separate scope review; none is authorized here.

@@ -1,0 +1,1 @@
+{"bootstrapVersion":"dill.bootstrap/1","recordType":"result","outcome":"rejected","effects":"none","cleanup":"notNeeded","changesDetected":false,"errors":[{"code":"INVALID_REQUEST","message":"Invalid protocol request."}]}
