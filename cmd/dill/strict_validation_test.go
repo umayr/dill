@@ -20,6 +20,11 @@ func TestUntrustedPklOutputRejectedBeforeEngine(t *testing.T) {
 		{"port field", `{"config":{"services":{"app":{"image":"x","ports":[{"target":80,"unsupported":true}]}}}}`, `unknown property "unsupported"`},
 		{"mount field", `{"config":{"services":{"app":{"image":"x","volumes":[{"target":"/data","unsupported":true}]}}}}`, `unknown property "unsupported"`},
 		{"duration field", `{"config":{"services":{"app":{"image":"x","healthcheck":{"test":"ok","interval":{"value":1,"unit":"s","unsupported":true}}}}}}`, `unknown property "unsupported"`},
+		{"null command element", `{"config":{"services":{"app":{"image":"x","command":[null]}}}}`, `config.services["app"].command[0]`},
+		{"null environment value", `{"config":{"services":{"app":{"image":"x","environment":{"X":null}}}}}`, `config.services["app"].environment["X"]`},
+		{"null port element", `{"config":{"services":{"app":{"image":"x","ports":[null]}}}}`, `config.services["app"].ports[0]`},
+		{"missing mount target", `{"config":{"services":{"app":{"image":"x","volumes":[{}]}}}}`, `target`},
+		{"missing duration value", `{"config":{"services":{"app":{"image":"x","healthcheck":{"test":"ok","interval":{"unit":"s"}}}}}}`, `value`},
 		{"missing services", `{"config":{}}`, `config.services`},
 		{"null services", `{"config":{"services":null}}`, `config.services`},
 		{"missing image", `{"config":{"services":{"app":{}}}}`, `.image`},
@@ -67,7 +72,7 @@ func TestUntrustedPklOutputRejectedBeforeEngine(t *testing.T) {
 					args = append(args, "--format", "json")
 				}
 				out, _, err := captureCommand(t, "", func() error { return run(args) })
-				if err == nil || !strings.Contains(err.Error(), tc.want) {
+				if err == nil || !strings.Contains(err.Error(), tc.want) || exitCodeFor(err) != 2 {
 					t.Fatalf("%s: err=%v output=%s", command, err, out)
 				}
 				if command != "up" {

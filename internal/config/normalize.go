@@ -3,7 +3,7 @@ package config
 import (
 	"encoding/json"
 	"fmt"
-	"math"
+	"math/big"
 	"net"
 	"path/filepath"
 	"strconv"
@@ -71,8 +71,10 @@ func NormalizeHealthCheckTest(raw json.RawMessage) ([]string, error) {
 	}
 	// Try array first.
 	var arr []string
-	if err := json.Unmarshal(raw, &arr); err == nil {
+	if err := decodeStrict(raw, &arr); err == nil {
 		return arr, nil
+	} else if strings.HasPrefix(strings.TrimSpace(string(raw)), "[") {
+		return nil, fmt.Errorf("healthcheck test: %w", err)
 	}
 	// Fall back to string → CMD-SHELL form.
 	var s string
@@ -95,6 +97,9 @@ func ParsePklDuration(raw *json.RawMessage) (time.Duration, error) {
 		return 0, nil
 	}
 	var d pklDuration
+	if err := requireJSONFields(*raw, "value", "unit"); err != nil {
+		return 0, fmt.Errorf("parsing pkl duration: %w", err)
+	}
 	if err := decodeStrict(*raw, &d); err != nil {
 		return 0, fmt.Errorf("parsing pkl duration: %w", err)
 	}
@@ -117,11 +122,19 @@ func ParsePklDuration(raw *json.RawMessage) (time.Duration, error) {
 	default:
 		return 0, fmt.Errorf("unknown pkl duration unit %q", d.Unit)
 	}
-	ns := d.Value * float64(unit)
-	if ns < 0 || math.IsNaN(ns) || math.IsInf(ns, 0) || ns >= math.Exp2(63) {
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(*raw, &fields); err != nil {
+		return 0, fmt.Errorf("parsing pkl duration: %w", err)
+	}
+	value, ok := new(big.Rat).SetString(string(fields["value"]))
+	if !ok {
+		return 0, fmt.Errorf("invalid duration value")
+	}
+	value.Mul(value, new(big.Rat).SetInt64(int64(unit)))
+	if value.Sign() < 0 || value.Cmp(new(big.Rat).SetInt64(1<<63-1)) > 0 {
 		return 0, fmt.Errorf("duration must be non-negative and fit in int64 nanoseconds")
 	}
-	return time.Duration(ns), nil
+	return time.Duration(new(big.Int).Quo(value.Num(), value.Denom()).Int64()), nil
 }
 
 func normalizePort(raw json.RawMessage) (PortBinding, error) {
@@ -136,6 +149,9 @@ func normalizePort(raw json.RawMessage) (PortBinding, error) {
 	}
 
 	var p Port
+	if err := requireJSONFields(raw, "target"); err != nil {
+		return PortBinding{}, fmt.Errorf("invalid Port object: %w", err)
+	}
 	if err := decodeStrict(raw, &p); err != nil {
 		return PortBinding{}, fmt.Errorf("invalid Port object: %w", err)
 	}
@@ -234,6 +250,9 @@ func normalizeVolume(raw json.RawMessage, baseDir string) (VolumeMount, error) {
 	}
 
 	var m Mount
+	if err := requireJSONFields(raw, "target"); err != nil {
+		return VolumeMount{}, fmt.Errorf("invalid Mount object: %w", err)
+	}
 	if err := decodeStrict(raw, &m); err != nil {
 		return VolumeMount{}, fmt.Errorf("invalid Mount object: %w", err)
 	}
