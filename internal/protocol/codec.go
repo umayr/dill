@@ -178,12 +178,12 @@ func Decode(b []byte) (Record, error) {
 		}
 		return *v, nil
 	case *Result:
-		if !validHeader(v.ProtocolVersion, v.OperationID, v.Operation, v.Sequence) || v.Sequence < 2 || v.Outcome == "rejected" || !validAxes(v.Outcome, v.Effects, v.Cleanup, v.Errors) {
+		if !validHeader(v.ProtocolVersion, v.OperationID, v.Operation, v.Sequence) || v.Sequence < 2 || v.Outcome == "rejected" || !validAxes(v.Outcome, v.Effects, v.Cleanup, v.Errors) || !validAcceptedErrors(v.Outcome, v.Cleanup, v.Errors) {
 			return nil, errCodec
 		}
 		return *v, nil
 	case *BootstrapResult:
-		if v.BootstrapVersion != BootstrapVersion || v.Effects != "none" || v.Cleanup != "notNeeded" || v.ChangesDetected || len(v.Errors) != 1 || !validAxes(v.Outcome, v.Effects, v.Cleanup, v.Errors) || v.Outcome != v.Errors[0].Code.outcome() {
+		if v.BootstrapVersion != BootstrapVersion || v.Effects != "none" || v.Cleanup != "notNeeded" || v.ChangesDetected || len(v.Errors) != 1 || !validAxes(v.Outcome, v.Effects, v.Cleanup, v.Errors) || !bootstrapCode(v.Errors[0].Code) || v.Outcome != v.Errors[0].Code.outcome() {
 			return nil, errCodec
 		}
 		return *v, nil
@@ -208,6 +208,38 @@ func validAxes(outcome, effects, cleanup string, errs []WireError) bool {
 		}
 	}
 	return (outcome != "succeeded" || len(errs) == 0) && (outcome != "rejected" || len(errs) > 0)
+}
+
+// Fixed messages are not enough: codes also carry phase/causality claims.
+// OUTPUT_FAILURE is stderr-only and must never become a structured result.
+func bootstrapCode(code Code) bool {
+	switch code {
+	case InvalidArguments, InvalidRequest, RequestTooLarge, UnsupportedProtocol, UnsupportedOperation, UnsupportedFeature, UnsupportedTransport, InternalError, Cancelled, DeadlineExceeded:
+		return true
+	default:
+		return false
+	}
+}
+func validAcceptedErrors(outcome, cleanup string, errs []WireError) bool {
+	cancelled := false
+	for _, e := range errs {
+		switch e.Code {
+		case InternalError:
+			// Synthetic unknown completion and cleanup failure are independent
+			// axes, not permission to admit preaccept rejection codes.
+			if outcome != "failed" && outcome != "unknown" && !(outcome == "cancelled" && cleanup == "failed") {
+				return false
+			}
+		case Cancelled, DeadlineExceeded:
+			if outcome != "cancelled" {
+				return false
+			}
+			cancelled = true
+		default:
+			return false
+		}
+	}
+	return outcome != "cancelled" || cancelled
 }
 func oneOf(s string, values ...string) bool {
 	for _, v := range values {

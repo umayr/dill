@@ -127,6 +127,18 @@ Messages are exact curated constants. No `err.Error()`, random-input content, ca
 | `DEADLINE_EXCEEDED` | `Protocol check exceeded its deadline.` | 1 |
 | `OUTPUT_FAILURE` | `Protocol output could not be delivered.` | 1 |
 
+The structured codec enforces code **phase**, not merely membership in the message table:
+
+| Code group | Bootstrap result | Accepted final |
+| --- | --- | --- |
+| `INVALID_ARGUMENTS`, `INVALID_REQUEST`, `REQUEST_TOO_LARGE`, `UNSUPPORTED_PROTOCOL`, `UNSUPPORTED_OPERATION`, `UNSUPPORTED_FEATURE` | `rejected` only | Forbidden, even if labelled `failed` or mixed with an internal error |
+| `UNSUPPORTED_TRANSPORT` | `failed` only | Forbidden; support is checked before acceptance |
+| `INTERNAL_ERROR` | `failed` only | `failed`, or synthetic `unknown`; may additionally describe cleanup failure on a `cancelled` result only when `cleanup:failed` and a cancellation/deadline code is also present |
+| `CANCELLED`, `DEADLINE_EXCEEDED` | `cancelled` only | `cancelled` only; a cancelled final must contain at least one of these codes |
+| `OUTPUT_FAILURE` | Forbidden | Forbidden; fixed **stderr diagnostic only**, never a stdout result |
+
+These rules apply to both encoding and decoding, including synthetic streams. They do not collapse the independent effects/cleanup axes or forbid the approved failure-plus-cleanup-failure, partial or unknown fixtures. No error phase or additional runtime operation is introduced by those fixtures.
+
 Discovery/check success exits **0**, input/compatibility rejection **2**, internal/cancel/deadline/output failure **1**. This retains the legacy 0/1/2 categories without changing existing commands: legacy plan still exits nonzero on changes; diff still exits zero on drift. A synthetic `changesDetected:true` fixture is not a new production exit-code contract.
 
 Stderr is empty on successful protocol commands and ordinary structured rejection. If stdout delivery fails or cannot finish within the deadline, stop writing it, exit 1 and attempt only the fixed `OUTPUT_FAILURE` code/message line on stderr within the remaining deadline; failure to deliver that line does not authorize blocking. Never append another JSON result after a partially written record. Do not log raw I/O/entropy/parser errors. Output limits are implementation invariants; exceeding them is an internal delivery failure, not permission to truncate JSON and report success.
