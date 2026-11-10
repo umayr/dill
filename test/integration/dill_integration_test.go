@@ -381,7 +381,14 @@ func TestDillExternalVolumePreserved(t *testing.T) {
 		t.Fatalf("external volume was listed as owned: %s", vols)
 	}
 
-	runDill(t, true, bin, "-f", cfg, "teardown", "--yes")
+	if out, err := exec.Command(bin, "-f", cfg, "teardown", "--yes").CombinedOutput(); err != nil {
+		ids := strings.Fields(runEngine(t, env.engine, "ps", "-aq", "--filter", "ancestor=docker.io/library/busybox:1.36"))
+		for _, id := range ids {
+			detail, inspectErr := runEngineRaw(t, env.engine, "inspect", "--format", `{{.Id}} {{.Name}} {{.State.Status}} autoRemove={{.HostConfig.AutoRemove}} dill.stack={{index .Config.Labels "dill.stack"}} dill.service={{index .Config.Labels "dill.service"}}`, id)
+			t.Logf("busybox container: %s (inspect error: %v)", detail, inspectErr)
+		}
+		t.Fatalf("teardown failed: %v\n%s", err, out)
+	}
 	if !volumeExists(t, env.engine, shared) {
 		t.Fatal("teardown removed an external volume")
 	}
@@ -478,14 +485,18 @@ func testTimeout() string {
 	return "2m"
 }
 
-func cleanupStack(t *testing.T, bin, cfg, stack string) {
+func cleanupStack(t *testing.T, bin, _ string, stack string) {
 	t.Helper()
+	engine := integrationEnv(t).engine
 	t.Cleanup(func() {
 		if os.Getenv("DILL_TEST_KEEP") == "1" && t.Failed() {
 			t.Logf("keeping failed integration stack %s", stack)
 			return
 		}
-		_ = runDill(t, false, bin, "-f", cfg, "down")
+		out, err := exec.Command(bin, "--engine", engine, "-p", stack, "down").CombinedOutput()
+		if err != nil {
+			t.Errorf("cleanup stack %s: %v\n%s", stack, err, out)
+		}
 	})
 }
 
