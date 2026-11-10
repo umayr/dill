@@ -17,6 +17,15 @@ func darwinCommandSocket(t *testing.T) (*os.File, *os.File) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	// Fixture ownership only: os.NewFile does not set close-on-exec. The
+	// child must inherit only the endpoints explicitly mapped to stdio.
+	for _, fd := range fds {
+		unix.CloseOnExec(fd)
+		flags, err := unix.FcntlInt(uintptr(fd), unix.F_GETFD, 0)
+		if err != nil || flags&unix.FD_CLOEXEC == 0 {
+			t.Fatal("inheritable fixture socket", fd, flags, err)
+		}
+	}
 	a, b := os.NewFile(uintptr(fds[0]), "child"), os.NewFile(uintptr(fds[1]), "parent")
 	t.Cleanup(func() { a.Close(); b.Close() })
 	return a, b

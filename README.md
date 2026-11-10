@@ -143,17 +143,21 @@ Only connected Unix stream sockets on **Linux** are supported. macOS currently
 fails closed for all descriptors: its public per-call `MSG_DONTWAIT` send flag
 did not prevent blocking under pressure. Ordinary shell pipes, files and
 terminals also fail closed (exit 1), even for discovery. On Linux, a small
-Python launcher can pass three socketpairs without changing shared fd flags:
+Python launcher can pass three socketpairs without changing shared fd flags.
+Python 3 sockets are non-inheritable by default; keep both ends non-inheritable
+so the child receives only the endpoints explicitly mapped to stdin/out/stderr,
+not the launcher's peers (which would suppress EOF/EPIPE):
 
 ```python
 import select, socket, subprocess, time
 
-pairs = [socket.socketpair() for _ in range(3)]
+pairs = [socket.socketpair() for _ in range(3)]  # non-inheritable by default
+assert all(not s.get_inheritable() for pair in pairs for s in pair)
 parents, children = zip(*pairs)  # stdin, stdout, stderr
 try:
     with subprocess.Popen(["./bin/dill", "protocol", "run"],
                           stdin=children[0], stdout=children[1],
-                          stderr=children[2]) as child:
+                          stderr=children[2], close_fds=True) as child:
         try:
             for s in children:
                 s.close()

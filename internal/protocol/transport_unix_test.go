@@ -15,7 +15,7 @@ import (
 
 func socketPair(t *testing.T) (*os.File, *os.File) {
 	t.Helper()
-	fds, err := unix.Socketpair(unix.AF_UNIX, unix.SOCK_STREAM, 0)
+	fds, err := unix.Socketpair(unix.AF_UNIX, unix.SOCK_STREAM|unix.SOCK_CLOEXEC, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -65,7 +65,7 @@ func TestSocketSessionAndFlags(t *testing.T) {
 					}
 				}
 				before[i] = fdFlags(t, f)
-				d, err := unix.Dup(rawFD(t, f))
+				d, err := unix.FcntlInt(uintptr(rawFD(t, f)), unix.F_DUPFD_CLOEXEC, 0)
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -165,7 +165,7 @@ func TestUnsupportedDescriptorsAndDiagnosticAliasing(t *testing.T) {
 		t.Fatal("discovery inspected stdin")
 	}
 	for _, kind := range []int{unix.SOCK_DGRAM, unix.SOCK_STREAM} {
-		fd, err := unix.Socket(unix.AF_UNIX, kind, 0)
+		fd, err := unix.Socket(unix.AF_UNIX, kind|unix.SOCK_CLOEXEC, 0)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -174,7 +174,7 @@ func TestUnsupportedDescriptorsAndDiagnosticAliasing(t *testing.T) {
 		}
 		unix.Close(fd)
 	}
-	fds, err := unix.Socketpair(unix.AF_UNIX, unix.SOCK_DGRAM, 0)
+	fds, err := unix.Socketpair(unix.AF_UNIX, unix.SOCK_DGRAM|unix.SOCK_CLOEXEC, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -183,7 +183,7 @@ func TestUnsupportedDescriptorsAndDiagnosticAliasing(t *testing.T) {
 	}
 	unix.Close(fds[0])
 	unix.Close(fds[1])
-	tcp, err := unix.Socket(unix.AF_INET, unix.SOCK_STREAM, 0)
+	tcp, err := unix.Socket(unix.AF_INET, unix.SOCK_STREAM|unix.SOCK_CLOEXEC, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -271,7 +271,7 @@ func TestSocketAcquisitionFinalBudget(t *testing.T) {
 	}
 	// Closing only one descriptor must not masquerade as EOF while a writable
 	// duplicate of the peer remains open (unlike an explicit SHUT_WR).
-	dupFD, err := unix.Dup(rawFD(t, w))
+	dupFD, err := unix.FcntlInt(uintptr(rawFD(t, w)), unix.F_DUPFD_CLOEXEC, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -295,7 +295,7 @@ func TestNamedFIFORejectedEvenNonblocking(t *testing.T) {
 	if err := unix.Mkfifo(path, 0600); err != nil {
 		t.Fatal(err)
 	}
-	fd, err := unix.Open(path, unix.O_RDONLY|unix.O_NONBLOCK, 0)
+	fd, err := unix.Open(path, unix.O_RDONLY|unix.O_NONBLOCK|unix.O_CLOEXEC, 0)
 	if err != nil {
 		t.Fatal(err)
 	}

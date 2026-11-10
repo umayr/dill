@@ -15,6 +15,13 @@ func darwinSocketPair(t *testing.T) (*os.File, *os.File) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	for _, fd := range fds {
+		unix.CloseOnExec(fd) // fixture fds, never borrowed production fds
+		flags, err := unix.FcntlInt(uintptr(fd), unix.F_GETFD, 0)
+		if err != nil || flags&unix.FD_CLOEXEC == 0 {
+			t.Fatal("inheritable fixture socket", fd, flags, err)
+		}
+	}
 	a, b := os.NewFile(uintptr(fds[0]), "socket"), os.NewFile(uintptr(fds[1]), "peer")
 	t.Cleanup(func() { a.Close(); b.Close() })
 	return a, b

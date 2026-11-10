@@ -6,10 +6,12 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"syscall"
 	"testing"
@@ -24,6 +26,9 @@ func TestProtocolSubprocessHelper(t *testing.T) {
 	if os.Getenv("DILL_PROTOCOL_TEST_HELPER") != "1" {
 		return
 	}
+	if err := auditProtocolFixtureFDs(); err != nil {
+		os.Exit(98)
+	}
 	for i, arg := range os.Args {
 		if arg == "--" {
 			os.Args = append([]string{"dill"}, os.Args[i+1:]...)
@@ -32,6 +37,51 @@ func TestProtocolSubprocessHelper(t *testing.T) {
 		}
 	}
 	os.Exit(99)
+}
+
+// Check actual post-exec descriptors, not only the parent's CLOEXEC bits.
+// Runtime-owned epoll/eventfd descriptors are allowed; extra fixture identities
+// are not, even if the runtime reused a fixture's original numeric fd.
+func protocolFixtureID(fd int) (string, error) {
+	var st unix.Stat_t
+	if err := unix.Fstat(fd, &st); err != nil {
+		return "", err
+	}
+	return fmt.Sprintf("%d:%d", st.Dev, st.Ino), nil
+}
+func auditProtocolFixtureFDs() error {
+	ids := strings.Split(os.Getenv("DILL_PROTOCOL_TEST_FDS"), ",")
+	if len(ids) == 1 && ids[0] == "" {
+		return nil
+	}
+	if len(ids) < 6 {
+		return errors.New("invalid fixture audit")
+	}
+	fixtures := map[string]bool{}
+	for _, id := range ids {
+		fixtures[id] = true
+	}
+	for fd := 0; fd < 3; fd++ {
+		id, err := protocolFixtureID(fd)
+		if err != nil || id != ids[fd] {
+			return errors.New("wrong stdio mapping")
+		}
+	}
+	entries, err := os.ReadDir("/proc/self/fd")
+	if err != nil {
+		return err
+	}
+	for _, entry := range entries {
+		fd, err := strconv.Atoi(entry.Name())
+		if err != nil || fd <= 2 {
+			continue
+		}
+		id, err := protocolFixtureID(fd)
+		if err == nil && fixtures[id] {
+			return errors.New("extra fixture descriptor inherited")
+		}
+	}
+	return nil
 }
 func protocolChild(t *testing.T, args ...string) *exec.Cmd {
 	t.Helper()
@@ -53,7 +103,7 @@ func childExit(err error) int {
 }
 func subprocessSocket(t *testing.T) (*os.File, *os.File) {
 	t.Helper()
-	fd, err := unix.Socketpair(unix.AF_UNIX, unix.SOCK_STREAM, 0)
+	fd, err := unix.Socketpair(unix.AF_UNIX, unix.SOCK_STREAM|unix.SOCK_CLOEXEC, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -148,6 +198,71 @@ func fixedDiagnostic(c protocol.Code) string { return string(c) + ": " + c.Messa
 
 const subprocessRequest = `{"protocolVersion":"dill.dev/1","operation":"protocol.check","requiredFeatures":[]}`
 
+func TestProtocolSubprocessDescriptorInheritance(t *testing.T) {
+	for _, broken := range []bool{false, true} {
+		t.Run(map[bool]string{false: "peer close delivers EOF", true: "peer close delivers EPIPE"}[broken], func(t *testing.T) {
+			c := protocolChild(t, "protocol", "run")
+			s := socketChildIO(t, c)
+			// Dup does not retain CLOEXEC. Use its atomic close-on-exec variant,
+			// and keep this extra peer reference live across Start as a regression.
+			fd, err := unix.FcntlInt(uintptr(subprocessFD(t, s.input)), unix.F_DUPFD_CLOEXEC, 0)
+			if err != nil {
+				t.Fatal(err)
+			}
+			dup := os.NewFile(uintptr(fd), "fixture-peer-duplicate")
+			defer dup.Close()
+			var ids []string
+			for _, f := range []*os.File{s.in, s.out, s.diag, s.input, s.output, s.diagnostic, dup} {
+				fd := subprocessFD(t, f)
+				flags, err := unix.FcntlInt(uintptr(fd), unix.F_GETFD, 0)
+				if err != nil || flags&unix.FD_CLOEXEC == 0 {
+					t.Fatal("inheritable fixture fd", fd, flags, err)
+				}
+				id, err := protocolFixtureID(fd)
+				if err != nil {
+					t.Fatal(err)
+				}
+				ids = append(ids, id)
+			}
+			c.Env = append(c.Env, "DILL_PROTOCOL_TEST_FDS="+strings.Join(ids, ","))
+			s.request(t, subprocessRequest, false)
+			if err := c.Start(); err != nil {
+				t.Fatal(err)
+			}
+			inputConsumed(t, s.in) // child is alive and waiting for EOF, not exited
+			if broken {
+				s.output.Close()
+			}
+			s.input.Close()
+			dup.Close() // close, NOT shutdown: leaked peer would mask EOF
+			exit := childExit(c.Wait())
+			want := 0
+			if broken {
+				want = 1
+			}
+			if exit != want {
+				t.Fatal("descriptor audit/peer closure", exit)
+			}
+			if broken {
+				for i, f := range []*os.File{s.in, s.out, s.diag} {
+					if subprocessFlags(t, f) != s.flags[i] {
+						t.Fatal("child changed parent flags")
+					}
+				}
+				halfClose(t, s.diag)
+				b, err := io.ReadAll(s.diagnostic)
+				if err != nil || string(b) != fixedDiagnostic(protocol.OutputFailure) {
+					t.Fatal("missing EPIPE diagnostic", string(b), err)
+				}
+			} else {
+				out, diag := s.capture(t)
+				if _, err := protocol.DecodeStream(out); err != nil || len(diag) != 0 {
+					t.Fatal(err, string(out), string(diag))
+				}
+			}
+		})
+	}
+}
 func TestProtocolMainNoLeak(t *testing.T) {
 	envFile := filepath.Join(t.TempDir(), "SENTINEL-env")
 	if err := os.WriteFile(envFile, []byte("DILL_PKL_PATH=/SENTINEL-would-be-loaded\n"), 0600); err != nil {
