@@ -454,8 +454,11 @@ func runTop(ctx context.Context, opts commandOptions, args []string) error {
 		return err
 	}
 	defer engine.Close()
-	containerName := serviceContainerName(sn, service, cfg.Services[service])
-	cmdArgs := append([]string{"top", containerName}, args[1:]...)
+	containerID, err := ownedServiceID(ctx, engine, sn, service, cfg.Services[service])
+	if err != nil {
+		return err
+	}
+	cmdArgs := append([]string{"top", containerID}, args[1:]...)
 	binary, cmdArgs := engineCommand(engine, cmdArgs...)
 	c := exec.CommandContext(ctx, binary, cmdArgs...)
 	c.Stdout = os.Stdout
@@ -493,7 +496,11 @@ func runCp(ctx context.Context, opts commandOptions, args []string) error {
 		if !exists {
 			return usageError{fmt.Sprintf("unknown service %q", service)}
 		}
-		rewritten[i] = serviceContainerName(sn, service, svc) + ":" + path
+		id, err := ownedServiceID(ctx, engine, sn, service, svc)
+		if err != nil {
+			return err
+		}
+		rewritten[i] = id + ":" + path
 	}
 	cmdArgs := append([]string{"cp"}, rewritten...)
 	binary, cmdArgs := engineCommand(engine, cmdArgs...)

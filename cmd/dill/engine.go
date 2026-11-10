@@ -2,8 +2,10 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"os"
 
+	"github.com/umayr/dill/internal/config"
 	"github.com/umayr/dill/internal/log"
 	"github.com/umayr/dill/internal/orchestrator"
 )
@@ -32,6 +34,20 @@ func newPodmanEngine(ctx context.Context) (orchestrator.Engine, error) {
 	}
 	logger.Debug("connecting to podman", "socket", socket)
 	return orchestrator.NewPodmanEngine(ctx, socket)
+}
+
+// ownedServiceID resolves the configured name, verifies labels, and binds the
+// subprocess to the inspected immutable ID rather than a reusable name.
+func ownedServiceID(ctx context.Context, engine orchestrator.Engine, stack, service string, svc *config.Service) (string, error) {
+	name := serviceContainerName(stack, service, svc)
+	id, err := orchestrator.OwnedID(ctx, engine, name, stack, service)
+	if err != nil {
+		return "", err
+	}
+	if id == "" {
+		return "", fmt.Errorf("service %q: %w: %s", service, orchestrator.ErrNotFound, name)
+	}
+	return id, nil
 }
 
 // engineCommand pins subprocesses to the endpoint used by the SDK. Global

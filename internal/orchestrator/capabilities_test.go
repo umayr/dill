@@ -51,7 +51,11 @@ func TestCapabilityRejections(t *testing.T) {
 
 func TestNormalizeLogSince(t *testing.T) {
 	before := time.Now().Add(-time.Hour)
-	got, err := time.Parse(time.RFC3339Nano, normalizeLogSince("1h"))
+	value, err := normalizeLogSince("1h")
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := time.Parse(time.RFC3339Nano, value)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -59,8 +63,9 @@ func TestNormalizeLogSince(t *testing.T) {
 		t.Fatalf("unexpected timestamp %s", got)
 	}
 	for _, s := range []string{"", "1700000000", "2024-01-01T00:00:00Z"} {
-		if normalizeLogSince(s) != s {
-			t.Fatal(s)
+		got, err := normalizeLogSince(s)
+		if err != nil || got != s {
+			t.Fatal(s, got, err)
 		}
 	}
 }
