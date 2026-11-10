@@ -229,6 +229,11 @@ func (g *Graph) Run(ctx context.Context, engine orchestrator.Engine, stackName s
 				if err != nil {
 					return fmt.Errorf("service %q readiness check: %w", n.name, err)
 				}
+				// A readiness response can race cancellation, including when an
+				// engine returns success after the request was canceled.
+				if err := egCtx.Err(); err != nil {
+					return fmt.Errorf("service %q readiness check: %w", n.name, err)
+				}
 				if ready {
 					emit("ready")
 					close(n.done)

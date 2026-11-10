@@ -68,6 +68,53 @@ func (e *cancellationEngine) checkCleanupContext(ctx context.Context) {
 	}
 }
 
+type cancelReadyEngine struct {
+	orchestrator.Engine
+	cancel     context.CancelFunc
+	cleanupErr error
+	removed    []string
+}
+
+func (e *cancelReadyEngine) EnsureNetwork(context.Context, string) error { return nil }
+func (e *cancelReadyEngine) StartService(context.Context, string, *config.Service, string) (string, error) {
+	return "created-immutable-id", nil
+}
+func (e *cancelReadyEngine) IsReady(context.Context, string, bool) (bool, error) {
+	e.cancel()
+	return true, nil
+}
+func (e *cancelReadyEngine) StopService(ctx context.Context, id string) error {
+	if ctx.Err() != nil {
+		return ctx.Err()
+	}
+	if _, ok := ctx.Deadline(); !ok {
+		return errors.New("cleanup deadline missing")
+	}
+	return nil
+}
+func (e *cancelReadyEngine) RemoveService(ctx context.Context, id string) error {
+	e.removed = append(e.removed, id)
+	return e.cleanupErr
+}
+
+func TestRunCancellationRacingReadinessPreservesCleanupFailure(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	cleanupErr := errors.New("remove denied")
+	e := &cancelReadyEngine{cancel: cancel, cleanupErr: cleanupErr}
+	g, err := Build(map[string]*config.Service{"web": {PullPolicy: "never"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	err = g.Run(ctx, e, "stack", time.Second, nil, nil, func(string) PullSink { return discardSink{io.Discard} })
+	if !errors.Is(err, context.Canceled) || !errors.Is(err, cleanupErr) {
+		t.Fatalf("lost cancellation or cleanup failure: %v", err)
+	}
+	if len(e.removed) != 1 || e.removed[0] != "created-immutable-id" {
+		t.Fatalf("cleanup targeted %v", e.removed)
+	}
+}
+
 func TestRunCancellationAndIndependentRollback(t *testing.T) {
 	for _, mode := range []string{"timeout", "parent cancellation", "sibling failure"} {
 		t.Run(mode, func(t *testing.T) {
