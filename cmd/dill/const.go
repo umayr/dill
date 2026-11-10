@@ -21,6 +21,7 @@ const (
 	cmdVersion  = "version"
 	cmdStatus   = "status"
 	cmdDoctor   = "doctor"
+	cmdCaps     = "caps"
 	cmdDiff     = "diff"
 	cmdStacks   = "stacks"
 	cmdLs       = "ls"

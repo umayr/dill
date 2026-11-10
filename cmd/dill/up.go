@@ -77,6 +77,10 @@ func runUpConfig(ctx context.Context, opts commandOptions, cfg *config.DillConfi
 		}
 	}
 
+	if err := orchestrator.ValidateCapabilities(cfg.Engine, selected); err != nil {
+		return fmt.Errorf("capability preflight: %w", err)
+	}
+
 	g, err := dag.Build(selected)
 	if err != nil {
 		return fmt.Errorf("building dependency graph: %w", err)

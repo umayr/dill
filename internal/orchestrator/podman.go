@@ -33,7 +33,8 @@ func podmanNotFound(err error) bool {
 }
 
 type PodmanEngine struct {
-	conn context.Context
+	conn   context.Context
+	socket string
 }
 
 func NewPodmanEngine(ctx context.Context, socket string) (*PodmanEngine, error) {
@@ -43,7 +44,7 @@ func NewPodmanEngine(ctx context.Context, socket string) (*PodmanEngine, error) 
 	}
 	// Keep connection values, but do not tie later cleanup to this context's
 	// lifetime. Each request gets cancellation and deadlines from its caller.
-	return &PodmanEngine{conn: context.WithoutCancel(conn)}, nil
+	return &PodmanEngine{conn: context.WithoutCancel(conn), socket: socket}, nil
 }
 
 // podmanOperationContext supplies SDK connection values without replacing the
@@ -105,6 +106,9 @@ func (p *PodmanEngine) LocalImageID(ctx context.Context, img string) (string, er
 }
 
 func (p *PodmanEngine) StartService(ctx context.Context, name string, svc *config.Service, stackName string) (string, error) {
+	if err := ValidateCapabilities("podman", map[string]*config.Service{name: svc}); err != nil {
+		return "", err
+	}
 	logger.Debug("starting service", "service", name, "image", svc.Image)
 
 	ports, err := config.NormalizePorts(svc.Ports)
@@ -204,18 +208,6 @@ func (p *PodmanEngine) StartService(ctx context.Context, name string, svc *confi
 		s.Init = svc.Init
 	}
 	s.CapAdd = svc.CapAdd
-	if len(svc.Devices) > 0 {
-		logger.Warn("device mapping in Podman requires host device lookup; devices will be passed as-is",
-			"service", name)
-		for _, d := range svc.Devices {
-			parts := strings.SplitN(d, ":", 2)
-			dev := specs.LinuxDevice{Path: parts[0]}
-			if len(parts) == 2 {
-				dev.Path = parts[1]
-			}
-			s.Devices = append(s.Devices, dev)
-		}
-	}
 	linuxRes := &specs.LinuxResources{}
 	hasResources := false
 	if resources.Memory != 0 || resources.MemoryReservation != 0 {
@@ -399,7 +391,7 @@ func (p *PodmanEngine) ListStacks(ctx context.Context) ([]StackStatus, error) {
 
 func (p *PodmanEngine) StartExisting(ctx context.Context, name string) error {
 	err := containers.Start(p.operationContext(ctx), name, nil)
-	if err != nil && strings.Contains(err.Error(), "no such container") {
+	if err != nil && podmanNotFound(err) {
 		return fmt.Errorf("%w: %s", ErrNotFound, name)
 	}
 	return err
@@ -408,7 +400,7 @@ func (p *PodmanEngine) StartExisting(ctx context.Context, name string) error {
 func (p *PodmanEngine) ServiceStatus(ctx context.Context, name string) (*ContainerStatus, error) {
 	data, err := containers.Inspect(p.operationContext(ctx), name, nil)
 	if err != nil {
-		if strings.Contains(err.Error(), "no such container") {
+		if podmanNotFound(err) {
 			return nil, fmt.Errorf("%w: %s", ErrNotFound, name)
 		}
 		return nil, err
@@ -425,10 +417,13 @@ func (p *PodmanEngine) ServiceStatus(ctx context.Context, name string) (*Contain
 	if data.NetworkSettings != nil {
 		for portProto, binds := range data.NetworkSettings.Ports {
 			for _, b := range binds {
-				ports = append(ports, fmt.Sprintf("%s:%s->%s", b.HostIP, b.HostPort, portProto))
+				if b.HostPort != "" && b.HostPort != "0" {
+					ports = append(ports, fmt.Sprintf("%s:%s->%s", b.HostIP, b.HostPort, portProto))
+				}
 			}
 		}
 	}
+	sort.Strings(ports)
 	return &ContainerStatus{
 		Name:   strings.TrimPrefix(data.Name, "/"),
 		ID:     id,
@@ -440,6 +435,10 @@ func (p *PodmanEngine) ServiceStatus(ctx context.Context, name string) (*Contain
 }
 
 func (p *PodmanEngine) Logs(ctx context.Context, name string, logOpts LogOptions, w io.Writer) error {
+	since, err := normalizeLogSince(logOpts.Since)
+	if err != nil {
+		return err
+	}
 	tailStr := "all"
 	if logOpts.Tail > 0 {
 		tailStr = strconv.Itoa(logOpts.Tail)
@@ -450,7 +449,7 @@ func (p *PodmanEngine) Logs(ctx context.Context, name string, logOpts LogOptions
 		WithStdout(true).
 		WithStderr(true)
 	if logOpts.Since != "" {
-		opts.WithSince(logOpts.Since)
+		opts.WithSince(since)
 	}
 	if logOpts.Timestamps {
 		opts.WithTimestamps(true)
@@ -460,21 +459,20 @@ func (p *PodmanEngine) Logs(ctx context.Context, name string, logOpts LogOptions
 	stderrCh := make(chan string, 64)
 
 	var wg sync.WaitGroup
+	var writeMu sync.Mutex
 	wg.Add(2)
-	go func() {
+	writeLines := func(ch <-chan string) {
 		defer wg.Done()
-		for line := range stdoutCh {
+		for line := range ch {
+			writeMu.Lock()
 			fmt.Fprint(w, line)
+			writeMu.Unlock()
 		}
-	}()
-	go func() {
-		defer wg.Done()
-		for line := range stderrCh {
-			fmt.Fprint(w, line)
-		}
-	}()
+	}
+	go writeLines(stdoutCh)
+	go writeLines(stderrCh)
 
-	err := containers.Logs(p.operationContext(ctx), name, opts, stdoutCh, stderrCh)
+	err = containers.Logs(p.operationContext(ctx), name, opts, stdoutCh, stderrCh)
 	close(stdoutCh)
 	close(stderrCh)
 	wg.Wait()
@@ -487,7 +485,7 @@ func (p *PodmanEngine) Logs(ctx context.Context, name string, logOpts LogOptions
 func (p *PodmanEngine) InspectConfig(ctx context.Context, name string) (*LiveConfig, error) {
 	data, err := containers.Inspect(p.operationContext(ctx), name, nil)
 	if err != nil {
-		if strings.Contains(err.Error(), "no such container") {
+		if podmanNotFound(err) {
 			return nil, fmt.Errorf("%w: %s", ErrNotFound, name)
 		}
 		return nil, err
@@ -564,7 +562,9 @@ func (p *PodmanEngine) InspectConfig(ctx context.Context, name string) (*LiveCon
 	cpuset := ""
 	init := false
 	if data.HostConfig != nil {
-		restartPolicy = data.HostConfig.RestartPolicy.Name
+		if data.HostConfig.RestartPolicy != nil {
+			restartPolicy = data.HostConfig.RestartPolicy.Name
+		}
 		networkMode = data.HostConfig.NetworkMode
 		capAdd = data.HostConfig.CapAdd
 		cpuset = data.HostConfig.CpusetCpus
@@ -738,6 +738,9 @@ func (p *PodmanEngine) RemoveVolume(ctx context.Context, name, stackName string,
 	}
 	return nil
 }
+
+// CLIEndpoint is the exact endpoint used by this adapter.
+func (p *PodmanEngine) CLIEndpoint() string { return p.socket }
 
 func (p *PodmanEngine) Close() error { return nil }
 

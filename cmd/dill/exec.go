@@ -2,15 +2,12 @@ package main
 
 import (
 	"context"
-	"errors"
 	"flag"
 	"fmt"
 	"os"
 	"os/exec"
 
 	"golang.org/x/term"
-
-	"github.com/umayr/dill/internal/orchestrator"
 )
 
 func runExec(ctx context.Context, opts commandOptions, args []string) error {
@@ -43,21 +40,17 @@ func runExec(ctx context.Context, opts commandOptions, args []string) error {
 	}
 	defer engine.Close()
 
-	// Resolve container name: try bare name first, fall back to stack-prefixed.
-	containerName := svc
-	if _, err := engine.ServiceStatus(ctx, svc); err != nil {
-		if !errors.Is(err, orchestrator.ErrNotFound) {
-			return fmt.Errorf("looking up service %q: %w", svc, err)
-		}
-		containerName = serviceContainerName(sn, svc, cfg.Services[svc])
+	containerID, err := ownedServiceID(ctx, engine, sn, svc, cfg.Services[svc])
+	if err != nil {
+		return err
 	}
 
-	binary := engineBinary(engine)
 	flags := []string{"exec", "-i"}
 	if term.IsTerminal(int(os.Stdin.Fd())) {
 		flags = append(flags, "-t")
 	}
-	execArgs := append(append(flags, containerName), cmdArgs...)
+	execArgs := append(append(flags, containerID), cmdArgs...)
+	binary, execArgs := engineCommand(engine, execArgs...)
 	c := exec.CommandContext(ctx, binary, execArgs...)
 	c.Stdin = os.Stdin
 	c.Stdout = os.Stdout

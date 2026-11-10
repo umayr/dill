@@ -521,6 +521,7 @@ func (d *DockerEngine) ServiceStatus(ctx context.Context, name string) (*Contain
 			ports = append(ports, fmt.Sprintf("%s:%d->%d/%s", p.IP, p.PublicPort, p.PrivatePort, p.Type))
 		}
 	}
+	sort.Strings(ports)
 	cname := name
 	if len(c.Names) > 0 {
 		cname = strings.TrimPrefix(c.Names[0], "/")
@@ -536,6 +537,10 @@ func (d *DockerEngine) ServiceStatus(ctx context.Context, name string) (*Contain
 }
 
 func (d *DockerEngine) Logs(ctx context.Context, name string, opts LogOptions, w io.Writer) error {
+	since, err := normalizeLogSince(opts.Since)
+	if err != nil {
+		return err
+	}
 	tailStr := "all"
 	if opts.Tail > 0 {
 		tailStr = strconv.Itoa(opts.Tail)
@@ -545,7 +550,7 @@ func (d *DockerEngine) Logs(ctx context.Context, name string, opts LogOptions, w
 		ShowStderr: true,
 		Follow:     opts.Follow,
 		Tail:       tailStr,
-		Since:      opts.Since,
+		Since:      since,
 		Timestamps: opts.Timestamps,
 	})
 	if err != nil {
@@ -671,6 +676,9 @@ func (d *DockerEngine) RemoveVolume(ctx context.Context, name, stackName string,
 	}
 	return nil
 }
+
+// CLIEndpoint is the exact endpoint used by this adapter.
+func (d *DockerEngine) CLIEndpoint() string { return d.cli.DaemonHost() }
 
 func (d *DockerEngine) Close() error { return d.cli.Close() }
 
