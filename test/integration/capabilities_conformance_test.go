@@ -17,7 +17,7 @@ func TestConformanceCapabilitiesPreflight(t *testing.T) {
 	env := integrationEnv(t)
 	root := repoRoot(t)
 	bin := dillBinary(t, root)
-	out := runDill(t, true, bin, "--engine", env.engine, "capabilities")
+	out := runDill(t, true, bin, "--engine", env.engine, "caps")
 	var caps struct {
 		Engine      string   `json:"engine"`
 		Devices     bool     `json:"devices"`
