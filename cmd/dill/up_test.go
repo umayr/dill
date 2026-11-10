@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"io"
 	"reflect"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -20,6 +21,31 @@ type noopPullSink struct{}
 func (noopPullSink) Write(p []byte) (int, error) { return len(p), nil }
 func (noopPullSink) Begin()                      {}
 func (noopPullSink) Done()                       {}
+
+func TestUpCapabilityRejectionBeforeEngineOpen(t *testing.T) {
+	cases := []struct {
+		name    string
+		service *config.Service
+		want    string
+	}{
+		{"device", &config.Service{Image: "image", PullPolicy: "always", Devices: []string{"/dev/a"}}, "device"},
+		{"network", &config.Service{Image: "image", PullPolicy: "always", NetworkMode: "container:other"}, "network mode"},
+		{"port", &config.Service{Image: "image", PullPolicy: "always", Ports: []json.RawMessage{json.RawMessage(`"80"`)}}, "unpublished port"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			opened := false
+			cfg := &config.DillConfig{Engine: "podman", Name: "stack", Services: map[string]*config.Service{"app": tc.service}}
+			err := runUpConfig(context.Background(), commandOptions{}, cfg, nil, false, "", func(context.Context, *config.DillConfig) (orchestrator.Engine, error) {
+				opened = true
+				return newFakeEngine(), nil
+			})
+			if err == nil || !strings.Contains(err.Error(), tc.want) || opened {
+				t.Fatalf("error=%v opened=%v", err, opened)
+			}
+		})
+	}
+}
 
 func TestPullAlwaysImages(t *testing.T) {
 	fake := newFakeEngine()
