@@ -24,7 +24,7 @@ See [schema release and migration notes](docs/schema-release.md).
 
 ## Usage
 
-By default, Dill uses the Podman socket. You can switch to Docker by setting `engine = "docker"` in your configuration.
+By default, Dill uses the Podman socket. You can switch to Docker by setting `engine = "docker"` in your configuration. Run `dill capabilities --engine podman` for known adapter limits; see the [capability matrix](docs/capabilities.md) for migration notes and verification gaps.
 
 ```
 dill [flags] [command]
@@ -47,6 +47,7 @@ Commands:
   diff      Show desired vs live changes
   stacks    List dill-managed stacks (alias: ls)
   doctor    Check local dill, Pkl, and engine readiness
+  capabilities  Show known adapter limitations as JSON
   rm        Remove stopped containers in the stack
   wait      Wait for services to become ready
   port      Print published ports for a service

@@ -34,6 +34,20 @@ func newPodmanEngine(ctx context.Context) (orchestrator.Engine, error) {
 	return orchestrator.NewPodmanEngine(ctx, socket)
 }
 
+// engineCommand pins subprocesses to the endpoint used by the SDK. Global
+// flags precede the subcommand and override separately selected CLI contexts.
+func engineCommand(e orchestrator.Engine, args ...string) (string, []string) {
+	binary := engineBinary(e)
+	if target, ok := e.(interface{ CLIEndpoint() string }); ok && target.CLIEndpoint() != "" {
+		flag := "--url"
+		if binary == "docker" {
+			flag = "--host"
+		}
+		args = append([]string{flag, target.CLIEndpoint()}, args...)
+	}
+	return binary, args
+}
+
 func engineBinary(e orchestrator.Engine) string {
 	switch e.(type) {
 	case *orchestrator.DockerEngine:
