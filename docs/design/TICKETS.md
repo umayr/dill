@@ -2,6 +2,28 @@
 
 This is the coordinated backlog for the [roadmap](../../ROADMAP.md). Issues describe planned work, not shipped features. Dependency links are sequencing constraints; phases are approximate and do not authorize bypassing dependencies. Existing Dill issues were revised rather than duplicated.
 
+## #19 staged dependency gate
+
+The operator-approved **`protocol-foundation-1`** gate is defined in the
+[protocol foundation contract](protocol-contract-19-proposal.md). **It is not
+implemented, shipped or passed.** Implementation waits for main-orchestrator
+verification of #31/#32 and explicit release; passage then requires reviewed,
+tested discovery/check/codec behavior.
+
+For downstream **contract work**, the #19 prerequisite links below may be
+satisfied by that named foundation gate rather than full #19 closure. This
+allows #38/#16 and subsequent #10 contracts to establish reference-safe IR,
+semantic hashes and late secret resolution without waiting for #19 to provide
+those dependent features first. All other prerequisites remain in force.
+
+Foundation passage does not authorize artifact export/apply, target/provider
+access, managed mutation or durable control. Each runtime capability still needs
+its own safety contracts and verification. **#19 remains OPEN** until full
+secret-safe artifacts, Pkl-free semantic validation/application, target checks,
+runtime outcomes and Brine integration acceptance are met. In particular,
+Brine's managed mutations still require #47/#42 and the applicable runtime
+capabilities; protocol codec fixtures alone are not integration evidence.
+
 ## This repository
 
 | Ticket | Phase | Prerequisites |
