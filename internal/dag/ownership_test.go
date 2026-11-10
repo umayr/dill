@@ -5,6 +5,7 @@ import (
 	"errors"
 	"io"
 	"reflect"
+	"strings"
 	"testing"
 	"time"
 
@@ -17,6 +18,8 @@ type ownershipEngine struct {
 	live       *orchestrator.LiveConfig
 	inspectErr error
 	readyErr   error
+	startErr   error
+	readyCalls int
 	started    []string
 	stopped    []string
 	removed    []string
@@ -29,7 +32,7 @@ func (e *ownershipEngine) InspectConfig(context.Context, string) (*orchestrator.
 }
 func (e *ownershipEngine) StartExisting(_ context.Context, id string) error {
 	e.started = append(e.started, id)
-	return nil
+	return e.startErr
 }
 func (e *ownershipEngine) StopService(_ context.Context, id string) error {
 	e.stopped = append(e.stopped, id)
@@ -44,6 +47,7 @@ func (e *ownershipEngine) StartService(context.Context, string, *config.Service,
 	return "new-container-id", nil
 }
 func (e *ownershipEngine) IsReady(context.Context, string, bool) (bool, error) {
+	e.readyCalls++
 	return e.readyErr == nil, e.readyErr
 }
 
@@ -98,15 +102,33 @@ func TestRunMutatesOwnedContainerByID(t *testing.T) {
 
 func TestRunInspectionFailureDoesNotMutate(t *testing.T) {
 	for _, engine := range []*ownershipEngine{
+		{}, // A nil live config must fail ownership checks without mutation or panic.
 		{inspectErr: orchestrator.ErrNotFound},
 		{inspectErr: errors.New("engine unavailable")},
 		{live: &orchestrator.LiveConfig{SystemLabels: map[string]string{"dill.managed": "true", "dill.stack": "app", "dill.service": "web"}}},
 	} {
-		if err := runOwnershipGraph(t, engine, ActionRecreate); err == nil {
-			t.Fatal("expected inspect/ID error")
+		for _, action := range []Action{ActionNoop, ActionStart, ActionRecreate} {
+			if err := runOwnershipGraph(t, engine, action); err == nil {
+				t.Fatalf("action %v: expected inspect/ID error", action)
+			}
+			if len(engine.started)+len(engine.stopped)+len(engine.removed)+engine.created != 0 {
+				t.Fatalf("mutated after failed inspection: %+v", engine)
+			}
 		}
-		if len(engine.started)+len(engine.stopped)+len(engine.removed)+engine.created != 0 {
-			t.Fatalf("mutated after failed inspection: %+v", engine)
+	}
+}
+
+func TestRunStartExistingFailureDoesNotReachReadiness(t *testing.T) {
+	for _, action := range []Action{ActionNoop, ActionStart} {
+		for _, cause := range []error{errors.New("permission denied"), errors.New("transport failure"), orchestrator.ErrNotFound} {
+			engine := &ownershipEngine{startErr: cause, live: &orchestrator.LiveConfig{ID: "owned-id", SystemLabels: map[string]string{"dill.managed": "true", "dill.stack": "app", "dill.service": "web"}}}
+			err := runOwnershipGraph(t, engine, action)
+			if !errors.Is(err, cause) || !strings.Contains(err.Error(), "web") || !strings.Contains(err.Error(), "owned-id") {
+				t.Fatalf("action %v: lost failure or identity: %v", action, err)
+			}
+			if engine.readyCalls != 0 || !reflect.DeepEqual(engine.started, []string{"owned-id"}) {
+				t.Fatalf("action %v: readiness=%d started=%v", action, engine.readyCalls, engine.started)
+			}
 		}
 	}
 }

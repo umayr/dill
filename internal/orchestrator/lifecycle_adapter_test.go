@@ -212,6 +212,48 @@ func TestDockerCanceledStartCleanupUsesCreatedID(t *testing.T) {
 	}
 }
 
+func TestCanceledCreateReportsUnknownOutcomeWithoutNameCleanup(t *testing.T) {
+	for _, adapter := range []string{"docker", "podman"} {
+		t.Run(adapter, func(t *testing.T) {
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			var deletes []string
+			transport := contextTransport(func(r *http.Request) (*http.Response, error) {
+				if r.Method == http.MethodDelete {
+					deletes = append(deletes, r.URL.Path)
+					return contextResponse(r, 204, ""), nil
+				}
+				if strings.HasSuffix(r.URL.Path, "/containers/create") {
+					cancel()
+					return nil, context.Canceled
+				}
+				t.Fatalf("unexpected request %s %s", r.Method, r.URL.Path)
+				return nil, nil
+			})
+			var engine Engine
+			if adapter == "docker" {
+				cli, err := client.NewClientWithOpts(client.WithHost("http://localhost"), client.WithVersion("1.44"), client.WithHTTPClient(&http.Client{Transport: transport}))
+				if err != nil {
+					t.Fatal(err)
+				}
+				defer cli.Close()
+				engine = &DockerEngine{cli: cli}
+			} else {
+				p, conn := newContextTestEngine(t, context.Background())
+				conn.Client.Transport = transport
+				engine = p
+			}
+			_, err := engine.StartService(ctx, "web", &config.Service{Image: "busybox"}, "stack")
+			if !errors.Is(err, context.Canceled) || !strings.Contains(err.Error(), "unknown") || !strings.Contains(err.Error(), "stack_web") {
+				t.Fatalf("create outcome not reported: %v", err)
+			}
+			if len(deletes) != 0 {
+				t.Fatalf("unsafe deletion without created ID: %v", deletes)
+			}
+		})
+	}
+}
+
 func TestResourceErrorUnwrap(t *testing.T) {
 	x := errors.New("failure")
 	err := &ResourceError{Operation: "remove", Resource: "x", ID: "id", Err: x}
