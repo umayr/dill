@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 
@@ -45,6 +46,64 @@ func TestAdapterMissingInspect(t *testing.T) {
 	}
 	if _, err := d.ServiceStatus(context.Background(), "missing"); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("docker status missing: %v", err)
+	}
+}
+
+func TestAdapterStartExistingWireResponses(t *testing.T) {
+	transportFailure := errors.New("injected transport failure")
+	for _, adapter := range []string{"docker", "podman"} {
+		for _, tc := range []struct {
+			name         string
+			status       int
+			transportErr error
+			wantErr      bool
+		}{
+			{"started", http.StatusNoContent, nil, false},
+			{"already running", http.StatusNotModified, nil, false},
+			{"permission denied", http.StatusForbidden, nil, true},
+			{"conflict", http.StatusConflict, nil, true},
+			{"server failure", http.StatusInternalServerError, nil, true},
+			{"transport failure", 0, transportFailure, true},
+		} {
+			t.Run(adapter+"/"+tc.name, func(t *testing.T) {
+				var paths []string
+				transport := contextTransport(func(r *http.Request) (*http.Response, error) {
+					paths = append(paths, r.Method+" "+r.URL.Path)
+					if tc.transportErr != nil {
+						return nil, tc.transportErr
+					}
+					return contextResponse(r, tc.status, `{"message":"injected failure","response":`+strconv.Itoa(tc.status)+`}`), nil
+				})
+				var engine Engine
+				if adapter == "docker" {
+					cli, err := client.NewClientWithOpts(client.WithHost("http://localhost"), client.WithVersion("1.43"), client.WithHTTPClient(&http.Client{Transport: transport}))
+					if err != nil {
+						t.Fatal(err)
+					}
+					defer cli.Close()
+					engine = &DockerEngine{cli: cli}
+				} else {
+					p, conn := newContextTestEngine(t, context.Background())
+					conn.Client.Transport = transport
+					engine = p
+				}
+				err := engine.StartExisting(context.Background(), "immutable-id")
+				if (err != nil) != tc.wantErr {
+					t.Fatalf("error = %v", err)
+				}
+				if tc.transportErr != nil && !errors.Is(err, tc.transportErr) {
+					t.Fatalf("lost transport cause: %v", err)
+				}
+				if len(paths) == 0 {
+					t.Fatal("no start request")
+				}
+				for _, path := range paths {
+					if !strings.HasSuffix(path, "/containers/immutable-id/start") {
+						t.Fatalf("unsafe request %v", paths)
+					}
+				}
+			})
+		}
 	}
 }
 

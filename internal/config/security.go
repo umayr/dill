@@ -48,6 +48,9 @@ func ValidateRuntime(cfg *DillConfig) error {
 			return fmt.Errorf("service %q: %w", name, err)
 		}
 		if svc.HealthCheck != nil {
+			if svc.HealthCheck.Retries != nil && *svc.HealthCheck.Retries < 0 {
+				return fmt.Errorf("service %q healthcheck retries: must be non-negative", name)
+			}
 			for _, field := range []struct {
 				name string
 				raw  *json.RawMessage

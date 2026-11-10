@@ -45,6 +45,55 @@ func (f *failingLifecycleEngine) RemoveImage(_ context.Context, id string, _ boo
 	f.calls = append(f.calls, "image "+id)
 	return f.failure
 }
+
+type distinctLifecycleFailures struct {
+	*failingLifecycleEngine
+	stopErr, removeErr, networkErr, volumeErr, imageErr error
+}
+
+func (f *distinctLifecycleFailures) StopService(_ context.Context, id string) error {
+	f.calls = append(f.calls, "stop "+id)
+	return f.stopErr
+}
+func (f *distinctLifecycleFailures) RemoveService(_ context.Context, id string) error {
+	f.calls = append(f.calls, "remove "+id)
+	return f.removeErr
+}
+func (f *distinctLifecycleFailures) RemoveNetwork(_ context.Context, id string) error {
+	f.calls = append(f.calls, "network "+id)
+	return f.networkErr
+}
+func (f *distinctLifecycleFailures) RemoveVolume(_ context.Context, id, stack string, _ bool) error {
+	f.calls = append(f.calls, "volume "+id)
+	return f.volumeErr
+}
+func (f *distinctLifecycleFailures) RemoveImage(_ context.Context, id string, _ bool) error {
+	f.calls = append(f.calls, "image "+id)
+	return f.imageErr
+}
+
+func TestTeardownAggregatesDistinctFailuresAndContinues(t *testing.T) {
+	f := &distinctLifecycleFailures{
+		failingLifecycleEngine: &failingLifecycleEngine{fakeEngine: newFakeEngine()},
+		stopErr:                errors.New("stop denied"), removeErr: errors.New("remove denied"),
+		networkErr: errors.New("network denied"), volumeErr: errors.New("volume denied"), imageErr: errors.New("image denied"),
+	}
+	f.statuses["app_web"] = &orchestrator.ContainerStatus{Name: "app_web", State: "exited"}
+	withTestRuntime(t, f, testConfig(), func() {
+		err := runTeardown(context.Background(), commandOptions{ConfigFile: "compose.pkl", Yes: true, Quiet: true}, nil)
+		for _, cause := range []error{f.stopErr, f.removeErr, f.networkErr, f.volumeErr, f.imageErr} {
+			if !errors.Is(err, cause) {
+				t.Errorf("missing %v: %v", cause, err)
+			}
+		}
+		for _, identity := range []string{"app_web", "app", "vol", "busybox-id"} {
+			if err == nil || !strings.Contains(err.Error(), identity) {
+				t.Errorf("missing identity %q: %v", identity, err)
+			}
+		}
+	})
+}
+
 func TestTeardownVolumePromptAndDryRun(t *testing.T) {
 	for _, dry := range []bool{false, true} {
 		t.Run(fmt.Sprintf("dry=%t", dry), func(t *testing.T) {

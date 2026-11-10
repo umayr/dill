@@ -75,19 +75,25 @@ var rawMessageType = reflect.TypeOf(json.RawMessage{})
 // Maps intentionally accept arbitrary keys. Raw union values are checked by
 // their respective normalizers after decoding.
 func decodeStrict(data []byte, out any) error {
-	var check func(json.RawMessage, reflect.Type, string) error
-	check = func(raw json.RawMessage, t reflect.Type, path string) error {
+	var check func(json.RawMessage, reflect.Type, string, bool) error
+	check = func(raw json.RawMessage, t reflect.Type, path string, nullable bool) error {
+		if bytes.Equal(bytes.TrimSpace(raw), []byte("null")) {
+			if nullable {
+				return nil
+			}
+			return fmt.Errorf("%s: null is not allowed", path)
+		}
 		for t.Kind() == reflect.Pointer {
 			t = t.Elem()
 		}
-		if t == rawMessageType || bytes.Equal(bytes.TrimSpace(raw), []byte("null")) {
+		if t == rawMessageType {
 			return nil
 		}
 		switch t.Kind() {
 		case reflect.Struct:
 			var fields map[string]json.RawMessage
 			if err := json.Unmarshal(raw, &fields); err != nil {
-				return err
+				return fmt.Errorf("%s: %w", path, err)
 			}
 			allowed := map[string]reflect.Type{}
 			for i := 0; i < t.NumField(); i++ {
@@ -97,34 +103,40 @@ func decodeStrict(data []byte, out any) error {
 					allowed[name] = f.Type
 				}
 			}
-			for name, value := range fields {
+			names := sortedJSONKeys(fields)
+			for _, name := range names {
+				value := fields[name]
 				ft, ok := allowed[name]
 				if !ok {
 					return fmt.Errorf("%s: unknown property %q", path, name)
 				}
-				if err := check(value, ft, path+"."+name); err != nil {
+				if err := check(value, ft, path+"."+name, nullableSchemaField(t, name)); err != nil {
 					return err
 				}
 			}
 		case reflect.Map:
 			var fields map[string]json.RawMessage
 			if err := json.Unmarshal(raw, &fields); err != nil {
-				return err
+				return fmt.Errorf("%s: %w", path, err)
 			}
-			for name, value := range fields {
-				if err := check(value, t.Elem(), path+"["+fmt.Sprintf("%q", name)+"]"); err != nil {
+			for _, name := range sortedJSONKeys(fields) {
+				if err := check(fields[name], t.Elem(), path+"["+fmt.Sprintf("%q", name)+"]", false); err != nil {
 					return err
 				}
 			}
 		case reflect.Slice:
 			var values []json.RawMessage
 			if err := json.Unmarshal(raw, &values); err != nil {
-				return err
+				return fmt.Errorf("%s: %w", path, err)
 			}
 			for i, value := range values {
-				if err := check(value, t.Elem(), fmt.Sprintf("%s[%d]", path, i)); err != nil {
+				if err := check(value, t.Elem(), fmt.Sprintf("%s[%d]", path, i), false); err != nil {
 					return err
 				}
+			}
+		default:
+			if err := json.Unmarshal(raw, reflect.New(t).Interface()); err != nil {
+				return fmt.Errorf("%s: %w", path, err)
 			}
 		}
 		return nil
@@ -133,7 +145,7 @@ func decodeStrict(data []byte, out any) error {
 	if t == nil || t.Kind() != reflect.Pointer {
 		return fmt.Errorf("decode destination must be a pointer")
 	}
-	if err := check(data, t.Elem(), "config"); err != nil {
+	if err := check(data, t.Elem(), "config", false); err != nil {
 		return err
 	}
 	return json.Unmarshal(data, out)

@@ -61,8 +61,8 @@ validation; `DILL_PKL_PATH` selects an operator-managed runtime binary.
 Deployment flow: `loader` (resolve Pkl) → `config` (evaluate, parse, validate) →
 `plan` (diff vs live) → `dag` (dependency-ordered execution) → `orchestrator`
 (engine operations). `up` checks ownership before pulling `always` images, then
-recomputes the plan after those pulls. It still removes orphans before graph
-validation; do not assume preflight is mutation-free until #29 is fixed.
+recomputes the plan after those pulls. Declared dependency graph validation
+runs before engine access and orphan removal; other preflight gaps remain (#32).
 
 ## Conventions
 
