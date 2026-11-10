@@ -45,6 +45,13 @@ func runValidate(ctx context.Context, opts commandOptions, args []string) (retEr
 	addFileFlag(fs, &opts)
 	format := fs.String("format", "text", "output format: text or json")
 	stdin := fs.Bool("stdin", false, "read config from stdin instead of file")
+	defer func() {
+		if *format == "json" && retErr != nil {
+			if err := json.NewEncoder(os.Stdout).Encode(map[string]any{"valid": false, "error": retErr.Error(), "kind": failureKind(retErr)}); err != nil {
+				retErr = fmt.Errorf("rendering failure: %w", err)
+			}
+		}
+	}()
 	if err := fs.Parse(args); err != nil {
 		return usageError{err.Error()}
 	}
@@ -54,14 +61,6 @@ func runValidate(ctx context.Context, opts commandOptions, args []string) (retEr
 	if err := ensureNoArgs(fs.Args(), "validate"); err != nil {
 		return err
 	}
-
-	defer func() {
-		if *format == "json" && retErr != nil {
-			if err := json.NewEncoder(os.Stdout).Encode(map[string]any{"valid": false, "error": retErr.Error(), "kind": failureKind(retErr)}); err != nil {
-				retErr = fmt.Errorf("rendering failure: %w", err)
-			}
-		}
-	}()
 
 	target := opts.ConfigFile
 	if *stdin {
