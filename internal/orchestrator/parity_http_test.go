@@ -97,6 +97,7 @@ func TestAdapterLogSinceWire(t *testing.T) {
 		relative bool
 	}{
 		{"1h", time.Hour, true}, {"0s", 0, true}, {"-1h", -time.Hour, true},
+		{"0", 0, false}, {"0.0", 0, false}, {"0.000", 0, false}, {"0.5", 0, false}, {"2024-01-01", 0, false}, {"2024-01-01T03:00:00+03:00", 0, false},
 		{"2024-01-01T00:00:00Z", 0, false}, {"1700000000", 0, false}, {"invalid-value", 0, false},
 	} {
 		t.Run(tc.input, func(t *testing.T) {
@@ -133,7 +134,11 @@ func TestAdapterLogSinceWire(t *testing.T) {
 					if err != nil {
 						t.Fatal(err)
 					}
-					if wire != want {
+					wantSeconds, err := strconv.ParseFloat(want, 64)
+					if err != nil {
+						t.Fatal(err)
+					}
+					if seconds != wantSeconds {
 						t.Fatalf("%s: got %q want %q", adapter.name, wire, want)
 					}
 					continue

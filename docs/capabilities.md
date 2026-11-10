@@ -32,11 +32,14 @@ installed and able to use the selected URL. Each command inspects the configured
 container name, verifies stack/service ownership, and uses the immutable ID;
 missing or foreign containers fail without launching the command. Relative
 `logs --since` durations are converted to an absolute UTC timestamp before either
-API call. Zero means now and negative durations denote future timestamps;
-recognized absolute values are accepted and invalid values are rejected
-consistently before an API request. Status ports are sorted; Podman now uses
-HTTP 404 rather than error text for missing-container results. Docker's human status
-string and Podman's state string are intentionally not presented as equivalent.
+API call. `0s` means now and negative durations denote future timestamps;
+bare `0` and decimal Unix zero forms mean the Unix epoch. Accepted absolute
+inputs use Docker's timestamp parser (including local-time dates interpreted in
+the client's timezone), and are converted to UTC for both adapters. Values
+outside RFC3339's year range and invalid inputs are rejected before a request.
+Status ports are sorted; Podman now uses HTTP 404 rather than error text for
+missing-container results. Docker's human status string and Podman's state string
+are intentionally not presented as equivalent.
 
 This is a migration change: configurations that relied on Podman silently
 ignoring devices, or used unsupported network modes or unpublished ports, now

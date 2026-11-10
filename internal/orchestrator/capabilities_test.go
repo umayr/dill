@@ -62,10 +62,10 @@ func TestNormalizeLogSince(t *testing.T) {
 	if got.Before(before.Add(-time.Second)) || got.After(before.Add(time.Second)) {
 		t.Fatalf("unexpected timestamp %s", got)
 	}
-	for _, s := range []string{"", "1700000000", "2024-01-01T00:00:00Z"} {
-		got, err := normalizeLogSince(s)
-		if err != nil || got != s {
-			t.Fatal(s, got, err)
+	for input, want := range map[string]string{"": "", "0": "1970-01-01T00:00:00Z", "0.0": "1970-01-01T00:00:00Z", "0.000": "1970-01-01T00:00:00Z", "0.5": "1970-01-01T00:00:00.5Z", "1700000000": "2023-11-14T22:13:20Z", "2024-01-01T00:00:00Z": "2024-01-01T00:00:00Z"} {
+		got, err := normalizeLogSince(input)
+		if err != nil || got != want {
+			t.Fatalf("%q: got %q, want %q: %v", input, got, want, err)
 		}
 	}
 }

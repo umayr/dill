@@ -12,11 +12,23 @@ func normalizeLogSince(s string) (string, error) {
 	if s == "" {
 		return "", nil
 	}
-	if d, err := time.ParseDuration(s); err == nil {
-		return time.Now().Add(-d).UTC().Format(time.RFC3339Nano), nil
+	now := time.Now()
+	// Docker's parser treats bare "0" as Unix epoch, not a duration.
+	if d, err := time.ParseDuration(s); s != "0" && err == nil {
+		return now.Add(-d).UTC().Format(time.RFC3339Nano), nil
 	}
-	if _, err := timetypes.GetTimestamp(s, time.Now()); err != nil {
+	stamp, err := timetypes.GetTimestamp(s, now)
+	if err != nil {
 		return "", fmt.Errorf("invalid value for since %q: %w", s, err)
 	}
-	return s, nil
+	seconds, nanos, err := timetypes.ParseTimestamps(stamp, 0)
+	if err != nil {
+		return "", fmt.Errorf("invalid value for since %q: %w", s, err)
+	}
+	// Give both engines the same instant, including Docker's local-time forms.
+	result := time.Unix(seconds, nanos).UTC().Format(time.RFC3339Nano)
+	if _, err := time.Parse(time.RFC3339Nano, result); err != nil {
+		return "", fmt.Errorf("since %q is outside RFC3339 range: %w", s, err)
+	}
+	return result, nil
 }
