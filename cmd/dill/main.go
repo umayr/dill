@@ -107,6 +107,7 @@ Commands:
   status    Show stack status
   stacks    List dill-managed stacks (alias: ls)
   doctor    Check local dill, Pkl, and engine readiness
+  capabilities  Show known adapter limitations as JSON
   rm        Remove stopped containers in the stack
   wait      Wait for services to become ready
   port      Print published ports for a service
@@ -180,6 +181,8 @@ Flags:
 		return runStatus(ctx, opts, fs.Args()[1:])
 	case cmdDoctor:
 		return runDoctor(ctx, opts, fs.Args()[1:])
+	case "capabilities":
+		return runCapabilities(opts, fs.Args()[1:])
 	case cmdStacks, cmdLs:
 		return runStacks(ctx, opts, fs.Args()[1:])
 	case cmdRm:

@@ -52,12 +52,12 @@ func runExec(ctx context.Context, opts commandOptions, args []string) error {
 		containerName = serviceContainerName(sn, svc, cfg.Services[svc])
 	}
 
-	binary := engineBinary(engine)
 	flags := []string{"exec", "-i"}
 	if term.IsTerminal(int(os.Stdin.Fd())) {
 		flags = append(flags, "-t")
 	}
 	execArgs := append(append(flags, containerName), cmdArgs...)
+	binary, execArgs := engineCommand(engine, execArgs...)
 	c := exec.CommandContext(ctx, binary, execArgs...)
 	c.Stdin = os.Stdin
 	c.Stdout = os.Stdout

@@ -455,8 +455,8 @@ func runTop(ctx context.Context, opts commandOptions, args []string) error {
 	}
 	defer engine.Close()
 	containerName := serviceContainerName(sn, service, cfg.Services[service])
-	binary := engineBinary(engine)
 	cmdArgs := append([]string{"top", containerName}, args[1:]...)
+	binary, cmdArgs := engineCommand(engine, cmdArgs...)
 	c := exec.CommandContext(ctx, binary, cmdArgs...)
 	c.Stdout = os.Stdout
 	c.Stderr = os.Stderr
@@ -495,8 +495,8 @@ func runCp(ctx context.Context, opts commandOptions, args []string) error {
 		}
 		rewritten[i] = serviceContainerName(sn, service, svc) + ":" + path
 	}
-	binary := engineBinary(engine)
 	cmdArgs := append([]string{"cp"}, rewritten...)
+	binary, cmdArgs := engineCommand(engine, cmdArgs...)
 	c := exec.CommandContext(ctx, binary, cmdArgs...)
 	c.Stdout = os.Stdout
 	c.Stderr = os.Stderr
