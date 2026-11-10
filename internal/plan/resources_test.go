@@ -104,3 +104,16 @@ func TestDiffConfigsResourceRemoval(t *testing.T) {
 		t.Fatalf("removing a limit must recreate: %+v", diffs)
 	}
 }
+
+func TestDiffConfigsCpuset(t *testing.T) {
+	svc := &config.Service{Image: "app:latest", Cpuset: "0-1"}
+	live := &orchestrator.LiveConfig{Image: svc.Image, Cpuset: "0-1"}
+	if diffs, err := diffConfigs("app", svc, live, "", "stack"); err != nil || len(diffs) != 0 {
+		t.Fatalf("matching cpuset: %+v, %v", diffs, err)
+	}
+	live.Cpuset = "0"
+	diffs, err := diffConfigs("app", svc, live, "", "stack")
+	if err != nil || len(diffs) != 1 || diffs[0].Field != "cpuset" {
+		t.Fatalf("cpuset drift: %+v, %v", diffs, err)
+	}
+}

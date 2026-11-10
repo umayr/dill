@@ -18,6 +18,7 @@ func TestServiceConfigHashResources(t *testing.T) {
 	}
 	shares, pids := 512, 100
 	for _, svc := range []*Service{
+		{Image: "app:latest", Cpuset: "0-1"},
 		{Image: "app:latest", MemLimit: "512m"},
 		{Image: "app:latest", MemReservation: "128m"},
 		{Image: "app:latest", CPUs: "0.5"},
