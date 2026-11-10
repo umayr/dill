@@ -39,6 +39,22 @@ func TestValidateJSONFailureReturnsError(t *testing.T) {
 	}
 }
 
+func TestJSONUsageFailures(t *testing.T) {
+	for _, command := range []string{"validate", "plan", "diff"} {
+		for _, args := range [][]string{{"--format", "json", "unexpected"}, {"--format", "json", "--unknown"}} {
+			t.Run(command+"/"+args[len(args)-1], func(t *testing.T) {
+				out, _, err := captureCommand(t, "", func() error {
+					return run(append([]string{command}, args...))
+				})
+				var result map[string]any
+				if err == nil || exitCodeFor(err) != 2 || json.Unmarshal([]byte(out), &result) != nil || result["kind"] != "invalid_input" || result["error"] == "" || result["error"] == nil {
+					t.Fatalf("err=%v output=%q", err, out)
+				}
+			})
+		}
+	}
+}
+
 func TestPlanJSONOperationalFailure(t *testing.T) {
 	oldLoader, oldEngine := configLoader, engineFactory
 	configLoader = func(context.Context, string) (*config.DillConfig, error) { return testConfig(), nil }

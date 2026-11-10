@@ -24,15 +24,6 @@ func runPlanNamed(ctx context.Context, opts commandOptions, args []string, name 
 	fs := flag.NewFlagSet(name, flag.ContinueOnError)
 	addConfigFlags(fs, &opts)
 	format := fs.String("format", "text", "output format: text or json")
-	if err := fs.Parse(args); err != nil {
-		return usageError{err.Error()}
-	}
-	if err := validateFormat(*format, "text", "json"); err != nil {
-		return err
-	}
-	if err := ensureNoArgs(fs.Args(), name); err != nil {
-		return err
-	}
 	// Once JSON mode is selected, failures before rendering still produce one
 	// JSON document. Successful plan output and drift exits remain unchanged.
 	defer func() {
@@ -42,6 +33,15 @@ func runPlanNamed(ctx context.Context, opts commandOptions, args []string, name 
 			}
 		}
 	}()
+	if err := fs.Parse(args); err != nil {
+		return usageError{err.Error()}
+	}
+	if err := validateFormat(*format, "text", "json"); err != nil {
+		return err
+	}
+	if err := ensureNoArgs(fs.Args(), name); err != nil {
+		return err
+	}
 
 	cfg, err := loadConfig(ctx, opts)
 	if err != nil {
@@ -78,6 +78,10 @@ func runPlanNamed(ctx context.Context, opts commandOptions, args []string, name 
 }
 
 func failureKind(err error) string {
+	var usage usageError
+	if errors.As(err, &usage) {
+		return "invalid_input"
+	}
 	var evaluator *config.EvaluatorError
 	if errors.As(err, &evaluator) {
 		return "evaluator_failure"
