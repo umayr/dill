@@ -17,9 +17,11 @@ class Mount {
   /// removal by teardown. `source` or `name` is the engine volume name.
   externalVolume: Boolean = false
 
-  /// Explicit engine volume name. The volume stays managed (created, labelled,
-  /// and removed) unless `externalVolume` is true. When omitted, named volumes are
-  /// prefixed with the stack name: `pg-data` becomes `<stack>_pg-data`.
+  /// Explicit engine volume name. Unless `externalVolume` is true, Dill creates
+  /// and labels the volume, but teardown retains existing volumes and reports an
+  /// error even with `--force`. Remove them manually after verifying ownership and
+  /// preventing concurrent changes. When omitted, named volumes are prefixed with
+  /// the stack name: `pg-data` becomes `<stack>_pg-data`.
   name: String?
 }
 

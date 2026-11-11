@@ -45,5 +45,6 @@ This is a migration change: configurations that relied on Podman silently
 ignoring devices, or used unsupported network modes or unpublished ports, now
 fail early. Use a verified supported configuration or Docker where appropriate.
 A passing capability check is not a host check and does not certify an entire
-fixture. Full cross-engine field/no-op/failure conformance remains #18, and live
-Podman coverage is needed in CI; no support claim follows from Pkl evaluation.
+fixture. CI runs live Docker and Podman integration tests, but full cross-engine
+field/no-op/failure conformance remains #18; no support claim follows from Pkl
+evaluation.
