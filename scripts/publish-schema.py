@@ -1,10 +1,35 @@
 #!/usr/bin/env python3
 """Publish immutable release assets, then atomically publish registry discovery files."""
 import argparse
+import hashlib
 import json
 from pathlib import Path
 import subprocess
 import tempfile
+import zipfile
+
+
+def validate_schema_artifacts(version, paths):
+    archive, archive_checksum, metadata, metadata_checksum = paths
+    archive_bytes = archive.read_bytes()
+    metadata_bytes = metadata.read_bytes()
+    archive_digest = hashlib.sha256(archive_bytes).hexdigest()
+    if archive_checksum.read_bytes().strip() != archive_digest.encode():
+        raise RuntimeError('archive checksum mismatch')
+    if metadata_checksum.read_bytes().strip() != hashlib.sha256(metadata_bytes).hexdigest().encode():
+        raise RuntimeError('metadata checksum mismatch')
+    data = json.loads(metadata_bytes)
+    expected_url = f'https://github.com/umayr/dill/releases/download/v{version}/dill@{version}.zip'
+    if (data.get('name') != 'dill' or data.get('version') != version
+            or data.get('packageUri') != f'package://pkg.ushd.ca/dill@{version}'
+            or data.get('packageZipUrl') != expected_url
+            or data.get('packageZipChecksums', {}).get('sha256') != archive_digest):
+        raise RuntimeError('schema metadata identity or checksum mismatch')
+    with zipfile.ZipFile(archive) as z:
+        if z.namelist() != ['dill.pkl']:
+            raise RuntimeError('unexpected schema archive contents')
+        if z.testzip() is not None:
+            raise RuntimeError('corrupt schema archive')
 
 
 def publish(files, release, registry):
@@ -78,6 +103,7 @@ def main():
     files = paths + args.binary
     if any(not path.is_file() for path in files):
         raise RuntimeError('missing release artifact')
+    validate_schema_artifacts(version, paths)
     publish(files, GitHubRelease(args.tag), GitRegistry(args.registry, paths[2:]))
 
 

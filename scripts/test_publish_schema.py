@@ -1,8 +1,11 @@
+import hashlib
 import importlib.util
+import json
 from pathlib import Path
 import tempfile
 import subprocess
 import unittest
+import zipfile
 
 spec = importlib.util.spec_from_file_location('publisher', Path(__file__).with_name('publish-schema.py'))
 publisher = importlib.util.module_from_spec(spec)
@@ -34,6 +37,64 @@ class MemoryRegistry:
         self.check()
         assert all(self.release.read(p.name) == p.read_bytes() for p in self.files)
         self.objects.update({p.name: p.read_bytes() for p in self.files})
+
+
+class ArtifactValidationTests(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        root = Path(self.tmp.name)
+        self.paths = [root / ('dill@1.2.3' + suffix) for suffix in ('.zip', '.zip.sha256', '', '.sha256')]
+        with zipfile.ZipFile(self.paths[0], 'w') as z:
+            z.writestr('dill.pkl', 'schema')
+        self.metadata = {
+            'name': 'dill', 'version': '1.2.3',
+            'packageUri': 'package://pkg.ushd.ca/dill@1.2.3',
+            'packageZipUrl': 'https://github.com/umayr/dill/releases/download/v1.2.3/dill@1.2.3.zip',
+        }
+        self.refresh_checksums()
+
+    def refresh_checksums(self):
+        archive, archive_checksum, metadata, metadata_checksum = self.paths
+        digest = hashlib.sha256(archive.read_bytes()).hexdigest()
+        archive_checksum.write_text(digest)
+        self.metadata['packageZipChecksums'] = {'sha256': digest}
+        metadata.write_text(json.dumps(self.metadata))
+        metadata_checksum.write_text(hashlib.sha256(metadata.read_bytes()).hexdigest())
+
+    def test_valid_artifacts(self):
+        publisher.validate_schema_artifacts('1.2.3', self.paths)
+
+    def test_checksum_mismatches_rejected(self):
+        for index in (1, 3):
+            with self.subTest(checksum=index):
+                self.refresh_checksums()
+                self.paths[index].write_text('incorrect')
+                with self.assertRaisesRegex(RuntimeError, 'checksum mismatch'):
+                    publisher.validate_schema_artifacts('1.2.3', self.paths)
+
+    def test_wrong_metadata_rejected_even_with_matching_checksum(self):
+        for key in ('name', 'version', 'packageUri', 'packageZipUrl'):
+            with self.subTest(key=key):
+                original = self.metadata[key]
+                self.metadata[key] = 'wrong'
+                self.refresh_checksums()
+                with self.assertRaisesRegex(RuntimeError, 'metadata identity'):
+                    publisher.validate_schema_artifacts('1.2.3', self.paths)
+                self.metadata[key] = original
+        self.refresh_checksums()
+        self.metadata['packageZipChecksums']['sha256'] = 'wrong'
+        self.paths[2].write_text(json.dumps(self.metadata))
+        self.paths[3].write_text(hashlib.sha256(self.paths[2].read_bytes()).hexdigest())
+        with self.assertRaisesRegex(RuntimeError, 'metadata identity'):
+            publisher.validate_schema_artifacts('1.2.3', self.paths)
+
+    def test_extra_archive_file_rejected_even_with_matching_checksums(self):
+        with zipfile.ZipFile(self.paths[0], 'a') as z:
+            z.writestr('secret.key', 'synthetic secret')
+        self.refresh_checksums()
+        with self.assertRaisesRegex(RuntimeError, 'archive contents'):
+            publisher.validate_schema_artifacts('1.2.3', self.paths)
 
 
 class PublicationTests(unittest.TestCase):

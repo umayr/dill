@@ -1,3 +1,4 @@
+import importlib.util
 import os
 from pathlib import Path
 import shutil
@@ -24,6 +25,10 @@ class PackageTests(unittest.TestCase):
                 subprocess.run(['python3', str(root / 'scripts/package-schema.py'), '--version', '9.9.9', '--output', str(root / name)], check=True)
             for suffix in ('', '.sha256', '.zip', '.zip.sha256'):
                 self.assertEqual((root / 'one' / ('dill@9.9.9' + suffix)).read_bytes(), (root / 'two' / ('dill@9.9.9' + suffix)).read_bytes())
+            spec = importlib.util.spec_from_file_location('publisher', ROOT / 'scripts/publish-schema.py')
+            publisher = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(publisher)
+            publisher.validate_schema_artifacts('9.9.9', [root / 'one' / ('dill@9.9.9' + suffix) for suffix in ('.zip', '.zip.sha256', '', '.sha256')])
             archive = root / 'one/dill@9.9.9.zip'
             with zipfile.ZipFile(archive) as z:
                 self.assertEqual(z.namelist(), ['dill.pkl'])
