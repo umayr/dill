@@ -248,7 +248,14 @@ func (g *Graph) Run(ctx context.Context, engine orchestrator.Engine, stackName s
 		}))
 	}
 
-	if err := eg.Wait(); err != nil {
+	err := eg.Wait()
+	// All workers can finish successfully while cancellation arrives after the
+	// final readiness check. Do not turn that cancellation into success.
+	if err == nil && ctx.Err() != nil {
+		err = fmt.Errorf("deployment canceled after readiness: %w", ctx.Err())
+		failures = append(failures, err)
+	}
+	if err != nil {
 		logger.Warn("deployment failed, tearing down started services", "err", err)
 		teardownCtx, teardownCancel := context.WithTimeout(context.WithoutCancel(ctx), 60*time.Second)
 		defer teardownCancel()
