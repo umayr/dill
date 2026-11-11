@@ -10,17 +10,27 @@ import (
 	"github.com/umayr/dill/internal/orchestrator"
 )
 
-func newEngine(ctx context.Context, engineName string) (orchestrator.Engine, error) {
-	return engineFactory(ctx, engineName)
+func newEngine(ctx context.Context, engineName string, opts commandOptions) (orchestrator.Engine, error) {
+	endpoint, err := localEngineSocket(opts)
+	if err != nil {
+		return nil, err
+	}
+	return engineFactory(ctx, engineName, endpoint)
 }
 
 var engineFactory = defaultEngineFactory
 
-func defaultEngineFactory(ctx context.Context, engineName string) (orchestrator.Engine, error) {
+func defaultEngineFactory(ctx context.Context, engineName, endpoint string) (orchestrator.Engine, error) {
 	switch engineName {
 	case "docker":
+		if endpoint != "" {
+			return orchestrator.NewDockerEngineAt(endpoint)
+		}
 		return orchestrator.NewDockerEngine()
 	case "podman", "":
+		if endpoint != "" {
+			return orchestrator.NewPodmanEngine(ctx, endpoint)
+		}
 		return newPodmanEngine(ctx)
 	default:
 		return nil, usageError{"unknown engine " + engineName + " (supported: podman, docker)"}

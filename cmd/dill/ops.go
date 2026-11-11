@@ -40,7 +40,7 @@ func runStatus(ctx context.Context, opts commandOptions, args []string) error {
 		return err
 	}
 	sn := resolveStackNameWithOptions(cfg, opts)
-	engine, err := openEngine(ctx, cfg)
+	engine, err := openEngine(ctx, cfg, opts)
 	if err != nil {
 		return err
 	}
@@ -130,7 +130,7 @@ func runDoctor(ctx context.Context, opts commandOptions, args []string) error {
 	add("config", err, opts.ConfigFile)
 	if err == nil {
 		add("validate", config.Validate(ctx, opts.ConfigFile), opts.ConfigFile)
-		engine, err := openEngine(ctx, cfg)
+		engine, err := openEngine(ctx, cfg, opts)
 		add("engine", err, cfg.Engine)
 		if err == nil {
 			engine.Close()
@@ -140,7 +140,7 @@ func runDoctor(ctx context.Context, opts commandOptions, args []string) error {
 		if engineName == "" {
 			engineName = "podman"
 		}
-		engine, err := newEngine(ctx, engineName)
+		engine, err := newEngine(ctx, engineName, opts)
 		add("engine", err, engineName)
 		if err == nil {
 			engine.Close()
@@ -185,6 +185,7 @@ func runDoctor(ctx context.Context, opts commandOptions, args []string) error {
 func runStacks(ctx context.Context, opts commandOptions, args []string) error {
 	fs := flag.NewFlagSet("stacks", flag.ContinueOnError)
 	addEngineFlag(fs, &opts)
+	addEngineSocketFlag(fs, &opts)
 	format := fs.String("format", "text", "output format: text or json")
 	if err := fs.Parse(args); err != nil {
 		return usageError{err.Error()}
@@ -199,7 +200,7 @@ func runStacks(ctx context.Context, opts commandOptions, args []string) error {
 	if engineName == "" {
 		engineName = "podman"
 	}
-	engine, err := newEngine(ctx, engineName)
+	engine, err := newEngine(ctx, engineName, opts)
 	if err != nil {
 		return err
 	}
@@ -246,7 +247,7 @@ func runRm(ctx context.Context, opts commandOptions, args []string) error {
 		}
 	}
 	sn := st.Name
-	engine, err := newEngine(ctx, st.Engine)
+	engine, err := newEngine(ctx, st.Engine, opts)
 	if err != nil {
 		return err
 	}
@@ -346,7 +347,7 @@ func runWait(ctx context.Context, opts commandOptions, args []string) error {
 		return err
 	}
 	sn := resolveStackNameWithOptions(cfg, opts)
-	engine, err := openEngine(ctx, cfg)
+	engine, err := openEngine(ctx, cfg, opts)
 	if err != nil {
 		return err
 	}
@@ -399,7 +400,7 @@ func runPort(ctx context.Context, opts commandOptions, args []string) error {
 		return usageError{fmt.Sprintf("unknown service %q", service)}
 	}
 	sn := resolveStackNameWithOptions(cfg, opts)
-	engine, err := openEngine(ctx, cfg)
+	engine, err := openEngine(ctx, cfg, opts)
 	if err != nil {
 		return err
 	}
@@ -449,7 +450,7 @@ func runTop(ctx context.Context, opts commandOptions, args []string) error {
 		return usageError{fmt.Sprintf("unknown service %q", service)}
 	}
 	sn := resolveStackNameWithOptions(cfg, opts)
-	engine, err := openEngine(ctx, cfg)
+	engine, err := openEngine(ctx, cfg, opts)
 	if err != nil {
 		return err
 	}
@@ -461,6 +462,7 @@ func runTop(ctx context.Context, opts commandOptions, args []string) error {
 	cmdArgs := append([]string{"top", containerID}, args[1:]...)
 	binary, cmdArgs := engineCommand(engine, cmdArgs...)
 	c := exec.CommandContext(ctx, binary, cmdArgs...)
+	c.Env = engineEnvironment(engine)
 	c.Stdout = os.Stdout
 	c.Stderr = os.Stderr
 	return c.Run()
@@ -481,7 +483,7 @@ func runCp(ctx context.Context, opts commandOptions, args []string) error {
 		return err
 	}
 	sn := resolveStackNameWithOptions(cfg, opts)
-	engine, err := openEngine(ctx, cfg)
+	engine, err := openEngine(ctx, cfg, opts)
 	if err != nil {
 		return err
 	}
@@ -505,6 +507,7 @@ func runCp(ctx context.Context, opts commandOptions, args []string) error {
 	cmdArgs := append([]string{"cp"}, rewritten...)
 	binary, cmdArgs := engineCommand(engine, cmdArgs...)
 	c := exec.CommandContext(ctx, binary, cmdArgs...)
+	c.Env = engineEnvironment(engine)
 	c.Stdout = os.Stdout
 	c.Stderr = os.Stderr
 	return c.Run()

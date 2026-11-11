@@ -40,7 +40,7 @@ func TestUntrustedPklOutputRejectedBeforeEngine(t *testing.T) {
 	}
 	old := engineFactory
 	opened := false
-	engineFactory = func(context.Context, string) (orchestrator.Engine, error) {
+	engineFactory = func(context.Context, string, string) (orchestrator.Engine, error) {
 		opened = true
 		return nil, fmt.Errorf("unexpected engine")
 	}
@@ -107,7 +107,7 @@ func TestEffectiveContainerNameCollision(t *testing.T) {
 			}
 			old := engineFactory
 			opened := false
-			engineFactory = func(context.Context, string) (orchestrator.Engine, error) {
+			engineFactory = func(context.Context, string, string) (orchestrator.Engine, error) {
 				opened = true
 				return nil, fmt.Errorf("unexpected engine")
 			}

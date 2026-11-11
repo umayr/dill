@@ -56,9 +56,10 @@ func TestJSONUsageFailures(t *testing.T) {
 }
 
 func TestPlanJSONOperationalFailure(t *testing.T) {
+	unsetEngineSocket(t)
 	oldLoader, oldEngine := configLoader, engineFactory
 	configLoader = func(context.Context, string) (*config.DillConfig, error) { return testConfig(), nil }
-	engineFactory = func(context.Context, string) (orchestrator.Engine, error) {
+	engineFactory = func(context.Context, string, string) (orchestrator.Engine, error) {
 		return nil, errors.New("engine unavailable")
 	}
 	defer func() { configLoader, engineFactory = oldLoader, oldEngine }()
@@ -72,9 +73,10 @@ func TestPlanJSONOperationalFailure(t *testing.T) {
 }
 
 func TestDoctorJSONReportsFailure(t *testing.T) {
+	unsetEngineSocket(t)
 	oldLoader, oldEngine := configLoader, engineFactory
 	configLoader = func(context.Context, string) (*config.DillConfig, error) { return nil, errors.New("bad config") }
-	engineFactory = func(context.Context, string) (orchestrator.Engine, error) { return newFakeEngine(), nil }
+	engineFactory = func(context.Context, string, string) (orchestrator.Engine, error) { return newFakeEngine(), nil }
 	defer func() { configLoader, engineFactory = oldLoader, oldEngine }()
 	out, _, err := captureCommand(t, "", func() error {
 		return runDoctor(context.Background(), commandOptions{ConfigFile: "missing"}, []string{"--format", "json"})
@@ -248,11 +250,12 @@ func TestExitCodeFor(t *testing.T) {
 }
 
 func TestLogsFIsConfigFileNotFollow(t *testing.T) {
+	unsetEngineSocket(t)
 	fake := newFakeEngine()
 	var loaded string
 	oldEngineFactory := engineFactory
 	oldConfigLoader := configLoader
-	engineFactory = func(context.Context, string) (orchestrator.Engine, error) { return fake, nil }
+	engineFactory = func(context.Context, string, string) (orchestrator.Engine, error) { return fake, nil }
 	configLoader = func(_ context.Context, path string) (*config.DillConfig, error) {
 		loaded = path
 		return testConfig(), nil
@@ -290,10 +293,11 @@ func testConfig() *config.DillConfig {
 }
 
 func withTestRuntime(t *testing.T, engine orchestrator.Engine, cfg *config.DillConfig, fn func()) {
+	unsetEngineSocket(t)
 	t.Helper()
 	oldEngineFactory := engineFactory
 	oldConfigLoader := configLoader
-	engineFactory = func(context.Context, string) (orchestrator.Engine, error) {
+	engineFactory = func(context.Context, string, string) (orchestrator.Engine, error) {
 		return engine, nil
 	}
 	configLoader = func(context.Context, string) (*config.DillConfig, error) {

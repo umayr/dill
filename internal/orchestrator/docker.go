@@ -37,6 +37,17 @@ func NewDockerEngine() (*DockerEngine, error) {
 	return &DockerEngine{cli: cli}, nil
 }
 
+// NewDockerEngineAt uses an explicit endpoint without importing Docker's ambient
+// host, API-version or TLS configuration. CLI callers validate local-only syntax
+// before reaching this constructor.
+func NewDockerEngineAt(endpoint string) (*DockerEngine, error) {
+	cli, err := client.NewClientWithOpts(client.WithHost(endpoint), client.WithAPIVersionNegotiation())
+	if err != nil {
+		return nil, err
+	}
+	return &DockerEngine{cli: cli}, nil
+}
+
 func (d *DockerEngine) PullImage(ctx context.Context, img string, w io.Writer) error {
 	logger.Debug("pulling image", "image", img)
 	rc, err := d.cli.ImagePull(ctx, img, dockertypes.ImagePullOptions{})

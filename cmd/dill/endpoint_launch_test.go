@@ -33,7 +33,16 @@ func (e *endpointFake) InspectConfig(_ context.Context, name string) (*orchestra
 	return &orchestrator.LiveConfig{ID: "immutable-id", SystemLabels: labels}, nil
 }
 
+func unsetEngineSocket(t *testing.T) {
+	t.Helper()
+	t.Setenv("DILL_ENGINE_SOCKET", "")
+	if err := os.Unsetenv("DILL_ENGINE_SOCKET"); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestCommandsUseAdapterEndpoint(t *testing.T) {
+	unsetEngineSocket(t)
 	dir := t.TempDir()
 	log := filepath.Join(dir, "args")
 	script := "#!/bin/sh\nprintf '%s\\n' \"$@\" > \"$TEST_ARGS\"\n"
@@ -49,7 +58,7 @@ func TestCommandsUseAdapterEndpoint(t *testing.T) {
 	}
 	fake := &endpointFake{fakeEngine: newFakeEngine()}
 	fake.statuses["app"] = &orchestrator.ContainerStatus{Name: "app"} // foreign bare name must never be selected
-	engineFactory = func(context.Context, string) (orchestrator.Engine, error) { return fake, nil }
+	engineFactory = func(context.Context, string, string) (orchestrator.Engine, error) { return fake, nil }
 	tests := []struct {
 		name string
 		run  func(context.Context, commandOptions, []string) error
@@ -116,6 +125,7 @@ func TestDockerCommandUsesSDKHost(t *testing.T) {
 }
 
 func TestDockerCommandsLaunchWithSDKEndpointAndID(t *testing.T) {
+	unsetEngineSocket(t)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if strings.HasSuffix(r.URL.Path, "/_ping") {
 			w.Header().Set("API-Version", "1.43")
@@ -189,6 +199,7 @@ func TestDockerCommandsLaunchWithSDKEndpointAndID(t *testing.T) {
 }
 
 func TestPodmanCommandsLaunchWithSelectedSocket(t *testing.T) {
+	unsetEngineSocket(t)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if strings.HasSuffix(r.URL.Path, "/_ping") {
 			w.Header().Set("Libpod-API-Version", "5.0.0")
@@ -244,6 +255,7 @@ func TestPodmanCommandsLaunchWithSelectedSocket(t *testing.T) {
 }
 
 func TestDataPlaneSubprocessCancellation(t *testing.T) {
+	unsetEngineSocket(t)
 	dir := t.TempDir()
 	if err := os.WriteFile(filepath.Join(dir, "podman"), []byte("#!/bin/sh\nexec sleep 30\n"), 0755); err != nil {
 		t.Fatal(err)
@@ -254,7 +266,7 @@ func TestDataPlaneSubprocessCancellation(t *testing.T) {
 	configLoader = func(context.Context, string) (*config.DillConfig, error) {
 		return &config.DillConfig{Name: "stack", Engine: "podman", Services: map[string]*config.Service{"app": {Image: "image"}}}, nil
 	}
-	engineFactory = func(context.Context, string) (orchestrator.Engine, error) {
+	engineFactory = func(context.Context, string, string) (orchestrator.Engine, error) {
 		return &endpointFake{fakeEngine: newFakeEngine()}, nil
 	}
 	for _, tc := range []struct {

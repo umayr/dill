@@ -27,7 +27,7 @@ func runVolumes(ctx context.Context, opts commandOptions, args []string) error {
 	if err != nil {
 		return err
 	}
-	engine, err := newEngine(ctx, st.Engine)
+	engine, err := newEngine(ctx, st.Engine, opts)
 	if err != nil {
 		return err
 	}

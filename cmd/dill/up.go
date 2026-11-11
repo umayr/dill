@@ -45,7 +45,9 @@ func runUp(ctx context.Context, opts commandOptions, args []string) error {
 		return err
 	}
 
-	return runUpConfig(ctx, opts, cfg, fs.Args(), *noDeps, *pullPolicy, openEngine)
+	return runUpConfig(ctx, opts, cfg, fs.Args(), *noDeps, *pullPolicy, func(ctx context.Context, cfg *config.DillConfig) (orchestrator.Engine, error) {
+		return openEngine(ctx, cfg, opts)
+	})
 }
 
 func runUpConfig(ctx context.Context, opts commandOptions, cfg *config.DillConfig, names []string, noDeps bool, pullPolicy string, open func(context.Context, *config.DillConfig) (orchestrator.Engine, error)) error {
