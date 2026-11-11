@@ -128,6 +128,18 @@ class PublicationTests(unittest.TestCase):
             publisher.publish(self.files, self.release, self.registry)
         self.assertEqual(self.release.objects, {})
 
+    def test_git_registry_rejects_staged_changes_before_release_upload(self):
+        root = Path(self.tmp.name)
+        work = root / 'work'
+        subprocess.run(['git', 'init', str(work)], check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        (work / 'unrelated').write_text('unrelated change')
+        subprocess.run(['git', '-C', str(work), 'add', 'unrelated'], check=True)
+        registry = publisher.GitRegistry(work, self.files[2:])
+        with self.assertRaisesRegex(RuntimeError, 'registry index contains staged changes'):
+            publisher.publish(self.files, self.release, registry)
+        self.assertEqual(self.release.objects, {})
+        self.assertFalse((work / self.files[2].name).exists())
+
     def test_git_registry_atomic_commit_and_retry(self):
         root = Path(self.tmp.name)
         remote, work = root / 'remote.git', root / 'work'

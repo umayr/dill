@@ -68,6 +68,11 @@ class GitRegistry:
     def __init__(self, directory, files):
         self.directory, self.files = directory, files
     def check(self):
+        result = subprocess.run(['git', '-C', str(self.directory), 'diff', '--cached', '--quiet'])
+        if result.returncode == 1:
+            raise RuntimeError('registry index contains staged changes')
+        if result.returncode != 0:
+            raise RuntimeError('cannot inspect registry index')
         for path in self.files:
             dest = self.directory / path.name
             if dest.exists() and dest.read_bytes() != path.read_bytes():

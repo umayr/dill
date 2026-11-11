@@ -38,9 +38,10 @@ verifies the local archive allowlist, both checksums, and the metadata's version
 URI, archive URL and archive digest. It then compares every existing asset byte-for-byte, uploads missing
 assets, verifies them, and only then commits both discovery
 metadata files to `umayr/pkl-registry` in one normal Git push. An existing
-registry file with different bytes, a changed release asset, a race, permission
-failure, or non-fast-forward push fails closed. Publication is serialized within
-this repository; external writers and manual edits are not made impossible by
+registry file with different bytes, pre-existing staged registry changes, a
+changed release asset, a race, permission failure, or non-fast-forward push
+fails closed. Publication is serialized within this repository; external writers
+and manual edits are not made impossible by
 GitHub or Git. Protect release assets, registry branch, and the registry token.
 Do not delete or replace existing assets to make a retry pass. Re-run the same
 tag workflow with identical source/toolchain after a partial failure; it verifies
