@@ -45,9 +45,29 @@ config {
 			t.Fatal(err)
 		}
 	}
+	assertInspectedLimits := func(memory int64) {
+		t.Helper()
+		// Inspect confirms the engine's reported configuration, not cgroup
+		// enforcement. Use the same fixture for Docker and Podman.
+		var got struct {
+			Memory            int64  `json:"Memory"`
+			MemoryReservation int64  `json:"MemoryReservation"`
+			NanoCPUs          int64  `json:"NanoCpus"`
+			CPUShares         int64  `json:"CpuShares"`
+			PidsLimit         *int64 `json:"PidsLimit"`
+		}
+		out := runEngine(t, env.engine, "inspect", "--format", "{{json .HostConfig}}", stack+"_app")
+		if err := json.Unmarshal([]byte(out), &got); err != nil {
+			t.Fatalf("parsing inspected resource limits: %v", err)
+		}
+		if got.Memory != memory || got.MemoryReservation != 32<<20 || got.NanoCPUs != 123450000 || got.CPUShares != 512 || got.PidsLimit == nil || *got.PidsLimit != 100 {
+			t.Fatalf("inspected resource limits = %+v, want memory=%d reservation=%d nanoCPUs=123450000 shares=512 pids=100", got, memory, 32<<20)
+		}
+	}
 	write("128m", true)
 	cleanupStack(t, bin, cfg, stack)
 	runDill(t, true, bin, "-f", cfg, "--timeout", testTimeout(), "up")
+	assertInspectedLimits(128 << 20)
 	assertNoopPlan(t, bin, cfg, 1)
 
 	// Preserve the ownership/hash labels while replacing the container with
@@ -82,6 +102,7 @@ config {
 	// Desired changes and removal of limits must also converge to a no-op.
 	write("192m", true)
 	runDill(t, true, bin, "-f", cfg, "--timeout", testTimeout(), "up")
+	assertInspectedLimits(192 << 20)
 	assertNoopPlan(t, bin, cfg, 1)
 	write("", false)
 	runDill(t, true, bin, "-f", cfg, "--timeout", testTimeout(), "up")
