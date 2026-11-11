@@ -56,6 +56,7 @@ func TestJSONUsageFailures(t *testing.T) {
 }
 
 func TestPlanJSONOperationalFailure(t *testing.T) {
+	unsetEngineSocket(t)
 	oldLoader, oldEngine := configLoader, engineFactory
 	configLoader = func(context.Context, string) (*config.DillConfig, error) { return testConfig(), nil }
 	engineFactory = func(context.Context, string, string) (orchestrator.Engine, error) {
@@ -72,6 +73,7 @@ func TestPlanJSONOperationalFailure(t *testing.T) {
 }
 
 func TestDoctorJSONReportsFailure(t *testing.T) {
+	unsetEngineSocket(t)
 	oldLoader, oldEngine := configLoader, engineFactory
 	configLoader = func(context.Context, string) (*config.DillConfig, error) { return nil, errors.New("bad config") }
 	engineFactory = func(context.Context, string, string) (orchestrator.Engine, error) { return newFakeEngine(), nil }
@@ -248,6 +250,7 @@ func TestExitCodeFor(t *testing.T) {
 }
 
 func TestLogsFIsConfigFileNotFollow(t *testing.T) {
+	unsetEngineSocket(t)
 	fake := newFakeEngine()
 	var loaded string
 	oldEngineFactory := engineFactory
@@ -290,6 +293,7 @@ func testConfig() *config.DillConfig {
 }
 
 func withTestRuntime(t *testing.T, engine orchestrator.Engine, cfg *config.DillConfig, fn func()) {
+	unsetEngineSocket(t)
 	t.Helper()
 	oldEngineFactory := engineFactory
 	oldConfigLoader := configLoader

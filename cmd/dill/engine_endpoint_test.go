@@ -52,6 +52,7 @@ func TestLocalEngineSocketRejectsWithoutEchoOrFallback(t *testing.T) {
 		"tcp://user:SENTINEL@127.0.0.1:2375", "ssh://user:SENTINEL@host", "npipe:////SENTINEL",
 		"unix:///socket?token=SENTINEL", "/socket#SENTINEL", "/socket%2fSENTINEL", "/socket\\SENTINEL",
 		"/socket\nSENTINEL", "unix:///socket\x00SENTINEL", "/socket\xffSENTINEL", "unix:////SENTINEL",
+		"/SENTINEL.sock ", "unix:///SENTINEL.sock ", "/SENTINEL.sock\u00a0", "unix:///SENTINEL.sock\u2003",
 	} {
 		t.Run("flag-"+value, func(t *testing.T) {
 			t.Setenv("DILL_ENGINE_SOCKET", "/fallback.sock")

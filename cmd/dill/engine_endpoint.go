@@ -38,7 +38,8 @@ func localEngineSocket(opts commandOptions) (string, error) {
 			return "", invalid
 		}
 	}
-	if !strings.HasPrefix(path, "/") || strings.HasPrefix(path, "//") {
+	// Docker CLI trims host whitespace; never let it select a different socket.
+	if !strings.HasPrefix(path, "/") || strings.HasPrefix(path, "//") || strings.TrimRightFunc(path, unicode.IsSpace) != path {
 		return "", invalid
 	}
 	return "unix://" + path, nil

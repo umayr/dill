@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"reflect"
 	"strings"
@@ -40,6 +41,33 @@ func fakeUnixEngine(t *testing.T, handler http.Handler) string {
 	server.Start()
 	t.Cleanup(server.Close)
 	return "unix://" + path
+}
+
+func TestDockerCLITrimsSocketHostWhitespace(t *testing.T) {
+	binary, err := exec.LookPath("docker")
+	if err != nil {
+		t.Skip("Docker CLI not installed")
+	}
+	var hits atomic.Int32
+	endpoint := fakeUnixEngine(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		hits.Add(1)
+		w.Header().Set("API-Version", "1.43")
+		fmt.Fprint(w, "OK")
+	}))
+	for _, suffix := range []string{" ", "\u00a0", "\u2003"} {
+		hits.Store(0)
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		cmd := exec.CommandContext(ctx, binary, "--host", endpoint+suffix, "version")
+		cmd.Env = []string{"PATH=" + os.Getenv("PATH"), "HOME=" + t.TempDir()}
+		output, err := cmd.CombinedOutput()
+		cancel()
+		if hits.Load() == 0 {
+			t.Fatalf("Docker CLI did not reach trimmed host for %q: %v: %s", suffix, err, output)
+		}
+		if got, err := localEngineSocket(commandOptions{EngineSocket: endpoint + suffix, EngineSocketSet: true}); got != "" || exitCodeFor(err) != 2 {
+			t.Fatalf("accepted CLI-normalized socket: %q, %v", got, err)
+		}
+	}
 }
 
 func TestMissingExplicitSocketDoesNotFallback(t *testing.T) {

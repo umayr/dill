@@ -33,7 +33,16 @@ func (e *endpointFake) InspectConfig(_ context.Context, name string) (*orchestra
 	return &orchestrator.LiveConfig{ID: "immutable-id", SystemLabels: labels}, nil
 }
 
+func unsetEngineSocket(t *testing.T) {
+	t.Helper()
+	t.Setenv("DILL_ENGINE_SOCKET", "")
+	if err := os.Unsetenv("DILL_ENGINE_SOCKET"); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestCommandsUseAdapterEndpoint(t *testing.T) {
+	unsetEngineSocket(t)
 	dir := t.TempDir()
 	log := filepath.Join(dir, "args")
 	script := "#!/bin/sh\nprintf '%s\\n' \"$@\" > \"$TEST_ARGS\"\n"
@@ -116,6 +125,7 @@ func TestDockerCommandUsesSDKHost(t *testing.T) {
 }
 
 func TestDockerCommandsLaunchWithSDKEndpointAndID(t *testing.T) {
+	unsetEngineSocket(t)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if strings.HasSuffix(r.URL.Path, "/_ping") {
 			w.Header().Set("API-Version", "1.43")
@@ -189,6 +199,7 @@ func TestDockerCommandsLaunchWithSDKEndpointAndID(t *testing.T) {
 }
 
 func TestPodmanCommandsLaunchWithSelectedSocket(t *testing.T) {
+	unsetEngineSocket(t)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if strings.HasSuffix(r.URL.Path, "/_ping") {
 			w.Header().Set("Libpod-API-Version", "5.0.0")
@@ -244,6 +255,7 @@ func TestPodmanCommandsLaunchWithSelectedSocket(t *testing.T) {
 }
 
 func TestDataPlaneSubprocessCancellation(t *testing.T) {
+	unsetEngineSocket(t)
 	dir := t.TempDir()
 	if err := os.WriteFile(filepath.Join(dir, "podman"), []byte("#!/bin/sh\nexec sleep 30\n"), 0755); err != nil {
 		t.Fatal(err)
