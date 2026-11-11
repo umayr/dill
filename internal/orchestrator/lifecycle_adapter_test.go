@@ -355,3 +355,41 @@ func TestLocalImageIDAbsentAndInspectFailure(t *testing.T) {
 		}
 	}
 }
+
+func TestCreateEmptyIDReportsActualContainerWithoutCleanup(t *testing.T) {
+	for _, adapter := range []string{"docker", "podman"} {
+		for _, containerName := range []string{"", "custom-name"} {
+			t.Run(adapter+"/"+containerName, func(t *testing.T) {
+				var calls []string
+				transport := contextTransport(func(r *http.Request) (*http.Response, error) {
+					calls = append(calls, r.Method+" "+r.URL.Path)
+					if !strings.HasSuffix(r.URL.Path, "/containers/create") {
+						t.Fatalf("unexpected request %s %s", r.Method, r.URL.Path)
+					}
+					return contextResponse(r, 201, `{"Id":""}`), nil
+				})
+				var engine Engine
+				if adapter == "docker" {
+					cli, err := client.NewClientWithOpts(client.WithHost("http://localhost"), client.WithVersion("1.44"), client.WithHTTPClient(&http.Client{Transport: transport}))
+					if err != nil {
+						t.Fatal(err)
+					}
+					defer cli.Close()
+					engine = &DockerEngine{cli: cli}
+				} else {
+					p, conn := newContextTestEngine(t, context.Background())
+					conn.Client.Transport = transport
+					engine = p
+				}
+				_, err := engine.StartService(context.Background(), "web", &config.Service{Image: "busybox", ContainerName: containerName}, "stack")
+				wantName := containerName
+				if wantName == "" {
+					wantName = "stack_web"
+				}
+				if err == nil || !strings.Contains(err.Error(), "outcome unknown") || !strings.Contains(err.Error(), fmt.Sprintf("container %q may be retained", wantName)) || len(calls) != 1 {
+					t.Fatalf("err=%v calls=%v", err, calls)
+				}
+			})
+		}
+	}
+}
