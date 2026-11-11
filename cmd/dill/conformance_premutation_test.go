@@ -91,7 +91,10 @@ func TestConformanceUpFailureBeforeMutation(t *testing.T) {
 			}
 		})
 		t.Run(engine+"/foreign-selected-container", func(t *testing.T) {
-			e := &preMutationEngine{recordingUpEngine: &recordingUpEngine{fakeEngine: newFakeEngine()}, live: map[string]*orchestrator.LiveConfig{"test_app": {ID: "foreign"}}}
+			e := &preMutationEngine{recordingUpEngine: &recordingUpEngine{fakeEngine: newFakeEngine()}, live: map[string]*orchestrator.LiveConfig{
+				"test_app":    {ID: "foreign"},
+				"test_orphan": ownedPreMutationOrphan(),
+			}}
 			cfg := &config.DillConfig{Name: "test", Engine: engine, Services: map[string]*config.Service{"app": {Image: "app", PullPolicy: "always", Volumes: []json.RawMessage{json.RawMessage(`"data:/data"`)}}}}
 			opened := false
 			err := runUpConfig(context.Background(), commandOptions{Quiet: true, Timeout: time.Second}, cfg, nil, false, "", func(context.Context, *config.DillConfig) (orchestrator.Engine, error) { opened = true; return e, nil })
@@ -99,5 +102,22 @@ func TestConformanceUpFailureBeforeMutation(t *testing.T) {
 				t.Fatalf("error=%v opened=%v mutations=%v", err, opened, e.events)
 			}
 		})
+		t.Run(engine+"/owned-orphan-control", func(t *testing.T) {
+			e := &preMutationEngine{recordingUpEngine: &recordingUpEngine{fakeEngine: newFakeEngine()}, live: map[string]*orchestrator.LiveConfig{"test_orphan": ownedPreMutationOrphan()}}
+			cfg := &config.DillConfig{Name: "test", Engine: engine, Services: map[string]*config.Service{"app": {Image: "app", PullPolicy: "never"}}}
+			err := runUpConfig(context.Background(), commandOptions{Quiet: true, Timeout: time.Second}, cfg, nil, false, "", func(context.Context, *config.DillConfig) (orchestrator.Engine, error) { return e, nil })
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(e.events) < 2 || e.events[0] != "stop:orphan-id" || e.events[1] != "remove:orphan-id" {
+				t.Fatalf("owned orphan was not removed: %v", e.events)
+			}
+		})
 	}
+}
+
+func ownedPreMutationOrphan() *orchestrator.LiveConfig {
+	return &orchestrator.LiveConfig{ID: "orphan-id", SystemLabels: map[string]string{
+		"dill.managed": "true", "dill.stack": "test", "dill.service": "orphan",
+	}}
 }
