@@ -280,7 +280,7 @@ func TestDillLabelOnlyTeardown(t *testing.T) {
 		t.Fatalf("containers remain after label-only rm: %s", names)
 	}
 
-	// No containers left; Docker clears the network, Podman retains it.
+	// No containers left; down retains the network on both engines.
 	runDillDown(t, env.engine, stack, bin, "--engine", env.engine, "-p", stack, "down")
 
 	// Recreate and tear down a running stack without the config.
@@ -392,7 +392,7 @@ func TestDillExternalVolumePreserved(t *testing.T) {
 		t.Fatalf("external volume was listed as owned: %s", vols)
 	}
 
-	if out, err := exec.Command(bin, "-f", cfg, "teardown", "--yes").CombinedOutput(); err != nil && !(env.engine == "podman" && strings.Contains(string(out), stack) && strings.Contains(string(out), "retained")) {
+	if out, err := exec.Command(bin, "-f", cfg, "teardown", "--yes").CombinedOutput(); err == nil || !strings.Contains(string(out), stack) || !strings.Contains(string(out), "retained") {
 		ids := strings.Fields(runEngine(t, env.engine, "ps", "-aq", "--filter", "ancestor=docker.io/library/busybox:1.36"))
 		for _, id := range ids {
 			detail, inspectErr := runEngineRaw(t, env.engine, "inspect", "--format", `{{.Id}} {{.Name}} {{.State.Status}} autoRemove={{.HostConfig.AutoRemove}} dill.stack={{index .Config.Labels "dill.stack"}} dill.service={{index .Config.Labels "dill.service"}}`, id)
@@ -498,15 +498,28 @@ func testTimeout() string {
 
 func runDillDown(t *testing.T, engine, stack, bin string, args ...string) {
 	t.Helper()
-	out, err := exec.Command(bin, args...).CombinedOutput()
-	if engine == "podman" {
-		if err == nil || !strings.Contains(string(out), stack) || !strings.Contains(string(out), "retained") {
-			t.Fatalf("expected retained network error: err=%v output=%s", err, out)
+	inspectID := func() string {
+		output := runEngine(t, engine, "network", "inspect", stack)
+		var networks []map[string]json.RawMessage
+		if err := json.Unmarshal([]byte(output), &networks); err != nil || len(networks) != 1 {
+			t.Fatalf("inspect network: %v output=%s", err, output)
 		}
-		return
+		for _, key := range []string{"Id", "ID", "id"} {
+			var id string
+			if json.Unmarshal(networks[0][key], &id) == nil && id != "" {
+				return id
+			}
+		}
+		t.Fatalf("network ID missing: %s", output)
+		return ""
 	}
-	if err != nil {
-		t.Fatalf("down: %v\n%s", err, out)
+	before := inspectID()
+	out, err := exec.Command(bin, args...).CombinedOutput()
+	if err == nil || !strings.Contains(string(out), stack) || !strings.Contains(string(out), "retained") {
+		t.Fatalf("expected retained network error: err=%v output=%s", err, out)
+	}
+	if after := inspectID(); after != before {
+		t.Fatalf("network identity changed: before=%s after=%s", before, after)
 	}
 }
 
@@ -519,7 +532,7 @@ func cleanupStack(t *testing.T, bin, _ string, stack string) {
 			return
 		}
 		out, err := exec.Command(bin, "--engine", engine, "-p", stack, "down").CombinedOutput()
-		if engine == "podman" && err != nil && strings.Contains(string(out), stack) && strings.Contains(string(out), "retained") {
+		if err != nil && strings.Contains(string(out), stack) && strings.Contains(string(out), "retained") {
 			// The integration test owns this unique, synthetic network and runs
 			// against an isolated engine; Dill deliberately will not remove it.
 			if removeOut, removeErr := exec.Command(engineBinaryName(engine), "network", "rm", stack).CombinedOutput(); removeErr != nil {

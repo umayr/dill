@@ -613,14 +613,7 @@ func (d *DockerEngine) RemoveNetwork(ctx context.Context, name string) error {
 	if live.Labels["dill.managed"] != "true" || live.Labels["dill.stack"] != name || live.ID == "" {
 		return fmt.Errorf("network %q is not owned by stack %q", name, name)
 	}
-	if err := d.cli.NetworkRemove(ctx, live.ID); err != nil {
-		if client.IsErrNotFound(err) {
-			return nil
-		}
-		return fmt.Errorf("removing network %s: %w", name, err)
-	}
-	logger.Debug("network removed", "name", name)
-	return nil
+	return fmt.Errorf("network %q retained: Docker resolves deletion targets as names or IDs and cannot guarantee identity-safe removal; remove manually after verifying ownership", name)
 }
 
 func (d *DockerEngine) RemoveImage(ctx context.Context, image string, force bool) error {

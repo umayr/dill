@@ -23,8 +23,7 @@ func TestDockerLifecycleNetworkOwnershipAndFailure(t *testing.T) {
 		wantDelete, wantErr bool
 	}{
 		{"foreign", `{"dill.stack":"stack"}`, 204, false, true},
-		{"owned deletion failure", `{"dill.managed":"true","dill.stack":"stack"}`, 500, true, true},
-		{"owned", `{"dill.managed":"true","dill.stack":"stack"}`, 204, true, false},
+		{"owned retained", `{"dill.managed":"true","dill.stack":"stack"}`, 204, false, true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			var target string
@@ -52,8 +51,8 @@ func TestDockerLifecycleNetworkOwnershipAndFailure(t *testing.T) {
 			if (target != "") != tc.wantDelete {
 				t.Fatalf("target %q", target)
 			}
-			if target != "" && !strings.HasSuffix(target, "/immutable-network-id") {
-				t.Fatalf("unsafe target %s", target)
+			if tc.name == "owned retained" && !strings.Contains(err.Error(), "retained") {
+				t.Fatalf("missing retained diagnosis: %v", err)
 			}
 		})
 	}
@@ -87,6 +86,29 @@ func TestPodmanLifecycleNetworkOwnershipAndFailure(t *testing.T) {
 		})
 	}
 }
+func TestDockerRemoveNetworkAbsentOrInspectError(t *testing.T) {
+	for _, status := range []int{http.StatusNotFound, http.StatusInternalServerError} {
+		t.Run(http.StatusText(status), func(t *testing.T) {
+			var deletes int
+			transport := contextTransport(func(r *http.Request) (*http.Response, error) {
+				if r.Method == http.MethodDelete {
+					deletes++
+				}
+				return contextResponse(r, status, fmt.Sprintf(`{"message":"injected","response":%d}`, status)), nil
+			})
+			cli, err := client.NewClientWithOpts(client.WithHost("http://localhost"), client.WithVersion("1.44"), client.WithHTTPClient(&http.Client{Transport: transport}))
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer cli.Close()
+			err = (&DockerEngine{cli: cli}).RemoveNetwork(context.Background(), "stack")
+			if (err != nil) != (status != http.StatusNotFound) || deletes != 0 {
+				t.Fatalf("error=%v deletes=%d", err, deletes)
+			}
+		})
+	}
+}
+
 func TestPodmanRemoveNetworkAbsentOrInspectError(t *testing.T) {
 	for _, status := range []int{http.StatusNotFound, http.StatusInternalServerError} {
 		t.Run(http.StatusText(status), func(t *testing.T) {

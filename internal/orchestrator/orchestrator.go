@@ -124,7 +124,8 @@ type Engine interface {
 	// not already exist. Idempotent.
 	EnsureNetwork(ctx context.Context, name string) error
 
-	// RemoveNetwork removes the named network. A no-op if it does not exist.
+	// RemoveNetwork reports existing networks as retained; absent networks are idempotent.
+	// The engines resolve deletion targets by either name or ID, so deletion is unsafe.
 	RemoveNetwork(ctx context.Context, name string) error
 
 	// RemoveImage removes a local image by name or ID.

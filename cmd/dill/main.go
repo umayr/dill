@@ -108,8 +108,8 @@ func run(args []string) error {
 
 Commands:
   up        Start all services (default)
-  down      Stop and remove services; retain Podman networks
-  teardown  Remove containers and images; retain volumes and Podman networks
+  down      Stop and remove services; retain networks
+  teardown  Remove containers and images; retain volumes and networks
   stop      Stop services without removing containers
   start     Start previously stopped containers
   restart   Restart services
