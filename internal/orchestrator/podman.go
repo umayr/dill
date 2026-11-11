@@ -267,7 +267,7 @@ func (p *PodmanEngine) StartService(ctx context.Context, name string, svc *confi
 	if err != nil {
 		return "", fmt.Errorf("create %s: outcome may be unknown; container %q may be retained: %w", name, containerName, err)
 	}
-	if err := startCreated(ctx, ctx, name, res.ID, func() error {
+	if err := startCreated(ctx, ctx, name, containerName, res.ID, func() error {
 		return containers.Start(p.operationContext(ctx), res.ID, nil)
 	}, func(cleanupCtx context.Context, id string) error {
 		force := true

@@ -3,6 +3,7 @@ package orchestrator
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 )
@@ -23,7 +24,7 @@ func TestStartCreatedCleanup(t *testing.T) {
 				cancel()
 			}
 			started, removed := false, false
-			err := startCreated(ctx, ctx, "app", "created-id", func() error {
+			err := startCreated(ctx, ctx, "app", "stack_app", "created-id", func() error {
 				started = true
 				if tc.success {
 					return nil
@@ -60,5 +61,20 @@ func TestStartCreatedCleanup(t *testing.T) {
 				t.Fatalf("missing cleanup error: %v", err)
 			}
 		})
+	}
+}
+
+func TestStartCreatedEmptyIDReportsContainerAndCancellation(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	err := startCreated(ctx, ctx, "app", "custom-name", "", func() error {
+		t.Fatal("started without an ID")
+		return nil
+	}, func(context.Context, string) error {
+		t.Fatal("removed without an ID")
+		return nil
+	})
+	if !errors.Is(err, context.Canceled) || !strings.Contains(err.Error(), `container "custom-name" may be retained`) || !strings.Contains(err.Error(), "outcome unknown") {
+		t.Fatalf("empty ID outcome: %v", err)
 	}
 }

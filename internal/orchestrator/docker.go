@@ -288,7 +288,7 @@ func (d *DockerEngine) StartService(ctx context.Context, name string, svc *confi
 	if err != nil {
 		return "", fmt.Errorf("create %s: outcome may be unknown; container %q may be retained: %w", name, containerName, err)
 	}
-	if err := startCreated(ctx, ctx, name, resp.ID, func() error {
+	if err := startCreated(ctx, ctx, name, containerName, resp.ID, func() error {
 		return d.cli.ContainerStart(ctx, resp.ID, container.StartOptions{})
 	}, func(cleanupCtx context.Context, id string) error {
 		return d.cli.ContainerRemove(cleanupCtx, id, container.RemoveOptions{Force: true})

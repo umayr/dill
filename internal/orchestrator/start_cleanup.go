@@ -11,9 +11,9 @@ const failedStartCleanupTimeout = 60 * time.Second
 
 // startCreated removes only the ID returned by a successful create if starting
 // fails. Cleanup uses an independent deadline even if deployment is canceled.
-func startCreated(ctx, cleanupBase context.Context, name, id string, start func() error, remove func(context.Context, string) error) error {
+func startCreated(ctx, cleanupBase context.Context, name, containerName, id string, start func() error, remove func(context.Context, string) error) error {
 	if id == "" {
-		return fmt.Errorf("create %s returned an empty ID; outcome unknown and container may be retained", name)
+		return errors.Join(fmt.Errorf("create %s returned an empty ID; outcome unknown and container %q may be retained", name, containerName), ctx.Err())
 	}
 	err := ctx.Err()
 	if err == nil {
