@@ -108,7 +108,7 @@ func TestTeardownVolumePromptAndDryRun(t *testing.T) {
 				if len(f.calls) != 0 {
 					t.Fatalf("unexpected mutations: %v", f.calls)
 				}
-				if dry && !strings.Contains(stdout, "would remove volumes: vol") {
+				if dry && !strings.Contains(stdout, "would retain volumes: vol") {
 					t.Fatalf("dry-run %q", stdout)
 				}
 				if !dry && (!strings.Contains(stderr, "1 named volume(s)") || !strings.Contains(stderr, "vol")) {

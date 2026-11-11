@@ -728,11 +728,7 @@ func (p *PodmanEngine) RemoveVolume(ctx context.Context, name, stackName string,
 	if live.Labels["dill.managed"] != "true" || live.Labels["dill.stack"] != stackName || stackName == "" {
 		return fmt.Errorf("volume %q is not owned by stack %q; retained", name, stackName)
 	}
-	opts := new(podmanvolumes.RemoveOptions).WithForce(force)
-	if err := podmanvolumes.Remove(p.operationContext(ctx), name, opts); err != nil && !podmanNotFound(err) {
-		return fmt.Errorf("removing volume %s: %w", name, err)
-	}
-	return nil
+	return fmt.Errorf("volume %q retained: safe deletion by immutable identity is unavailable; remove manually after verifying ownership", name)
 }
 
 // CLIEndpoint is the exact endpoint used by this adapter.

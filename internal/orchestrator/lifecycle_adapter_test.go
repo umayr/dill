@@ -117,13 +117,12 @@ func TestVolumeRemovalRechecksOwnership(t *testing.T) {
 			inspectStatus, deleteStatus int
 			wantDelete, wantErr         bool
 		}{
-			{"owned", `{"dill.managed":"true","dill.stack":"stack"}`, 200, 204, true, false},
+			{"owned retained", `{"dill.managed":"true","dill.stack":"stack"}`, 200, 204, false, true},
 			{"absent", ``, 404, 204, false, false},
 			{"foreign", `{"dill.managed":"true","dill.stack":"other"}`, 200, 204, false, true},
 			{"replaced by unlabelled", `{}`, 200, 204, false, true},
 			{"inspect failure", ``, 500, 204, false, true},
-			{"delete failure", `{"dill.managed":"true","dill.stack":"stack"}`, 200, 500, true, true},
-			{"removed concurrently", `{"dill.managed":"true","dill.stack":"stack"}`, 200, 404, true, false},
+			{"owned retained even with force", `{"dill.managed":"true","dill.stack":"stack"}`, 200, 500, false, true},
 		} {
 			t.Run(adapter+"/"+tc.name, func(t *testing.T) {
 				var calls []string
@@ -161,14 +160,19 @@ func TestVolumeRemovalRechecksOwnership(t *testing.T) {
 				if err != nil || len(listed) != 1 || listed[0] != "vol" {
 					t.Fatalf("list %v: %v", listed, err)
 				}
-				err = engine.RemoveVolume(context.Background(), "vol", "stack", false)
+				err = engine.RemoveVolume(context.Background(), "vol", "stack", tc.name == "owned retained even with force")
 				if (err != nil) != tc.wantErr {
 					t.Fatalf("error %v calls %v", err, calls)
 				}
 				if tc.wantErr && !strings.Contains(err.Error(), "vol") {
 					t.Fatalf("missing volume identity: %v", err)
 				}
-				deleted := len(calls) == 3 && strings.HasPrefix(calls[2], "DELETE ")
+				deleted := false
+				for _, call := range calls {
+					if strings.HasPrefix(call, "DELETE ") {
+						deleted = true
+					}
+				}
 				if deleted != tc.wantDelete {
 					t.Fatalf("calls %v", calls)
 				}

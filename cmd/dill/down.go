@@ -113,8 +113,8 @@ func runTeardown(ctx context.Context, opts commandOptions, args []string) error 
 	if !opts.DryRun {
 		msg := fmt.Sprintf("This will remove containers, images, and network for stack %s", sn)
 		if len(vols) > 0 {
-			msg = fmt.Sprintf("This will remove containers, images, %d named volume(s), and network for stack %s\nvolumes: %s",
-				len(vols), sn, strings.Join(vols, ", "))
+			msg = fmt.Sprintf("This will remove containers, images, and network for stack %s\n%d named volume(s) will be retained: %s",
+				sn, len(vols), strings.Join(vols, ", "))
 		}
 		ok, err := confirmDestructive(msg, opts)
 		if err != nil {
@@ -131,7 +131,7 @@ func runTeardown(ctx context.Context, opts commandOptions, args []string) error 
 	if opts.DryRun {
 		fmt.Printf("would remove stack %s containers, network, and images\n", sn)
 		if len(vols) > 0 {
-			fmt.Printf("would remove volumes: %s\n", strings.Join(vols, ", "))
+			fmt.Printf("would retain volumes: %s\n", strings.Join(vols, ", "))
 		}
 		return listErr
 	}
@@ -140,7 +140,7 @@ func runTeardown(ctx context.Context, opts commandOptions, args []string) error 
 
 	for _, name := range vols {
 		if !opts.Quiet {
-			printProgress(name, "removing volume")
+			printProgress(name, "checking retained volume")
 		}
 		if err := engine.RemoveVolume(ctx, name, sn, *force); err != nil {
 			errs = append(errs, &orchestrator.ResourceError{Operation: "remove volume (resource may be retained)", Resource: name, Err: err})
