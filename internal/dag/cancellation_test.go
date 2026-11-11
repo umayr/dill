@@ -115,6 +115,28 @@ func TestRunCancellationRacingReadinessPreservesCleanupFailure(t *testing.T) {
 	}
 }
 
+func TestRunCancellationAfterFinalReadinessCleansUp(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	cleanupErr := errors.New("remove denied")
+	e := &cancelReadyEngine{cancel: func() {}, cleanupErr: cleanupErr}
+	g, err := Build(map[string]*config.Service{"web": {PullPolicy: "never"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	err = g.Run(ctx, e, "stack", time.Second, nil, func(_ string, status string) {
+		if status == "ready" {
+			cancel()
+		}
+	}, func(string) PullSink { return discardSink{io.Discard} })
+	if !errors.Is(err, context.Canceled) || !errors.Is(err, cleanupErr) {
+		t.Fatalf("lost cancellation or cleanup failure: %v", err)
+	}
+	if len(e.removed) != 1 || e.removed[0] != "created-immutable-id" {
+		t.Fatalf("cleanup targeted %v", e.removed)
+	}
+}
+
 func TestRunCancellationAndIndependentRollback(t *testing.T) {
 	for _, mode := range []string{"timeout", "parent cancellation", "sibling failure"} {
 		t.Run(mode, func(t *testing.T) {
