@@ -19,6 +19,8 @@ func TestUntrustedPklOutputRejectedBeforeEngine(t *testing.T) {
 		{"case variant", `{"config":{"services":{"app":{"image":"x","Image":"y"}}}}`, `unknown property "Image"`},
 		{"port field", `{"config":{"services":{"app":{"image":"x","ports":[{"target":80,"unsupported":true}]}}}}`, `unknown property "unsupported"`},
 		{"mount field", `{"config":{"services":{"app":{"image":"x","volumes":[{"target":"/data","unsupported":true}]}}}}`, `unknown property "unsupported"`},
+		{"empty port protocol", `{"config":{"services":{"app":{"image":"x","ports":[{"target":80,"protocol":""}]}}}}`, `invalid protocol`},
+		{"empty mount type", `{"config":{"services":{"app":{"image":"x","volumes":[{"target":"/data","type":""}]}}}}`, `invalid mount type`},
 		{"duration field", `{"config":{"services":{"app":{"image":"x","healthcheck":{"test":"ok","interval":{"value":1,"unit":"s","unsupported":true}}}}}}`, `unknown property "unsupported"`},
 		{"null command element", `{"config":{"services":{"app":{"image":"x","command":[null]}}}}`, `config.services["app"].command[0]`},
 		{"null environment value", `{"config":{"services":{"app":{"image":"x","environment":{"X":null}}}}}`, `config.services["app"].environment["X"]`},

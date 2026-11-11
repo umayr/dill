@@ -160,6 +160,11 @@ func normalizePort(raw json.RawMessage) (PortBinding, error) {
 		Protocol: p.Protocol,
 	}
 	if pb.Protocol == "" {
+		var fields map[string]json.RawMessage
+		_ = json.Unmarshal(raw, &fields) // already decoded as an object above
+		if _, present := fields["protocol"]; present {
+			return PortBinding{}, fmt.Errorf("invalid protocol %q", pb.Protocol)
+		}
 		pb.Protocol = "tcp"
 	}
 	if pb.Protocol != "tcp" && pb.Protocol != "udp" && pb.Protocol != "sctp" {
@@ -257,6 +262,11 @@ func normalizeVolume(raw json.RawMessage, baseDir string) (VolumeMount, error) {
 		return VolumeMount{}, fmt.Errorf("invalid Mount object: %w", err)
 	}
 	if m.Type == "" {
+		var fields map[string]json.RawMessage
+		_ = json.Unmarshal(raw, &fields) // already decoded as an object above
+		if _, present := fields["type"]; present {
+			return VolumeMount{}, fmt.Errorf("invalid mount type %q", m.Type)
+		}
 		m.Type = "volume"
 	}
 	switch m.Type {
