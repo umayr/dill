@@ -13,7 +13,7 @@ import (
 func TestCapsCommandRegistration(t *testing.T) {
 	oldFactory := engineFactory
 	defer func() { engineFactory = oldFactory }()
-	engineFactory = func(context.Context, string) (orchestrator.Engine, error) {
+	engineFactory = func(context.Context, string, string) (orchestrator.Engine, error) {
 		t.Fatal("static discovery must not open an engine")
 		return nil, fmt.Errorf("unexpected engine access")
 	}

@@ -32,6 +32,8 @@ func TestProtocolCommandInventory(t *testing.T) {
 		{[]string{"protocol"}, true}, {[]string{"protocol", "run", "--env-file", "SENTINEL"}, true},
 		{[]string{"--env-file", "SENTINEL", "protocol", "run"}, true},
 		{[]string{"--env-file=SENTINEL", "protocol"}, true},
+		{[]string{"--engine-socket", "protocol", "version"}, false},
+		{[]string{"--engine-socket", "SECRET_SENTINEL", "protocol"}, true},
 		{[]string{"-vv", "protocol"}, true}, {[]string{"--unknown", "SENTINEL", "protocol"}, true},
 		{[]string{"exec", "web", "protocol"}, false}, {[]string{"-f", "protocol", "version"}, false},
 		{[]string{"--env-file", "SENTINEL", "exec", "web", "protocol"}, false},
@@ -51,7 +53,7 @@ func TestProtocolBoundarySpies(t *testing.T) {
 		t.Fatal("protocol loaded config")
 		return nil, nil
 	}
-	engineFactory = func(context.Context, string) (orchestrator.Engine, error) {
+	engineFactory = func(context.Context, string, string) (orchestrator.Engine, error) {
 		t.Fatal("protocol opened engine")
 		return nil, nil
 	}
@@ -63,10 +65,12 @@ func TestProtocolBoundarySpies(t *testing.T) {
 	t.Setenv("DILL_PROTOCOL_ENV_SENTINEL", "") // loadEnvFile skips existing values; unset below deliberately.
 	os.Unsetenv("DILL_PROTOCOL_ENV_SENTINEL")
 	t.Setenv("DILL_PKL_PATH", filepath.Join(t.TempDir(), "SENTINEL-missing-pkl"))
+	t.Setenv("DILL_ENGINE_SOCKET", "tcp://user:SECRET_SENTINEL@invalid-target")
 	for _, args := range [][]string{
 		{"protocol"}, {"protocol", "run"},
 		{"--env-file", path, "protocol", "run"}, {"protocol", "run", "--env-file", path},
 		{"-f", "SECRET_SENTINEL", "protocol"}, {"--engine=SECRET_SENTINEL", "protocol"},
+		{"--engine-socket", "SECRET_SENTINEL", "protocol"}, {"--engine-socket=SECRET_SENTINEL", "protocol"},
 		{"-vv", "protocol"}, {"protocol", "SECRET_SENTINEL"},
 	} {
 		out, stderr, err := captureProtocolCommand(t, `{"protocolVersion":"dill.dev/1","operation":"protocol.check","requiredFeatures":[]}`, func() error { return run(args) })

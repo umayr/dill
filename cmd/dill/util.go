@@ -17,15 +17,17 @@ import (
 )
 
 type commandOptions struct {
-	ConfigFile    string
-	Timeout       time.Duration
-	EnvFile       string
-	Engine        string
-	StackName     string
-	Quiet         bool
-	DryRun        bool
-	Yes           bool
-	ForceRecreate bool
+	ConfigFile      string
+	Timeout         time.Duration
+	EnvFile         string
+	Engine          string
+	EngineSocket    string
+	EngineSocketSet bool
+	StackName       string
+	Quiet           bool
+	DryRun          bool
+	Yes             bool
+	ForceRecreate   bool
 }
 
 // printProgress writes a clean, fixed-width progress line to stdout.
@@ -59,6 +61,15 @@ func addEngineFlag(fs *flag.FlagSet, opts *commandOptions) {
 	fs.StringVar(&opts.Engine, "engine", opts.Engine, "container engine override: podman or docker")
 }
 
+// addEngineSocketFlag preserves an explicitly empty value so it cannot silently
+// fall back to an ambient endpoint.
+func addEngineSocketFlag(fs *flag.FlagSet, opts *commandOptions) {
+	fs.Func("engine-socket", "explicit local engine socket: absolute path or unix:///path", func(value string) error {
+		opts.EngineSocket, opts.EngineSocketSet = value, true
+		return nil
+	})
+}
+
 // addConfigFlags registers the flags shared by every command that resolves a
 // config file: the path itself, the stack/project name, the engine override,
 // and an optional env file.
@@ -68,6 +79,7 @@ func addConfigFlags(fs *flag.FlagSet, opts *commandOptions) {
 	fs.StringVar(&opts.StackName, "stack-name", opts.StackName, "stack name override")
 	fs.StringVar(&opts.StackName, "project-name", opts.StackName, "stack name override")
 	addEngineFlag(fs, opts)
+	addEngineSocketFlag(fs, opts)
 	fs.StringVar(&opts.EnvFile, "env-file", opts.EnvFile, "path to an env file to load before running")
 }
 
@@ -169,8 +181,8 @@ func loadConfig(ctx context.Context, opts commandOptions) (*config.DillConfig, e
 
 var configLoader = config.Load
 
-func openEngine(ctx context.Context, cfg *config.DillConfig) (orchestrator.Engine, error) {
-	engine, err := newEngine(ctx, cfg.Engine)
+func openEngine(ctx context.Context, cfg *config.DillConfig, opts commandOptions) (orchestrator.Engine, error) {
+	engine, err := newEngine(ctx, cfg.Engine, opts)
 	if err != nil {
 		return nil, err
 	}

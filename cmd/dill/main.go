@@ -95,6 +95,7 @@ func run(args []string) error {
 	fs.StringVar(&opts.StackName, "stack-name", "", "stack name override")
 	fs.StringVar(&opts.StackName, "project-name", "", "stack name override")
 	fs.StringVar(&opts.Engine, "engine", "", "container engine override: podman or docker")
+	addEngineSocketFlag(fs, &opts)
 	fs.DurationVar(&opts.Timeout, "timeout", 5*time.Minute, "timeout for the entire stack to become ready")
 	fs.StringVar(&opts.EnvFile, "env-file", "", "path to an env file to load before running")
 	fs.BoolVar(&opts.ForceRecreate, "force-recreate", false, "force recreate containers even if nothing changed")

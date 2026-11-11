@@ -49,7 +49,7 @@ func TestCommandsUseAdapterEndpoint(t *testing.T) {
 	}
 	fake := &endpointFake{fakeEngine: newFakeEngine()}
 	fake.statuses["app"] = &orchestrator.ContainerStatus{Name: "app"} // foreign bare name must never be selected
-	engineFactory = func(context.Context, string) (orchestrator.Engine, error) { return fake, nil }
+	engineFactory = func(context.Context, string, string) (orchestrator.Engine, error) { return fake, nil }
 	tests := []struct {
 		name string
 		run  func(context.Context, commandOptions, []string) error
@@ -254,7 +254,7 @@ func TestDataPlaneSubprocessCancellation(t *testing.T) {
 	configLoader = func(context.Context, string) (*config.DillConfig, error) {
 		return &config.DillConfig{Name: "stack", Engine: "podman", Services: map[string]*config.Service{"app": {Image: "image"}}}, nil
 	}
-	engineFactory = func(context.Context, string) (orchestrator.Engine, error) {
+	engineFactory = func(context.Context, string, string) (orchestrator.Engine, error) {
 		return &endpointFake{fakeEngine: newFakeEngine()}, nil
 	}
 	for _, tc := range []struct {

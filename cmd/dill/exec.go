@@ -34,7 +34,7 @@ func runExec(ctx context.Context, opts commandOptions, args []string) error {
 		return usageError{fmt.Sprintf("unknown service %q", svc)}
 	}
 	sn := resolveStackNameWithOptions(cfg, opts)
-	engine, err := openEngine(ctx, cfg)
+	engine, err := openEngine(ctx, cfg, opts)
 	if err != nil {
 		return err
 	}
@@ -52,6 +52,7 @@ func runExec(ctx context.Context, opts commandOptions, args []string) error {
 	execArgs := append(append(flags, containerID), cmdArgs...)
 	binary, execArgs := engineCommand(engine, execArgs...)
 	c := exec.CommandContext(ctx, binary, execArgs...)
+	c.Env = engineEnvironment(engine)
 	c.Stdin = os.Stdin
 	c.Stdout = os.Stdout
 	c.Stderr = os.Stderr

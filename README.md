@@ -24,7 +24,7 @@ See [schema release and migration notes](docs/schema-release.md).
 
 ## Usage
 
-By default, Dill uses the Podman socket. You can switch to Docker by setting `engine = "docker"` in your configuration. Run `dill caps --engine podman` for known adapter limits; see the [capability matrix](docs/capabilities.md) for migration notes and verification gaps.
+By default, Dill uses the Podman socket. You can switch to Docker by setting `engine = "docker"` in your configuration. Use `--engine-socket unix:///absolute/path` to pin all engine operations to one local endpoint instead of ambient defaults; see [endpoint precedence and limitations](docs/local-engine-endpoints.md). This is not authenticated target identity, trusted contexts, cross-process locking or a machine mutation API. Run `dill caps --engine podman` for known adapter limits; see the [capability matrix](docs/capabilities.md) for migration notes and verification gaps.
 
 ```
 dill [flags] [command]
@@ -63,6 +63,7 @@ Flags:
   -f <path>         Path to .pkl config file (default: compose.pkl)
   -p, --stack-name  Override the stack name (also --project-name)
   --engine          Override the config engine (podman or docker)
+  --engine-socket   Pin a local endpoint (absolute path or unix:///path)
   --timeout <dur>   Timeout for the stack to become ready (default: 5m)
   --env-file        Load KEY=VALUE pairs before evaluating config
   --force-recreate  Recreate matching containers during up

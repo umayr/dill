@@ -32,7 +32,7 @@ func runPs(ctx context.Context, opts commandOptions, args []string) error {
 		return err
 	}
 	sn := resolveStackNameWithOptions(cfg, opts)
-	engine, err := openEngine(ctx, cfg)
+	engine, err := openEngine(ctx, cfg, opts)
 	if err != nil {
 		return err
 	}

@@ -28,7 +28,7 @@ func runPull(ctx context.Context, opts commandOptions, args []string) error {
 		return err
 	}
 
-	engine, err := openEngine(ctx, cfg)
+	engine, err := openEngine(ctx, cfg, opts)
 	if err != nil {
 		return fmt.Errorf("initialising engine: %w", err)
 	}
