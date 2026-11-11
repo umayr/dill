@@ -33,8 +33,10 @@ must instead obtain those files from source; future archives contain only
 
 The tag-triggered workflow stages only `PklProject` and `dill.pkl` in a temporary
 directory, checks the resulting zip's exact allowlist, and publishes release
-assets without replacement. It first compares every existing asset byte-for-byte,
-then uploads missing assets, verifies them, and only then commits both discovery
+assets without replacement. Before uploading assets or publishing discovery, it
+verifies the local archive allowlist, both checksums, and the metadata's version,
+URI, archive URL and archive digest. It then compares every existing asset byte-for-byte, uploads missing
+assets, verifies them, and only then commits both discovery
 metadata files to `umayr/pkl-registry` in one normal Git push. An existing
 registry file with different bytes, a changed release asset, a race, permission
 failure, or non-fast-forward push fails closed. Publication is serialized within
