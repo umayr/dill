@@ -261,3 +261,74 @@ func TestResourceErrorUnwrap(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+func TestLocalImageIDRejectsEmptyInspectID(t *testing.T) {
+	for _, adapter := range []string{"docker", "podman"} {
+		for _, tc := range []struct {
+			name, body string
+			wantErr    bool
+		}{
+			{"empty ID", `{}`, true},
+			{"valid ID", `{"Id":"sha256:immutable"}`, false},
+		} {
+			t.Run(adapter+"/"+tc.name, func(t *testing.T) {
+				transport := contextTransport(func(r *http.Request) (*http.Response, error) {
+					if strings.HasSuffix(r.URL.Path, "/exists") {
+						return contextResponse(r, 204, ""), nil
+					}
+					return contextResponse(r, 200, tc.body), nil
+				})
+				var engine Engine
+				if adapter == "docker" {
+					cli, err := client.NewClientWithOpts(client.WithHost("http://localhost"), client.WithVersion("1.44"), client.WithHTTPClient(&http.Client{Transport: transport}))
+					if err != nil {
+						t.Fatal(err)
+					}
+					defer cli.Close()
+					engine = &DockerEngine{cli: cli}
+				} else {
+					p, conn := newContextTestEngine(t, context.Background())
+					conn.Client.Transport = transport
+					engine = p
+				}
+				id, err := engine.LocalImageID(context.Background(), "example:tag")
+				if tc.wantErr {
+					if err == nil || !strings.Contains(err.Error(), "example:tag") || !strings.Contains(err.Error(), "retained") {
+						t.Fatalf("id=%q error=%v", id, err)
+					}
+				} else if err != nil || id != "sha256:immutable" {
+					t.Fatalf("id=%q error=%v", id, err)
+				}
+			})
+		}
+	}
+}
+
+func TestLocalImageIDAbsentAndInspectFailure(t *testing.T) {
+	for _, adapter := range []string{"docker", "podman"} {
+		for _, status := range []int{http.StatusNotFound, http.StatusInternalServerError} {
+			t.Run(adapter+"/"+http.StatusText(status), func(t *testing.T) {
+				transport := contextTransport(func(r *http.Request) (*http.Response, error) {
+					return contextResponse(r, status, fmt.Sprintf(`{"message":"injected","response":%d}`, status)), nil
+				})
+				var engine Engine
+				if adapter == "docker" {
+					cli, err := client.NewClientWithOpts(client.WithHost("http://localhost"), client.WithVersion("1.44"), client.WithHTTPClient(&http.Client{Transport: transport}))
+					if err != nil {
+						t.Fatal(err)
+					}
+					defer cli.Close()
+					engine = &DockerEngine{cli: cli}
+				} else {
+					p, conn := newContextTestEngine(t, context.Background())
+					conn.Client.Transport = transport
+					engine = p
+				}
+				id, err := engine.LocalImageID(context.Background(), "example:tag")
+				if id != "" || (err != nil) != (status != http.StatusNotFound) {
+					t.Fatalf("id=%q error=%v", id, err)
+				}
+			})
+		}
+	}
+}

@@ -129,6 +129,9 @@ func (d *DockerEngine) LocalImageID(ctx context.Context, img string) (string, er
 		}
 		return "", err
 	}
+	if inspect.ID == "" {
+		return "", fmt.Errorf("inspect image %q returned an empty ID; image may be retained", img)
+	}
 	return inspect.ID, nil
 }
 

@@ -172,3 +172,38 @@ func TestLifecycleFailuresAreReturned(t *testing.T) {
 		})
 	}
 }
+
+type failedImageInspectEngine struct {
+	*failingLifecycleEngine
+	inspectErr error
+}
+
+func (f *failedImageInspectEngine) LocalImageID(_ context.Context, image string) (string, error) {
+	f.calls = append(f.calls, "inspect image "+image)
+	return "", f.inspectErr
+}
+
+func TestTeardownReportsImageInspectFailureAndContinues(t *testing.T) {
+	f := &failedImageInspectEngine{
+		failingLifecycleEngine: &failingLifecycleEngine{fakeEngine: newFakeEngine()},
+		inspectErr:             errors.New("empty image ID; image may be retained"),
+	}
+	f.statuses["app_web"] = &orchestrator.ContainerStatus{Name: "app_web", State: "exited"}
+	withTestRuntime(t, f, testConfig(), func() {
+		err := runTeardown(context.Background(), commandOptions{ConfigFile: "compose.pkl", Yes: true, Quiet: true}, nil)
+		if !errors.Is(err, f.inspectErr) || !strings.Contains(err.Error(), "busybox") {
+			t.Fatalf("missing image inspect failure: %v", err)
+		}
+		calls := strings.Join(f.calls, ",")
+		for _, want := range []string{"remove app_web", "network app", "volume vol app", "inspect image busybox"} {
+			if !strings.Contains(calls, want) {
+				t.Errorf("missing %q in %s", want, calls)
+			}
+		}
+		for _, call := range f.calls {
+			if strings.HasPrefix(call, "image ") {
+				t.Errorf("removed image without an ID: %s", calls)
+			}
+		}
+	})
+}
