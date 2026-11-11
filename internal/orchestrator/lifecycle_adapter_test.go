@@ -60,7 +60,7 @@ func TestDockerLifecycleNetworkOwnershipAndFailure(t *testing.T) {
 }
 func TestPodmanLifecycleNetworkOwnershipAndFailure(t *testing.T) {
 	for _, foreign := range []bool{true, false} {
-		t.Run(map[bool]string{true: "foreign", false: "remove failure"}[foreign], func(t *testing.T) {
+		t.Run(map[bool]string{true: "foreign", false: "owned retained"}[foreign], func(t *testing.T) {
 			e, conn := newContextTestEngine(t, context.Background())
 			var target string
 			conn.Client.Transport = contextTransport(func(r *http.Request) (*http.Response, error) {
@@ -78,15 +78,34 @@ func TestPodmanLifecycleNetworkOwnershipAndFailure(t *testing.T) {
 			if err == nil {
 				t.Fatal("expected error")
 			}
-			if foreign && target != "" {
-				t.Fatalf("removed foreign: %s", target)
+			if target != "" {
+				t.Fatalf("unexpected network deletion: %s", target)
 			}
-			if !foreign && !strings.HasSuffix(target, "/network-id") {
-				t.Fatalf("target %q err %v", target, err)
+			if !foreign && !strings.Contains(err.Error(), "retained") {
+				t.Fatalf("missing retained diagnosis: %v", err)
 			}
 		})
 	}
 }
+func TestPodmanRemoveNetworkAbsentOrInspectError(t *testing.T) {
+	for _, status := range []int{http.StatusNotFound, http.StatusInternalServerError} {
+		t.Run(http.StatusText(status), func(t *testing.T) {
+			p, conn := newContextTestEngine(t, context.Background())
+			var deletes int
+			conn.Client.Transport = contextTransport(func(r *http.Request) (*http.Response, error) {
+				if r.Method == http.MethodDelete {
+					deletes++
+				}
+				return contextResponse(r, status, fmt.Sprintf(`{"message":"injected","response":%d}`, status)), nil
+			})
+			err := p.RemoveNetwork(context.Background(), "stack")
+			if (err != nil) != (status != http.StatusNotFound) || deletes != 0 {
+				t.Fatalf("error=%v deletes=%d", err, deletes)
+			}
+		})
+	}
+}
+
 func TestAdapterContainerRemovalFailures(t *testing.T) {
 	for _, status := range []int{http.StatusNotFound, http.StatusInternalServerError} {
 		t.Run(http.StatusText(status), func(t *testing.T) {

@@ -107,8 +107,8 @@ func run(args []string) error {
 
 Commands:
   up        Start all services (default)
-  down      Stop and remove all dill-managed services
-  teardown  Remove containers, images, and network; retain volumes (--force affects images)
+  down      Stop and remove services; retain Podman networks
+  teardown  Remove containers and images; retain volumes and Podman networks
   stop      Stop services without removing containers
   start     Start previously stopped containers
   restart   Restart services
