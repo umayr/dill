@@ -290,10 +290,11 @@ as-is.
 
 Named volumes are stack-scoped by default: `pg-data:/var/lib/postgresql/data`
 creates `<stack>_pg-data`. Two stacks declaring the same logical volume get two
-independent volumes. `dill teardown` retains named volumes and reports them as an
-error: engine APIs cannot safely make an ownership check atomic with name-based
-removal. Remove volumes manually after verifying ownership and ensuring that no
-other process can replace them. See [lifecycle failures](docs/lifecycle-failures.md).
+independent volumes. `dill teardown` retains stack-labelled named volumes and
+reports them as an error: engine APIs cannot safely make an ownership check
+atomic with name-based removal. Remove volumes manually after verifying ownership
+and ensuring that no other process can replace them. See
+[lifecycle failures](docs/lifecycle-failures.md).
 
 To reuse a pre-existing volume (for example one Compose created as
 `<project>_pg-data`) or a shared volume, use the full mount form:
@@ -309,7 +310,8 @@ volumes = List(new Mount {
 
 `externalVolume = true` uses `source` (or `name`) as the engine volume name and
 Dill never creates, labels, or removes it. A `name` without `externalVolume` uses
-an explicit engine name but keeps the volume managed.
+an explicit engine name; Dill creates missing volumes with ownership labels but
+does not relabel pre-existing volumes.
 
 `dill volumes` lists the volumes owned by the stack. Legacy and Compose-created
 volumes are unlabelled and are left untouched by teardown. If the stack name matches
