@@ -88,19 +88,15 @@ func (p *PodmanEngine) ImageExists(ctx context.Context, img string) (bool, error
 
 // LocalImageID returns the local image ID, or "" when the image is absent.
 func (p *PodmanEngine) LocalImageID(ctx context.Context, img string) (string, error) {
-	exists, err := images.Exists(p.operationContext(ctx), img, nil)
-	if err != nil {
-		return "", err
-	}
-	if !exists {
-		return "", nil
-	}
 	data, err := images.GetImage(p.operationContext(ctx), img, nil)
+	if podmanNotFound(err) {
+		return "", nil
+	}
 	if err != nil {
 		return "", err
 	}
-	if data == nil || data.ImageData == nil {
-		return "", nil
+	if data == nil || data.ImageData == nil || data.ID == "" {
+		return "", fmt.Errorf("inspect image %q returned an empty ID; image may be retained", img)
 	}
 	return data.ID, nil
 }

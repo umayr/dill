@@ -99,8 +99,7 @@ func TestPodmanOperationsCancelInflightRequests(t *testing.T) {
 	}{
 		{"pull", "", func(ctx context.Context, e *PodmanEngine) error { return e.PullImage(ctx, "busybox", io.Discard) }},
 		{"image exists", "", func(ctx context.Context, e *PodmanEngine) error { _, err := e.ImageExists(ctx, "image"); return err }},
-		{"local image exists", "", func(ctx context.Context, e *PodmanEngine) error { _, err := e.LocalImageID(ctx, "image"); return err }},
-		{"local image inspect", "/exists", func(ctx context.Context, e *PodmanEngine) error { _, err := e.LocalImageID(ctx, "image"); return err }},
+		{"local image inspect", "", func(ctx context.Context, e *PodmanEngine) error { _, err := e.LocalImageID(ctx, "image"); return err }},
 		{"create", "", func(ctx context.Context, e *PodmanEngine) error {
 			_, err := e.StartService(ctx, "web", &config.Service{Image: "busybox"}, "app")
 			return err
