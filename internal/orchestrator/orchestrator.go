@@ -138,7 +138,7 @@ type Engine interface {
 	// ListStackVolumes returns the volumes labelled as owned by the stack.
 	ListStackVolumes(ctx context.Context, stackName string) ([]string, error)
 
-	// RemoveVolume rechecks ownership immediately before removing the named volume.
+	// RemoveVolume reports existing volumes as retained; absent volumes are idempotent.
 	// Engines cannot make this check atomic with deletion; names can be reused.
 	RemoveVolume(ctx context.Context, name, stackName string, force bool) error
 

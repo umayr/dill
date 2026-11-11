@@ -32,7 +32,7 @@ dill [flags] [command]
 Commands:
   up        Start all services (default)
   down      Stop and remove all dill-managed services
-  teardown  Remove containers, images, volumes, and network
+  teardown  Remove containers, images, and network; retain volumes
   stop      Stop services without removing containers
   start     Start previously stopped containers
   restart   Restart services
@@ -284,9 +284,10 @@ as-is.
 
 Named volumes are stack-scoped by default: `pg-data:/var/lib/postgresql/data`
 creates `<stack>_pg-data`. Two stacks declaring the same logical volume get two
-independent volumes. `dill teardown` removes volumes labelled as owned by the stack,
-after rechecking ownership. Engine APIs cannot make that check atomic with
-name-based removal; see [lifecycle failures](docs/lifecycle-failures.md).
+independent volumes. `dill teardown` retains named volumes and reports them as an
+error: engine APIs cannot safely make an ownership check atomic with name-based
+removal. Remove volumes manually after verifying ownership and ensuring that no
+other process can replace them. See [lifecycle failures](docs/lifecycle-failures.md).
 
 To reuse a pre-existing volume (for example one Compose created as
 `<project>_pg-data`) or a shared volume, use the full mount form:

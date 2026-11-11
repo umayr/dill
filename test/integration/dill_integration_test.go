@@ -140,10 +140,18 @@ func TestDillRealEngineTeardown(t *testing.T) {
 	cfg := filepath.Join(t.TempDir(), "compose.pkl")
 
 	writeVolumeConfig(t, cfg, root, env.engine, stack)
+	volume := stack + "_" + stack + "-data"
+	t.Cleanup(func() { _ = exec.Command(engineBinaryName(env.engine), "volume", "rm", "-f", volume).Run() })
 	cleanupStack(t, bin, cfg, stack)
 
 	runDill(t, true, bin, "-f", cfg, "--timeout", testTimeout(), "up")
-	runDill(t, true, bin, "-f", cfg, "teardown", "--yes", "--force")
+	out, err := exec.Command(bin, "-f", cfg, "teardown", "--yes", "--force").CombinedOutput()
+	if err == nil || !strings.Contains(string(out), volume) || !strings.Contains(string(out), "retained") {
+		t.Fatalf("teardown did not report retained volume: err=%v output=%s", err, out)
+	}
+	if !volumeExists(t, env.engine, volume) {
+		t.Fatal("teardown deleted retained volume")
+	}
 	assertEmptyStack(t, bin, cfg)
 }
 
@@ -327,7 +335,7 @@ func TestDillStackScopedVolumes(t *testing.T) {
 	}
 
 	// B still uses the shared image: teardown A must report the image removal
-	// failure while continuing to remove A's owned volume and container.
+	// failure and retain A's volume while continuing to remove A's container.
 	imageID := strings.TrimSpace(runEngine(t, env.engine, "inspect", "--format", "{{.Image}}", stackB+"_app"))
 	out, err := exec.Command(bin, "-f", cfgA, "teardown", "--yes").CombinedOutput()
 	if err == nil {
@@ -342,8 +350,11 @@ func TestDillStackScopedVolumes(t *testing.T) {
 	if state := containerState(t, env.engine, stackB+"_app"); state != "running" {
 		t.Fatalf("B container state = %s", state)
 	}
-	if volumeExists(t, env.engine, stackA+"_data") {
-		t.Fatal("A's volume survived teardown")
+	if !volumeExists(t, env.engine, stackA+"_data") {
+		t.Fatal("A's volume was not retained")
+	}
+	if !strings.Contains(string(out), stackA+"_data") || !strings.Contains(string(out), "retained") {
+		t.Fatalf("teardown did not report retained volume: %s", out)
 	}
 	if !volumeExists(t, env.engine, stackB+"_data") {
 		t.Fatal("A's teardown removed B's volume")
