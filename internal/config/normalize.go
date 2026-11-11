@@ -278,6 +278,9 @@ func normalizeVolume(raw json.RawMessage, baseDir string) (VolumeMount, error) {
 		if m.ExternalVolume || m.Name != nil {
 			return VolumeMount{}, fmt.Errorf("tmpfs mounts do not support external or name")
 		}
+		if m.Source != nil && *m.Source != "" {
+			return VolumeMount{}, fmt.Errorf("tmpfs mounts do not support a source")
+		}
 	default:
 		return VolumeMount{}, fmt.Errorf("invalid mount type %q", m.Type)
 	}

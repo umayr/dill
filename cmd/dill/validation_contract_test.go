@@ -27,6 +27,7 @@ func TestOfflineValidationEntryPoints(t *testing.T) {
 		{"label", `labels { ["dill.owner"] = "x" }`, "reserved"},
 		{"port", `ports = List("99999:80")`, "port"},
 		{"mount", `volumes = List(":")`, "volume"},
+		{"tmpfs source", `volumes = List(new Mount { type = "tmpfs"; source = "/host"; target = "/data" })`, "tmpfs mounts do not support a source"},
 		{"resource", `memLimit = "bogus"`, "memLimit"},
 	}
 	for _, tt := range tests {

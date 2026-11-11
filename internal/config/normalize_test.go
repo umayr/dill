@@ -238,11 +238,24 @@ func TestNormalizeVolumes_invalidMounts(t *testing.T) {
 		`{"type":"bind","source":"/host","target":"/data","externalVolume":true}`,
 		`{"type":"bind","target":"/data"}`,
 		`{"type":"tmpfs","target":"/data","name":"custom"}`,
+		`{"type":"tmpfs","source":"/host","target":"/data"}`,
 		`{"type":"nfs","source":"host:/data","target":"/data"}`,
 	}
 	for _, c := range cases {
 		if _, err := NormalizeVolumes([]json.RawMessage{raw(c)}, ""); err == nil {
 			t.Errorf("NormalizeVolumes(%s): expected error", c)
+		}
+	}
+}
+
+func TestNormalizeVolumes_tmpfsWithoutSource(t *testing.T) {
+	for _, mount := range []string{
+		`{"type":"tmpfs","target":"/data"}`,
+		`{"type":"tmpfs","source":null,"target":"/data"}`,
+		`{"type":"tmpfs","source":"","target":"/data"}`,
+	} {
+		if _, err := NormalizeVolumes([]json.RawMessage{raw(mount)}, ""); err != nil {
+			t.Errorf("NormalizeVolumes(%s): %v", mount, err)
 		}
 	}
 }
