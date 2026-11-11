@@ -45,6 +45,9 @@ func TestDillCancelledUpRollsBack(t *testing.T) {
 	env := integrationEnv(t)
 	root := repoRoot(t)
 	bin := dillBinary(t, root)
+	// Pull outside the deadline so the timeout exercises readiness rollback,
+	// rather than cancelling an in-flight image pull or container creation.
+	runEngine(t, env.engine, "pull", "docker.io/library/busybox:1.36")
 	for _, mode := range []string{"timeout", "SIGTERM"} {
 		t.Run(mode, func(t *testing.T) {
 			stack := fmt.Sprintf("dill-cancel-%s-%d", env.engine, time.Now().UnixNano())
@@ -56,6 +59,7 @@ config {
   services {
     ["app"] {
       image = "docker.io/library/busybox:1.36"
+      pullPolicy = "missing"
       command = List("sh", "-c", "trap 'exit 0' TERM; while true; do sleep 1; done")
       healthcheck {
         test = "false"
@@ -75,7 +79,7 @@ config {
 			t.Cleanup(func() { _, _ = runEngineRaw(t, env.engine, "network", "rm", stack) })
 			timeout := "30s"
 			if mode == "timeout" {
-				timeout = "2s"
+				timeout = "15s"
 			}
 			cmd := exec.Command(bin, "-f", cfg, "up", "--timeout", timeout)
 			output := &cancellationOutput{waiting: make(chan struct{})}
@@ -114,6 +118,11 @@ config {
 				}
 			case <-time.After(30 * time.Second):
 				t.Fatalf("up did not exit after cancellation\n%s", output.String())
+			}
+			select {
+			case <-output.waiting:
+			default:
+				t.Fatalf("cancelled before readiness wait; rollback was not exercised\n%s", output.String())
 			}
 			if !strings.Contains(output.String(), "deployment failed") {
 				t.Fatalf("deployment did not reach rollback\n%s", output.String())
