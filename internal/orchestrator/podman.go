@@ -640,20 +640,7 @@ func (p *PodmanEngine) RemoveNetwork(ctx context.Context, name string) error {
 	if live.Labels["dill.managed"] != "true" || live.Labels["dill.stack"] != name || live.ID == "" {
 		return fmt.Errorf("network %q is not owned by stack %q", name, name)
 	}
-	result, err := podmannetwork.Remove(p.operationContext(ctx), live.ID, nil)
-	if podmanNotFound(err) {
-		err = nil
-	}
-	for _, report := range result {
-		if report != nil && report.Err != nil {
-			err = errors.Join(err, report.Err)
-		}
-	}
-	if err != nil {
-		return fmt.Errorf("removing network %s: %w", name, err)
-	}
-	logger.Debug("network removed", "name", name)
-	return nil
+	return fmt.Errorf("network %q retained: Podman resolves deletion targets as names or IDs and cannot guarantee identity-safe removal; remove manually after verifying ownership", name)
 }
 
 func (p *PodmanEngine) RemoveImage(ctx context.Context, image string, force bool) error {

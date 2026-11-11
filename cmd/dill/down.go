@@ -110,11 +110,14 @@ func runTeardown(ctx context.Context, opts commandOptions, args []string) error 
 		listErr = fmt.Errorf("list volumes for stack %q: %w", sn, listErr)
 	}
 
+	networkAction := "remove the network"
+	if cfg.Engine == "podman" {
+		networkAction = "retain the Podman network"
+	}
 	if !opts.DryRun {
-		msg := fmt.Sprintf("This will remove containers, images, and network for stack %s", sn)
+		msg := fmt.Sprintf("This will remove containers and images and %s for stack %s", networkAction, sn)
 		if len(vols) > 0 {
-			msg = fmt.Sprintf("This will remove containers, images, and network for stack %s\n%d named volume(s) will be retained: %s",
-				sn, len(vols), strings.Join(vols, ", "))
+			msg += fmt.Sprintf("\n%d named volume(s) will be retained: %s", len(vols), strings.Join(vols, ", "))
 		}
 		ok, err := confirmDestructive(msg, opts)
 		if err != nil {
@@ -129,7 +132,7 @@ func runTeardown(ctx context.Context, opts commandOptions, args []string) error 
 	}
 
 	if opts.DryRun {
-		fmt.Printf("would remove stack %s containers, network, and images\n", sn)
+		fmt.Printf("would remove stack %s containers and images and %s\n", sn, networkAction)
 		if len(vols) > 0 {
 			fmt.Printf("would retain volumes: %s\n", strings.Join(vols, ", "))
 		}

@@ -31,8 +31,8 @@ dill [flags] [command]
 
 Commands:
   up        Start all services (default)
-  down      Stop and remove all dill-managed services
-  teardown  Remove containers, images, and network; retain volumes
+  down      Stop and remove dill-managed services; retain Podman networks
+  teardown  Remove containers and images; retain volumes and Podman networks
   stop      Stop services without removing containers
   start     Start previously stopped containers
   restart   Restart services
@@ -127,6 +127,11 @@ from service IDs. Existing colliding configurations must be renamed before use.
 Legacy `networkMode` values continue to be passed to the engine unchanged;
 managed namespace-sharing edges are not inferred or validated and are deferred
 to #9. Offline validation does not inspect target capabilities or state.
+
+Podman `down` and `teardown` retain existing stack networks and report an error:
+its API cannot safely distinguish every network ID from a network name during
+concurrent replacement. Verify ownership and prevent concurrent changes before
+removing a retained network manually. See [lifecycle failures](docs/lifecycle-failures.md).
 
 `rm` and `teardown` prompt before destructive removal; pass
 `--yes`/`-y` for automation. `stop` and `down` do not prompt.

@@ -23,7 +23,7 @@ func TestDillRealEngineFailedStartCleanup(t *testing.T) {
 	cleanupStack(t, bin, cfg, stack)
 	// Ensure the test image is present using the same engine and normal pull policy.
 	runDill(t, true, bin, "-f", cfg, "--timeout", testTimeout(), "up")
-	runDill(t, true, bin, "-f", cfg, "down")
+	runDillDown(t, env.engine, stack, bin, "-f", cfg, "down")
 	blocker := stack + "-blocker"
 	t.Cleanup(func() { _, _ = runEngineRaw(t, env.engine, "rm", "-f", blocker) })
 	runEngine(t, env.engine, "run", "-d", "--name", blocker, "-p", "127.0.0.1::8080", "docker.io/library/busybox:1.36", "sleep", "300")
