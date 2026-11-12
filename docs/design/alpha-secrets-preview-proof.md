@@ -113,8 +113,10 @@ The private live section contains exactly:
   facts for the stack network and every declared resolved named volume.
   Network: existence/name/full ID and static configuration. Docker fields are
   driver, scope, internal/IPv6/attachable/ingress, IPAM, options and labels;
-  Podman fields are native name/ID/driver/interface/subnets/routes/IPv6/internal/
-  DNS servers/options/IPAM-options/labels/DNS-enabled (creation time zeroed).
+  Podman uses the complete embedded SDK `Network` configuration:
+  name/ID/driver/interface/subnets/routes/IPv6/internal/DNS servers/options/
+  IPAM-options/labels/DNS-enabled (creation time zeroed), not the enclosing
+  `NetworkInspectReport` with its runtime endpoint census.
   Attached containers and usage counters are excluded.
   Volume: existence/name, driver, mountpoint, options, labels and **stable volume
   creation time**; Docker also includes scope. The creation time is a relevant
@@ -122,9 +124,16 @@ The private live section contains exactly:
   a changing sample. Volume size/refcounts/mount counts and arbitrary driver
   status are excluded. No network/volume mutation is performed for proof reads.
 
+Network resource facts do not bind foreign endpoint membership or assigned IP/MAC
+addresses. This matches Docker's existing configuration-only resource surface;
+it is not a total network-traffic freeze or a network endpoint census. Managed
+container immutable identities, ownership and lifecycle state remain independently
+bound as described above, as do all declared network settings and network identity.
+Trusted-operator quiescence is still required.
+
 The planner observation implementation is `internal/plan/preview.go`; native
-resource allowlists live in both adapter `PreviewResources` methods. Any future
-change to this surface must update these lists and invalidation tests. It is
+resource projections live in both adapter `PreviewResources` methods. Any future
+change to this surface must update these projections and invalidation tests. It is
 not an assertion that all engine inspect fields influence reconciliation.
 
 Selected-source replacement or detectable stat changes before confirmation
@@ -272,8 +281,37 @@ paths; dynamic keys are masked. No source bytes, values/value hashes, keys,
 proofs or canonical frame values are printed. The original stop, restart,
 immutable-ID and valid-replacement assertions remain enforced. If a snapshot
 cannot match the just-published CLI proof, the probe explicitly fails and its
-fresh observations must not be mistaken for exact CLI evidence. Next disposable
-CI must establish the changed fields before a product or test assumption fix.
+fresh observations must not be mistaken for exact CLI evidence.
+
+### Network attachment correction
+
+Run 43324736173 at `bfe4940` passed baseline jobs and Alpha Docker. Both Podman
+jobs verified all three diagnostic snapshots against the actual CLI MACs. The
+before snapshot had no changes; stop changed resource settings and lifecycle
+state; restart changed only nested network resource settings. Authority/source
+stat observations did not change. Paired Brine run 43324790385 reproduced this
+failure. These results identify a resource-input bug, not volatile lifecycle
+counters or source metadata drift.
+
+Podman 5.0.0 `pkg/domain/entities/types/network.go` defines
+`NetworkInspectReport` as embedded `commonTypes.Network` plus a `Containers` map
+of `NetworkContainerInfo`. Each container has `Interfaces` containing native
+`NetInterface` subnets/`ipnet` and `mac_address`. The old adapter marshalled the
+whole report after zeroing its creation timestamp, inadvertently authenticating
+runtime container membership and assigned addresses. The MAC-verified nested
+changed-field paths match this report-only endpoint structure.
+
+The adapter now projects the complete embedded `n.Network`, preserving every
+native network configuration field and immutable ID while excluding the report's
+`Containers` data. Creation time is still zeroed as before. Wire regressions
+exercise endpoint removal/addition, same-container address churn, foreign
+endpoints/interfaces, and meaningful identity/configuration/ownership changes,
+including network subnets, gateways, lease ranges, routing, DNS and IPAM. This
+restores the intended stable resource surface without changing source validation,
+owned-container identity/lifecycle inputs or the original lifecycle equality
+assertion. MAC-verified instrumentation stays enabled. Fresh rootful/rootless
+Podman and paired qualification plus independent review remain required; this
+source-backed correction is not itself full runtime qualification.
 
 A separate CI-only test-binary probe replays the same independently checked adapter
 phases on synthetic fixtures after a failed Podman create, reporting bounded

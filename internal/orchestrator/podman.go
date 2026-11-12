@@ -805,8 +805,11 @@ func (p *PodmanEngine) PreviewResources(ctx context.Context, stack string, names
 	fact := PreviewResource{Kind: "network", Name: stack, Exists: err == nil}
 	if err == nil {
 		fact.ID = n.ID
-		n.Created = time.Time{}
-		fact.Settings, err = json.Marshal(n)
+		// The inspect report also contains runtime container/IP/MAC attachments.
+		// Bind the complete network configuration, not that endpoint census.
+		settings := n.Network
+		settings.Created = time.Time{}
+		fact.Settings, err = json.Marshal(settings)
 		if err != nil {
 			return nil, err
 		}
