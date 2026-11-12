@@ -3,6 +3,7 @@ package main
 import (
 	"encoding/json"
 	"flag"
+	"io"
 	"os"
 
 	"github.com/umayr/dill/internal/orchestrator"
@@ -10,6 +11,9 @@ import (
 
 func runCaps(opts commandOptions, args []string) error {
 	fs := flag.NewFlagSet(cmdCaps, flag.ContinueOnError)
+	if opts.secretMode() {
+		fs.SetOutput(io.Discard)
+	}
 	addEngineFlag(fs, &opts)
 	if err := fs.Parse(args); err != nil {
 		return usageError{err.Error()}

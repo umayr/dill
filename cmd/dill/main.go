@@ -38,7 +38,7 @@ type usageError struct{ msg string }
 func (e usageError) Error() string { return e.msg }
 
 func main() {
-	if isProtocolInvocation(os.Args[1:]) {
+	if isProtocolInvocation(os.Args[1:]) && !secretInvocation(os.Args[1:]) {
 		os.Exit(runProtocol(os.Args[1:]))
 	}
 	verbosity, remaining := logger.ParseVerbosity(os.Args[1:])
@@ -107,6 +107,9 @@ func run(args []string) (retErr error) {
 	}()
 
 	if isProtocolInvocation(args) {
+		if safe {
+			return config.ErrSecretUnavailable
+		}
 		if code := runProtocol(args); code != 0 {
 			return protocolExit{code}
 		}
@@ -185,6 +188,15 @@ Flags:
 	cmd := cmdUp
 	if fs.NArg() > 0 {
 		cmd = fs.Arg(0)
+	}
+
+	// These legacy commands do not implement the Alpha diagnostic contract.
+	// Reject before any local parser, env-file, evaluator or SDK access.
+	if safe {
+		switch cmd {
+		case cmdInit, cmdFmt, cmdDoctor, cmdStacks, cmdLs:
+			return config.ErrSecretUnavailable
+		}
 	}
 
 	if cmd != cmdSecretCapabilities {

@@ -375,3 +375,88 @@ func TestStandaloneSecretRequestCanOmitStackOverride(t *testing.T) {
 		t.Fatal("path-derived secret identity accepted")
 	}
 }
+
+func TestSecretSelectorsGuardLegacySubcommands(t *testing.T) {
+	for _, command := range []string{"init", "fmt", "doctor", "stacks", "ls", "caps", "protocol"} {
+		for _, selector := range []string{"environment", "target", "bindings", "proof-key", "proof-output"} {
+			t.Run(command+"/"+selector, func(t *testing.T) {
+				args := []string{command, "--" + syntheticPrivateDiagnostic}
+				switch selector {
+				case "target":
+					args = append([]string{"--secret-target="}, args...)
+				case "bindings":
+					args = append([]string{"--secret-bindings="}, args...)
+				case "proof-key":
+					args = append([]string{"--proof-key-file="}, args...)
+				case "proof-output":
+					args = append([]string{"--proof-file="}, args...)
+				}
+				out, stderr, code := secretMain(t, "static", selector == "environment", args...)
+				if code != 1 || strings.Contains(out+stderr, syntheticPrivateDiagnostic) || strings.Contains(out+stderr, "Usage:") || !strings.Contains(out+stderr, config.ErrSecretUnavailable.Error()) {
+					t.Fatal("selector diagnostic guard failed")
+				}
+			})
+		}
+	}
+	// A selector after the command must also guard its local parser.
+	out, stderr, code := secretMain(t, "static", false, "fmt", "--secret-target=", "--"+syntheticPrivateDiagnostic)
+	if code != 1 || out != "" || stderr != config.ErrSecretUnavailable.Error()+"\n" {
+		t.Fatal("local selector escaped guard")
+	}
+	for _, command := range []string{"init", "fmt", "caps", "stacks"} {
+		out, stderr, code = secretMain(t, "pkl", false, command, "--"+syntheticPrivateDiagnostic)
+		if code != 2 || !strings.Contains(out+stderr, syntheticPrivateDiagnostic) {
+			t.Fatal("no-selector legacy parser diagnostics changed")
+		}
+	}
+	for _, policy := range []bool{false, true} {
+		args := []string{"caps", "--engine", "docker"}
+		if !policy {
+			args = append([]string{"--secret-target="}, args...)
+		}
+		out, stderr, code = secretMain(t, "static", policy, args...)
+		if code != 0 || stderr != "" || !strings.Contains(out, "docker") {
+			t.Fatal("static caps lost selector compatibility")
+		}
+	}
+}
+
+func TestSecretSelectorPreventsFormatterAndDoctorDiagnostics(t *testing.T) {
+	dir := t.TempDir()
+	marker := filepath.Join(dir, "formatter-called")
+	pkl := filepath.Join(dir, "pkl")
+	script := "#!/bin/sh\nif [ \"$1\" = --version ]; then echo 'Pkl 0.31.1'; exit 0; fi\nprintf called > " + fmt.Sprintf("%q", marker) + "\necho " + syntheticPrivateDiagnostic + " >&2\nexit 1\n"
+	if os.WriteFile(pkl, []byte(script), 0700) != nil {
+		t.Fatal("formatter fixture")
+	}
+	t.Setenv("DILL_PKL_PATH", pkl)
+	for _, policy := range []bool{false, true} {
+		args := []string{"fmt"}
+		if !policy {
+			args = append([]string{"--secret-target="}, args...)
+		}
+		out, stderr, code := secretMain(t, "pkl", policy, args...)
+		if code != 1 || strings.Contains(out+stderr, syntheticPrivateDiagnostic) {
+			t.Fatal("formatter diagnostic escaped guard")
+		}
+		if _, err := os.Stat(marker); !os.IsNotExist(err) {
+			t.Fatal("guarded formatter executed")
+		}
+		args = []string{"doctor", "--format", "json"}
+		if !policy {
+			args = append([]string{"--secret-target="}, args...)
+		}
+		out, stderr, code = secretMain(t, "sdk", policy, args...)
+		if code != 1 || strings.Contains(out+stderr, syntheticPrivateDiagnostic) || strings.Contains(out, "checks") {
+			t.Fatal("doctor detail escaped guard")
+		}
+	}
+	out, stderr, code := secretMain(t, "pkl", false, "fmt")
+	if code != 1 || !strings.Contains(out+stderr, syntheticPrivateDiagnostic) {
+		t.Fatal("legacy formatter stderr changed")
+	}
+	out, stderr, code = secretMain(t, "sdk", false, "doctor", "--format", "json")
+	if code != 1 || !strings.Contains(out+stderr, syntheticPrivateDiagnostic) {
+		t.Fatal("legacy doctor details changed")
+	}
+}
