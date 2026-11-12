@@ -21,7 +21,7 @@ import (
 
 func protectedTestDir(t *testing.T) string {
 	t.Helper()
-	dir, err := os.MkdirTemp(".", "secretfile-test-")
+	dir, err := os.MkdirTemp(secretTestBase(t), "secretfile-test-")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -32,7 +32,8 @@ func protectedTestDir(t *testing.T) string {
 	}
 	fd, _, err := openParent(filepath.Join(dir, "probe"), uint32(os.Geteuid()))
 	if err != nil {
-		t.Skip("workspace ancestry is not protected; Linux CI must use a protected workspace")
+		fixtureDiagnostics(t, dir)
+		t.Fatal("synthetic fixture ancestry is not protected; provision DILL_TEST_SECRET_DIR outside untrusted workspaces")
 	}
 	unix.Close(fd)
 	return dir
@@ -415,4 +416,44 @@ func TestSourceMetadataWithoutReadPermission(t *testing.T) {
 	if out, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("synthetic nonowner check: %v\n%s", err, out)
 	}
+}
+
+func secretTestBase(t *testing.T) string {
+	t.Helper()
+	if p := os.Getenv("DILL_TEST_SECRET_DIR"); p != "" {
+		return p
+	}
+	return "."
+}
+
+// Synthetic-only diagnostics: never used by production preflight/errors.
+func fixtureDiagnostics(t *testing.T, p string) {
+	t.Helper()
+	for current := p; ; current = filepath.Dir(current) {
+		var st unix.Stat_t
+		statErr := unix.Lstat(current, &st)
+		_, access := unix.Getxattr(current, "system.posix_acl_access", nil)
+		_, defaults := unix.Getxattr(current, "system.posix_acl_default", nil)
+		t.Logf("synthetic fixture ancestor %s: uid=%d gid=%d mode=%o links=%d device=%d inode=%d stat=%v accessACL=%v defaultACL=%v", current, st.Uid, st.Gid, st.Mode, st.Nlink, uint64(st.Dev), st.Ino, statErr, access, defaults)
+		if current == "/" {
+			break
+		}
+	}
+}
+
+func TestWorkspaceAncestryQualification(t *testing.T) {
+	cwd, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	fd, _, err := openParent(filepath.Join(cwd, "synthetic-probe"), uint32(os.Geteuid()))
+	if err == nil {
+		unix.Close(fd)
+		t.Log("workspace has protected ancestry")
+		return
+	}
+	fixtureDiagnostics(t, cwd)
+	// Workspace rejection is intentional, not permission to skip valid-source
+	// checks. The separate configured synthetic fixture must actually qualify.
+	protectedTestDir(t)
 }

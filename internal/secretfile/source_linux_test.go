@@ -9,44 +9,19 @@ import (
 	"testing"
 
 	"github.com/umayr/dill/internal/config"
-	"golang.org/x/sys/unix"
 )
 
 func TestSourceMetadata(t *testing.T) {
-	dir, err := os.MkdirTemp(".", "secretfile-test-")
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer os.RemoveAll(dir)
-	dir, err = filepath.Abs(dir)
-	if err != nil {
-		t.Fatal(err)
-	}
+	dir := protectedTestDir(t)
+	var err error
 	file := filepath.Join(dir, "source")
 	if err = os.WriteFile(file, []byte("synthetic-sentinel"), 0400); err != nil {
 		t.Fatal(err)
 	}
 	s := config.ResolvedSecret{HostPath: file, HostUID: int64(os.Geteuid()), HostGID: int64(os.Getegid()), HostMode: 0400}
-	for parent := dir; ; parent = filepath.Dir(parent) {
-		fd, e := unix.Open(parent, unix.O_RDONLY|unix.O_DIRECTORY|unix.O_CLOEXEC|unix.O_NOFOLLOW, 0)
-		if e != nil {
-			t.Fatal(e)
-		}
-		var st unix.Stat_t
-		e = unix.Fstat(fd, &st)
-		unix.Close(fd)
-		if e != nil {
-			t.Fatal(e)
-		}
-		if st.Mode&0022 != 0 || (st.Uid != 0 && st.Uid != uint32(os.Geteuid())) {
-			t.Skip("test workspace is under an untrusted or writable ancestor")
-		}
-		if parent == "/" {
-			break
-		}
-	}
 	if _, err = checkSource(s); err != nil {
-		t.Fatalf("valid file metadata rejected: %v", err)
+		fixtureDiagnostics(t, file)
+		t.Fatalf("qualified synthetic file metadata rejected: %v", err)
 	}
 
 	s.UID = s.HostUID
