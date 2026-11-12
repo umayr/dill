@@ -326,7 +326,10 @@ func TestDillQualifiedHostFileSecrets(t *testing.T) {
 			out = out[:16384]
 		}
 		t.Logf("synthetic preview fact diagnostic stage=%s (%v):\n%s", stage, err, out)
-		// Diagnostics do not replace or bypass the original lifecycle assertions.
+		if err != nil {
+			t.Error("synthetic preview diagnostic did not verify CLI proof")
+		}
+		// Continue gathering evidence; diagnostics do not replace or bypass the original lifecycle assertions.
 	}
 	previewDiagnostic("before")
 	// Immutable resource identity and lifecycle state are confirmation inputs.
