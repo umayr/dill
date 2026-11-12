@@ -121,10 +121,12 @@ if [[ $engine == docker ]]; then
 else
   run_operator /usr/bin/podman --url "unix://$socket" version --format '{{.Server.Version}}'
 fi
-common=(PATH=/usr/bin:/usr/local/bin:/bin DILL_TEST_ALPHA_SECRETS=1 DILL_TEST_SECRET_DIR="$base/fixtures" DILL_BINARY="$repo/bin/dill" \
+# Restore the validated CI marker explicitly across sudo's environment reset.
+common=(GITHUB_ACTIONS=true PATH=/usr/bin:/usr/local/bin:/bin DILL_TEST_ALPHA_SECRETS=1 DILL_TEST_SECRET_DIR="$base/fixtures" DILL_BINARY="$repo/bin/dill" \
   DILL_PKL_PATH="$base/pkl" DILL_ALPHA_DIAGNOSTIC_BINARY="$RUNNER_TEMP/alpha-diagnostics.test" DILL_ALPHA_ENGINE="$engine" DILL_ALPHA_SOCKET="$socket" \
   DILL_ALPHA_FIXTURE_ROOT="$base/fixtures" DILL_ALPHA_CONTAINER_UID=1000 DILL_ALPHA_CONTAINER_GID=1000 \
   DILL_ALPHA_HOST_UID="$host_uid" DILL_ALPHA_HOST_GID="$host_gid")
+run_operator env "${common[@]}" sh -c 'test "$GITHUB_ACTIONS" = true'
 (cd "$repo/internal/secretfile"; run_operator env "${common[@]}" "$RUNNER_TEMP/alpha-secretfile.test" -test.v)
 run_operator env "${common[@]}" "$RUNNER_TEMP/alpha-integration.test" \
   -test.run '^TestDillQualifiedHostFileSecrets$' -test.v

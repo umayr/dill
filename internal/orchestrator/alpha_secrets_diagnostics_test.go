@@ -6,6 +6,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -42,6 +43,29 @@ func TestAlphaSyntheticDiagnosticFilter(t *testing.T) {
 	}
 	if len(alphaSyntheticDiagnostic(strings.Repeat("x", 9000))) > 8300 {
 		t.Fatal("unbounded diagnostic")
+	}
+}
+
+func alphaDiagnosticCanReplay(err error) bool {
+	return errors.Is(err, ErrNotFound)
+}
+
+func TestAlphaSyntheticDiagnosticReplay(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		err  error
+		want bool
+	}{
+		{"missing", ErrNotFound, true},
+		{"wrapped missing", fmt.Errorf("%w: alpha-synthetic_app", ErrNotFound), true},
+		{"existing", nil, false},
+		{"other inspect failure", errors.New("synthetic inspect failure"), false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if alphaDiagnosticCanReplay(tc.err) != tc.want {
+				t.Fatal("incorrect diagnostic replay classification")
+			}
+		})
 	}
 }
 
@@ -119,7 +143,7 @@ func TestQualifiedAlphaCreateDiagnostics(t *testing.T) {
 			t.Logf("synthetic retained container state=%s cause=%s", data.State.Status, alphaSyntheticDiagnostic(data.State.Error))
 		}
 		return
-	} else if err != ErrNotFound {
+	} else if !alphaDiagnosticCanReplay(err) {
 		phase("desired inspect", err)
 	}
 	exists, err := p.ImageExists(ctx, svc.Image)
