@@ -11,6 +11,8 @@ import (
 	"path/filepath"
 	"testing"
 	"time"
+
+	"golang.org/x/sys/unix"
 )
 
 func deadline() (context.Context, context.CancelFunc) {
@@ -59,6 +61,54 @@ func TestAcquire(t *testing.T) {
 	}
 	if _, err := Acquire(ctx, "relative", a); err == nil {
 		t.Fatal("accepted relative directory")
+	}
+}
+
+func TestCancelWhileWaiting(t *testing.T) {
+	dir := t.TempDir()
+	ctx, cancel := deadline()
+	defer cancel()
+	first, err := Acquire(ctx, dir, [32]byte{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer first.Release()
+	waiting, stop := context.WithCancel(ctx)
+	done := make(chan error, 1)
+	go func() {
+		l, err := Acquire(waiting, dir, [32]byte{})
+		if l != nil {
+			l.Release()
+		}
+		done <- err
+	}()
+	select {
+	case err := <-done:
+		t.Fatalf("waiter returned before cancellation: %v", err)
+	case <-time.After(80 * time.Millisecond):
+	}
+	stop()
+	select {
+	case err := <-done:
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("got %v", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("cancellation did not unblock waiter")
+	}
+}
+
+func TestRejectFIFO(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "0000000000000000000000000000000000000000000000000000000000000000.lock")
+	if err := unix.Mkfifo(path, 0600); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := deadline()
+	defer cancel()
+	if l, err := Acquire(ctx, dir, [32]byte{}); err == nil {
+		l.Release()
+		t.Fatal("accepted FIFO")
 	}
 }
 

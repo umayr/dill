@@ -44,9 +44,14 @@ The new primitive accepts an opaque 32-byte key and a trusted, existing absolute
 directory; it deliberately specifies neither identity encoding nor directory
 selection. It requires a context deadline, polls a nonblocking OS advisory lock,
 and never unlinks the file. Keeping the inode prevents a waiter from locking an
-obsolete file after a release. Process death releases the kernel lock, not the
-operation record. Its contract assumes no untrusted directory writers or lock
-file replacement; it does not establish those assumptions. Do not expose it as
+obsolete file after a release. Kernel locks normally release when the last
+reference to the locked open file description closes; a forked child retaining a descriptor can prolong a lock
+after the original process dies (the descriptor is close-on-exec). This does
+not update an operation record. Deadlines bound contention polling, not open,
+stat, flock, close, or other filesystem calls, which can block; a qualified
+local filesystem remains essential. The primitive rejects symlinks only at the
+final path component and does not prevent hard links or replacement. Its
+contract assumes no untrusted directory writers or lock file replacement; it does not establish those assumptions. Do not expose it as
 an operational guarantee without qualification and integration.
 
 ## Proposed crash-outcome persistence

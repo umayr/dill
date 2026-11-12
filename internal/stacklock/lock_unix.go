@@ -22,7 +22,9 @@ type Lock struct{ file *os.File }
 // Acquire waits for key in dir. dir must be an existing absolute, trusted,
 // shared local directory, inaccessible to untrusted writers. All participants
 // must derive exactly the same key and never unlink or replace lock files.
-// A deadline is mandatory; cancellation and deadline expiry return ctx.Err().
+// A deadline is mandatory; while waiting for the lock, cancellation and
+// deadline expiry return ctx.Err(). The deadline does not bound filesystem
+// calls, which may block or fail independently of the context.
 // This primitive does not qualify filesystems, directories, or identities.
 func Acquire(ctx context.Context, dir string, key [32]byte) (*Lock, error) {
 	if _, ok := ctx.Deadline(); !ok {
@@ -35,7 +37,7 @@ func Acquire(ctx context.Context, dir string, key [32]byte) (*Lock, error) {
 		return nil, err
 	}
 	path := filepath.Join(dir, hex.EncodeToString(key[:])+".lock")
-	fd, err := unix.Open(path, unix.O_CREAT|unix.O_RDWR|unix.O_CLOEXEC|unix.O_NOFOLLOW, 0600)
+	fd, err := unix.Open(path, unix.O_CREAT|unix.O_RDWR|unix.O_CLOEXEC|unix.O_NOFOLLOW|unix.O_NONBLOCK, 0600)
 	if err != nil {
 		return nil, fmt.Errorf("open stack lock: %w", err)
 	}
