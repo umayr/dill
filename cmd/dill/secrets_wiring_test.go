@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"sort"
 	"strings"
 	"sync"
 	"testing"
@@ -315,6 +316,51 @@ func TestDirectLifecycleMarkerSurvivesContainerNameChange(t *testing.T) {
 					t.Fatalf("marker/name change bypassed: %v %v", err, s.mutations())
 				}
 			})
+		})
+	}
+}
+
+func TestOrdinaryRestartStopsOnlyRequestedCurrentContainers(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		args, want []string
+	}{
+		{"subset", []string{"app"}, []string{"stop immutable-current-app"}},
+		{"explicit dependencies", []string{"app", "dep"}, []string{"stop immutable-current-app", "stop immutable-demo_dep"}},
+		{"no deps", []string{"--no-deps", "app"}, []string{"stop immutable-current-app"}},
+		{"full stack", nil, []string{"stop immutable-current-app", "stop immutable-demo_dep", "stop immutable-demo_other", "stop immutable-old-app", "stop immutable-orphan"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			s := newSecretSpy()
+			cfg := &config.DillConfig{Name: "demo", Engine: "docker", Services: map[string]*config.Service{"app": {Image: "image", ContainerName: "current-app", DependsOn: []string{"dep"}}, "dep": {Image: "image"}, "other": {Image: "image"}}}
+			for name, service := range map[string]string{"current-app": "app", "old-app": "app", "demo_dep": "dep", "demo_other": "other", "orphan": "removed"} {
+				s.owned(name, service)
+				s.statuses[name] = &orchestrator.ContainerStatus{State: "running"}
+			}
+			withTestRuntime(t, s, cfg, func() {
+				_, _, err := captureCommand(t, "", func() error { return runRestart(context.Background(), commandOptions{Timeout: time.Minute}, tc.args) })
+				if err != nil {
+					t.Fatal(err)
+				}
+			})
+			stops := []string{}
+			for _, event := range s.events {
+				if strings.HasPrefix(event, "stop ") {
+					stops = append(stops, event)
+				}
+			}
+			sort.Strings(stops)
+			sort.Strings(tc.want)
+			if !reflect.DeepEqual(stops, tc.want) {
+				t.Fatalf("stop set = %v, want %v", stops, tc.want)
+			}
+			if tc.name == "subset" {
+				for _, name := range []string{"old-app", "demo_dep"} {
+					if !strings.Contains(strings.Join(s.events, ","), "inspect "+name) {
+						t.Fatal("subset narrowed safety census")
+					}
+				}
+			}
 		})
 	}
 }

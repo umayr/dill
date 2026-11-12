@@ -161,6 +161,19 @@ func runDirectStart(ctx context.Context, opts commandOptions, args []string, res
 		return nil
 	}
 	if restart {
+		if len(fs.Args()) > 0 {
+			// The dependency/stale-name census is a safety boundary, not the
+			// subset restart mutation set. Preserve explicitly requested names.
+			requested := map[string]string{}
+			for _, service := range fs.Args() {
+				container := cfg.Services[service].ContainerName
+				if container == "" {
+					container = stack + "_" + service
+				}
+				requested[container] = ids[container]
+			}
+			ids = requested
+		}
 		// Use immutable IDs from the pre-mutation ownership/classification pass.
 		// Any stop failure aborts rather than proceeding with an uncertain restart.
 		var failures []error
