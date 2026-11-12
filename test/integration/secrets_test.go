@@ -190,7 +190,7 @@ func TestDillQualifiedHostFileSecrets(t *testing.T) {
 	proof := func(binding string, wantCode int) string {
 		t.Helper()
 		proofCounter++
-		path := filepath.Join(dir, fmt.Sprintf("proof-%d.json", proofCounter))
+		path := filepath.Join(keyDir, fmt.Sprintf("proof-%d.json", proofCounter))
 		out, code := dill(binding, "plan", "--format", "json", "--proof-key-file", keyPath, "--proof-file", path)
 		assertPublic(out)
 		if code != wantCode {

@@ -20,7 +20,8 @@ exit 1 as a completed plan only if the new valid proof and valid plan are both
 present. Neither path is included in the MAC. The key is exactly 32 random bytes
 in a private Brine/operator-owned location outside editable or served project
 files. Reject symlinks, unsafe ownership or permissions, nonregular files and
-incorrect lengths. The output path must also be private and safe; use no-follow,
+incorrect lengths. Both key and output must be outside the known resolved recipe workspace.
+The output path must also be private and safe; use no-follow,
 atomic mode-0600 creation and do not overwrite key, policy, config, source or
 other preexisting files. Key rotation invalidates all previews.
 
@@ -138,8 +139,15 @@ repeated checks and ordinary workload reads (atime only) retain the proof.
 
 Keys use the same protected, no-follow, operator-owned, single-link, regular-file
 metadata validation as policy documents (0400 or 0600, no extended ACL), then
-exact-length validation and clearing of the read buffer. A key must be outside
-the evaluated recipe directory, not policy/bindings or a known policy source;
+exact-length validation and clearing of the read buffer. **Both key and output**
+must be outside the selected and fully resolved recipe directories, including
+nested children. Recipe directory/file symlinks are resolved before exclusion;
+private-path ancestry remains no-follow. Directory-identity checks also exclude
+known workspace aliases. Missing, dangling or nonregular recipe paths and
+unestablishable directories withhold proof. This is only the known recipe
+workspace boundary, not a general Pkl/import or serving sandbox. Private sibling
+state directories are supported and used by integration fixtures.
+A key must not be policy/bindings or a known policy source;
 metadata inode checks reject source aliases before key reads. Sources are never
 opened for byte reads. All source entries, including absent versions, are also
 excluded as output destinations (including observed directory aliases).

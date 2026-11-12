@@ -79,12 +79,7 @@ func PublishPreview(req Request, result *Result, keyPath, outputPath, configPath
 			}
 		}
 	}
-	configAbs, err := filepath.Abs(configPath)
-	if err != nil || !cleanPath(keyPath) || !cleanPath(outputPath) {
-		return fail()
-	}
-	base := filepath.Dir(configAbs)
-	if base == string(os.PathSeparator) || keyPath == configAbs || keyPath == req.PolicyPath || keyPath == req.BindingsPath || strings.HasPrefix(keyPath, base+string(os.PathSeparator)) {
+	if !cleanPath(keyPath) || !cleanPath(outputPath) || !previewPathsOutsideWorkspace(configPath, keyPath, outputPath) || keyPath == req.PolicyPath || keyPath == req.BindingsPath {
 		return fail()
 	}
 	key, err := readPrivate(keyPath, uint32(os.Geteuid()))
@@ -145,4 +140,52 @@ func CanonicalPreviewJSON(v any) ([]byte, error) {
 		return nil, err
 	}
 	return json.Marshal(value)
+}
+
+// Resolve only the known recipe boundary, not arbitrary Pkl imports or a general
+// sandbox. Both selected and resolved directories are private-artifact exclusions.
+// Private ancestors still require the existing no-follow ownership/ACL checks.
+func previewPathsOutsideWorkspace(configPath, keyPath, outputPath string) bool {
+	configAbs, err := filepath.Abs(configPath)
+	if err != nil {
+		return false
+	}
+	resolved, err := filepath.EvalSymlinks(configAbs)
+	if err != nil {
+		return false
+	}
+	file, err := os.Stat(resolved)
+	if err != nil || !file.Mode().IsRegular() {
+		return false
+	}
+	selectedDir, err := filepath.EvalSymlinks(filepath.Dir(configAbs))
+	if err != nil {
+		return false
+	}
+	for _, base := range []string{selectedDir, filepath.Dir(resolved)} {
+		if base == string(os.PathSeparator) {
+			return false
+		}
+		directory, err := os.Stat(base)
+		if err != nil || !directory.IsDir() {
+			return false
+		}
+		for _, p := range []string{keyPath, outputPath} {
+			if !cleanPath(p) || p == base || strings.HasPrefix(p, base+string(os.PathSeparator)) {
+				return false
+			}
+			// Directory identity also excludes bind-mounted workspace aliases. Never
+			// follow a private-path symlink or accept an unestablishable ancestry.
+			for parent := filepath.Dir(p); ; parent = filepath.Dir(parent) {
+				info, err := os.Lstat(parent)
+				if err != nil || !info.IsDir() || os.SameFile(directory, info) {
+					return false
+				}
+				if parent == string(os.PathSeparator) {
+					break
+				}
+			}
+		}
+	}
+	return true
 }

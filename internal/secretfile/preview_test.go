@@ -5,6 +5,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"os"
+	"path/filepath"
 	"testing"
 )
 
@@ -69,5 +70,59 @@ func TestPreviewObservedSourcesMACVector(t *testing.T) {
 				t.Fatal("observed field omitted from MAC")
 			}
 		})
+	}
+}
+
+func TestPreviewPathsOutsideResolvedWorkspace(t *testing.T) {
+	root, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	workspace, state, nested, leafAliasDir := filepath.Join(root, "workspace"), filepath.Join(root, "state"), filepath.Join(root, "workspace", "nested"), filepath.Join(root, "leaf-alias")
+	for _, p := range []string{workspace, state, nested, leafAliasDir} {
+		if os.MkdirAll(p, 0700) != nil {
+			t.Fatal("boundary fixture")
+		}
+	}
+	cfg := filepath.Join(workspace, "compose.pkl")
+	if os.WriteFile(cfg, []byte("synthetic recipe"), 0600) != nil {
+		t.Fatal("recipe fixture")
+	}
+	alias := filepath.Join(root, "workspace-alias")
+	if os.Symlink(workspace, alias) != nil {
+		t.Fatal("directory alias fixture")
+	}
+	leafAlias := filepath.Join(leafAliasDir, "compose.pkl")
+	if os.Symlink(cfg, leafAlias) != nil {
+		t.Fatal("leaf alias fixture")
+	}
+	key, out := filepath.Join(state, "key"), filepath.Join(state, "proof")
+	for _, recipe := range []string{cfg, filepath.Join(alias, "compose.pkl"), leafAlias} {
+		if !previewPathsOutsideWorkspace(recipe, key, out) {
+			t.Fatal("private sibling rejected")
+		}
+		for _, dir := range []string{workspace, nested} {
+			if previewPathsOutsideWorkspace(recipe, filepath.Join(dir, "key"), out) {
+				t.Fatal("workspace key accepted through recipe alias")
+			}
+			if previewPathsOutsideWorkspace(recipe, key, filepath.Join(dir, "proof")) {
+				t.Fatal("workspace output accepted through recipe alias")
+			}
+		}
+	}
+	for _, recipe := range []string{filepath.Join(workspace, "missing.pkl"), filepath.Join(root, "missing", "compose.pkl"), workspace} {
+		if previewPathsOutsideWorkspace(recipe, key, out) {
+			t.Fatal("unknown/nonregular recipe boundary accepted")
+		}
+	}
+	dangling := filepath.Join(root, "dangling.pkl")
+	if os.Symlink(filepath.Join(root, "missing.pkl"), dangling) != nil {
+		t.Fatal("dangling fixture")
+	}
+	if previewPathsOutsideWorkspace(dangling, key, out) {
+		t.Fatal("dangling recipe boundary accepted")
+	}
+	if previewPathsOutsideWorkspace(cfg, filepath.Join(alias, "key"), out) || previewPathsOutsideWorkspace(cfg, key, filepath.Join(alias, "proof")) {
+		t.Fatal("private symlink ancestry accepted")
 	}
 }

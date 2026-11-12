@@ -35,7 +35,11 @@ func previewFixture(t *testing.T) (Request, string, string, string) {
 	if os.WriteFile(filepath.Join(dir, "source"), []byte("synthetic-metadata-only"), 0400) != nil {
 		t.Fatal("synthetic source provision")
 	}
-	return req, key, filepath.Join(dir, "proof"), filepath.Join(workspace, "compose.pkl")
+	configPath := filepath.Join(workspace, "compose.pkl")
+	if os.WriteFile(configPath, []byte("synthetic recipe"), 0600) != nil {
+		t.Fatal("synthetic recipe provision")
+	}
+	return req, key, filepath.Join(dir, "proof"), configPath
 }
 
 // Daemon/mapping provenance is synthetic; source metadata validation is real.
@@ -308,5 +312,56 @@ func TestPreviewObservedSourceReplacementInvalidates(t *testing.T) {
 	changed := publish(current, out+"-changed")
 	if changed == first || changed != publish(checked(), out+"-changed-repeat") {
 		t.Fatal("valid replacement did not invalidate stably")
+	}
+}
+
+func TestPreviewPublicationRejectsWorkspaceArtifacts(t *testing.T) {
+	for _, shape := range []string{"direct", "nested", "recipe directory alias", "recipe file alias"} {
+		for _, artifact := range []string{"key", "output"} {
+			t.Run(shape+"/"+artifact, func(t *testing.T) {
+				req, key, out, cfg := previewFixture(t)
+				workspace := filepath.Dir(cfg)
+				dir := workspace
+				switch shape {
+				case "nested":
+					dir = filepath.Join(workspace, "nested")
+					if os.Mkdir(dir, 0700) != nil {
+						t.Fatal("nested fixture")
+					}
+				case "recipe directory alias":
+					alias := filepath.Join(filepath.Dir(workspace), "recipe-alias")
+					if os.Symlink(workspace, alias) != nil {
+						t.Fatal("recipe alias fixture")
+					}
+					cfg = filepath.Join(alias, "compose.pkl")
+				case "recipe file alias":
+					alias := filepath.Join(filepath.Dir(workspace), "leaf-alias")
+					if os.Mkdir(alias, 0700) != nil || os.Symlink(cfg, filepath.Join(alias, "compose.pkl")) != nil {
+						t.Fatal("recipe file alias fixture")
+					}
+					cfg = filepath.Join(alias, "compose.pkl")
+				}
+				if artifact == "key" {
+					key = filepath.Join(dir, "private-key")
+					if os.WriteFile(key, bytes.Repeat([]byte{0x42}, 32), 0600) != nil {
+						t.Fatal("workspace key fixture")
+					}
+				} else {
+					out = filepath.Join(dir, "private-proof")
+				}
+				r, err := authorize(req)
+				if err != nil {
+					t.Fatal(err)
+				}
+				observePreviewFixture(t, r)
+				_, err = PublishPreview(req, r, key, out, cfg, PreviewState{Configuration: []byte(`{}`), Live: []byte(`{}`), Plan: []byte(`{}`)})
+				if err != config.ErrSecretUnavailable {
+					t.Fatal("workspace artifact published")
+				}
+				if _, err = os.Lstat(out); !os.IsNotExist(err) {
+					t.Fatal("denied publication left artifact")
+				}
+			})
+		}
 	}
 }
