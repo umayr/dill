@@ -42,6 +42,15 @@ func previewFixture(t *testing.T) (Request, string, string, string) {
 	return req, key, filepath.Join(dir, "proof"), configPath
 }
 
+func authorizePreviewFixture(t *testing.T, req Request) *Result {
+	t.Helper()
+	r, err := authorize(req)
+	if err != nil {
+		t.Fatalf("synthetic preview authorization failed: %v", err)
+	}
+	return r
+}
+
 // Daemon/mapping provenance is synthetic; source metadata validation is real.
 func observePreviewFixture(t *testing.T, r *Result) {
 	t.Helper()
@@ -89,7 +98,7 @@ func TestPreviewPrivatePublication(t *testing.T) {
 		t.Fatal("fresh output filename changed proof")
 	}
 	original, _ := os.ReadFile(out)
-	r, _ := authorize(req)
+	r := authorizePreviewFixture(t, req)
 	observePreviewFixture(t, r)
 	if _, err := PublishPreview(req, r, key, out, cfg, state); err != config.ErrSecretUnavailable {
 		t.Fatal("preexisting file overwritten")
@@ -125,7 +134,7 @@ func TestPreviewPrivatePublication(t *testing.T) {
 		t.Fatal("authorized policy path change did not invalidate")
 	}
 	// A successfully published file is withdrawn if plan rendering fails.
-	r, _ = authorize(req)
+	r = authorizePreviewFixture(t, req)
 	observePreviewFixture(t, r)
 	finish, err := PublishPreview(req, r, key, out+"-failed", cfg, state)
 	if err != nil {
@@ -140,7 +149,7 @@ func TestPreviewUnsafeFilesAndSourceKeyRejected(t *testing.T) {
 	for _, kind := range []string{"short", "long", "public", "symlink", "hardlink", "workspace", "source", "existing directory", "existing symlink", "unprotected output", "authorization only", "absent source output", "unsafe catalog key alias", "unsafe catalog output alias"} {
 		t.Run(kind, func(t *testing.T) {
 			req, key, out, cfg := previewFixture(t)
-			r, _ := authorize(req)
+			r := authorizePreviewFixture(t, req)
 			observePreviewFixture(t, r)
 			switch kind {
 			case "short":
@@ -169,16 +178,32 @@ func TestPreviewUnsafeFilesAndSourceKeyRejected(t *testing.T) {
 				if os.Symlink(target, filepath.Join(unsafe, "alias")) != nil {
 					t.Fatal("cannot provision directory alias")
 				}
-				raw, _ := os.ReadFile(req.PolicyPath)
-				var p config.SecretPolicy
+				raw, err := os.ReadFile(req.PolicyPath)
+				if err != nil {
+					t.Fatal("synthetic policy read")
+				}
+				// Preserve the strict lowercase wire keys. SecretPolicy is an
+				// internal representation, not a JSON serialization contract.
+				var p map[string]any
 				if json.Unmarshal(raw, &p) != nil {
 					t.Fatal("synthetic policy parse")
 				}
-				extra := p.Targets[0].Stacks[0].Sources[0]
-				extra.ID = "future"
-				extra.Path = filepath.Join(unsafe, "alias", leaf)
-				p.Targets[0].Stacks[0].Sources = append(p.Targets[0].Stacks[0].Sources, extra)
-				raw, _ = json.Marshal(p)
+				stack := p["targets"].([]any)[0].(map[string]any)["stacks"].([]any)[0].(map[string]any)
+				sources := stack["sources"].([]any)
+				extra := map[string]any{}
+				for name, value := range sources[0].(map[string]any) {
+					extra[name] = value
+				}
+				extra["id"] = "future"
+				extra["path"] = filepath.Join(unsafe, "alias", leaf)
+				stack["sources"] = append(sources, extra)
+				raw, err = json.Marshal(p)
+				if err != nil {
+					t.Fatal("synthetic policy encoding")
+				}
+				if _, err := config.ParseSecretPolicy(bytes.NewReader(raw)); err != nil {
+					t.Fatal("synthetic alias policy must pass strict parsing")
+				}
 				if os.WriteFile(req.PolicyPath, raw, 0600) != nil {
 					t.Fatal("cannot provision alias catalog")
 				}
@@ -200,7 +225,7 @@ func TestPreviewUnsafeFilesAndSourceKeyRejected(t *testing.T) {
 				r.runtime = nil
 			}
 			if kind == "unsafe catalog key alias" || kind == "unsafe catalog output alias" {
-				r, _ = authorize(req)
+				r = authorizePreviewFixture(t, req)
 				observePreviewFixture(t, r)
 			}
 			_, err := PublishPreview(req, r, key, out, cfg, PreviewState{Configuration: []byte(`{}`), Live: []byte(`{}`), Plan: []byte(`{}`)})
