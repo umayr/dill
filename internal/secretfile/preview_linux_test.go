@@ -24,7 +24,7 @@ func previewFixture(t *testing.T) (Request, string, string, string) {
 	policy := filepath.Join(dir, "policy")
 	bindings := filepath.Join(dir, "bindings")
 	key := filepath.Join(keys, "key")
-	p := fmt.Sprintf(`{"version":"dill.secret-policy/1","targets":[{"id":"lab","engine":"docker","socket":"/run/synthetic.sock","stacks":[{"name":"demo","sources":[{"id":"source","revision":"r1","kind":"hostFile","path":"%s","uid":0,"gid":0,"mode":256}]}]}]}`, filepath.Join(dir, "source"))
+	p := fmt.Sprintf(`{"version":"dill.secret-policy/1","targets":[{"id":"lab","engine":"docker","socket":"/run/synthetic.sock","stacks":[{"name":"demo","sources":[{"id":"source","revision":"r1","kind":"hostFile","path":"%s","uid":%d,"gid":%d,"mode":256}]}]}]}`, filepath.Join(dir, "source"), os.Geteuid(), os.Getegid())
 	for name, b := range map[string][]byte{policy: []byte(p), bindings: []byte(`{"version":"dill.secret-bindings/1","target":"lab","stack":"demo","bindings":[{"name":"db","source":"source","revision":"r1"}]}`), key: bytes.Repeat([]byte{0x42}, 32)} {
 		if os.WriteFile(name, b, 0600) != nil {
 			t.Fatal("synthetic metadata write")
@@ -32,8 +32,24 @@ func previewFixture(t *testing.T) (Request, string, string, string) {
 	}
 	cfg := &config.DillConfig{Name: "demo", Engine: "docker", Secrets: []config.SecretRequirement{{Name: "db"}}, Services: map[string]*config.Service{"app": {Image: "image", Secrets: []config.SecretGrant{{Name: "db", Target: "/run/secrets/db", Mode: 256}}}}}
 	req := Request{Config: cfg, PolicyPath: policy, BindingsPath: bindings, Target: "lab", Stack: "demo", Engine: "docker", Socket: "/run/synthetic.sock"}
+	if os.WriteFile(filepath.Join(dir, "source"), []byte("synthetic-metadata-only"), 0400) != nil {
+		t.Fatal("synthetic source provision")
+	}
 	return req, key, filepath.Join(dir, "proof"), filepath.Join(workspace, "compose.pkl")
 }
+
+// Daemon/mapping provenance is synthetic; source metadata validation is real.
+func observePreviewFixture(t *testing.T, r *Result) {
+	t.Helper()
+	mapping := Mapping{UID: []IDRange{{0, uint64(os.Geteuid()), 1}}, GID: []IDRange{{0, uint64(os.Getegid()), 1}}}
+	var err error
+	r.sources, err = observeSources(r.mounts, mapping)
+	if err != nil {
+		t.Fatal("synthetic source metadata unavailable")
+	}
+	r.runtime = &runtimeEvidence{mapping: mapping}
+}
+
 func TestPreviewPrivatePublication(t *testing.T) {
 	req, key, out, cfg := previewFixture(t)
 	state := PreviewState{Configuration: []byte(`{"services":{}}`), Live: []byte(`{"state":"running"}`), Plan: []byte(`{"changes":[]}`)}
@@ -44,7 +60,7 @@ func TestPreviewPrivatePublication(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		r.runtime = &runtimeEvidence{}
+		observePreviewFixture(t, r)
 		finish, err := PublishPreview(req, r, key, path, cfg, state)
 		if err != nil {
 			t.Fatal(err)
@@ -70,7 +86,7 @@ func TestPreviewPrivatePublication(t *testing.T) {
 	}
 	original, _ := os.ReadFile(out)
 	r, _ := authorize(req)
-	r.runtime = &runtimeEvidence{}
+	observePreviewFixture(t, r)
 	if _, err := PublishPreview(req, r, key, out, cfg, state); err != config.ErrSecretUnavailable {
 		t.Fatal("preexisting file overwritten")
 	}
@@ -98,12 +114,15 @@ func TestPreviewPrivatePublication(t *testing.T) {
 	policy["targets"].([]any)[0].(map[string]any)["stacks"].([]any)[0].(map[string]any)["sources"].([]any)[0].(map[string]any)["path"] = filepath.Join(filepath.Dir(out), "rotated-source")
 	b, _ = json.Marshal(policy)
 	os.WriteFile(req.PolicyPath, b, 0600)
+	if os.WriteFile(filepath.Join(filepath.Dir(out), "rotated-source"), []byte("synthetic-metadata-only"), 0400) != nil {
+		t.Fatal("synthetic rotated source provision")
+	}
 	if first == publish(out+"-policy") {
 		t.Fatal("authorized policy path change did not invalidate")
 	}
 	// A successfully published file is withdrawn if plan rendering fails.
 	r, _ = authorize(req)
-	r.runtime = &runtimeEvidence{}
+	observePreviewFixture(t, r)
 	finish, err := PublishPreview(req, r, key, out+"-failed", cfg, state)
 	if err != nil {
 		t.Fatal(err)
@@ -118,7 +137,7 @@ func TestPreviewUnsafeFilesAndSourceKeyRejected(t *testing.T) {
 		t.Run(kind, func(t *testing.T) {
 			req, key, out, cfg := previewFixture(t)
 			r, _ := authorize(req)
-			r.runtime = &runtimeEvidence{}
+			observePreviewFixture(t, r)
 			switch kind {
 			case "short":
 				os.WriteFile(key, []byte("short"), 0600)
@@ -176,6 +195,10 @@ func TestPreviewUnsafeFilesAndSourceKeyRejected(t *testing.T) {
 			case "authorization only":
 				r.runtime = nil
 			}
+			if kind == "unsafe catalog key alias" || kind == "unsafe catalog output alias" {
+				r, _ = authorize(req)
+				observePreviewFixture(t, r)
+			}
 			_, err := PublishPreview(req, r, key, out, cfg, PreviewState{Configuration: []byte(`{}`), Live: []byte(`{}`), Plan: []byte(`{}`)})
 			if err != config.ErrSecretUnavailable {
 				t.Fatal("unsafe proof inputs accepted")
@@ -195,7 +218,7 @@ func TestPreviewAuthorityAndKeyRotation(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		r.runtime = &runtimeEvidence{}
+		observePreviewFixture(t, r)
 		path := fmt.Sprintf("%s-%d", out, counter)
 		finish, err := PublishPreview(req, r, key, path, cfg, state)
 		if err != nil {
@@ -229,5 +252,61 @@ func TestPreviewAuthorityAndKeyRotation(t *testing.T) {
 	req.Target = "lab-other"
 	if publish() == first {
 		t.Fatal("target identity retained approval")
+	}
+}
+
+func TestPreviewObservedSourceReplacementInvalidates(t *testing.T) {
+	req, key, out, cfg := previewFixture(t)
+	state := PreviewState{Configuration: []byte(`{}`), Live: []byte(`{}`), Plan: []byte(`{}`)}
+	checked := func() *Result {
+		r, err := authorize(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		observePreviewFixture(t, r)
+		return r
+	}
+	publish := func(r *Result, path string) string {
+		t.Helper()
+		finish, err := PublishPreview(req, r, key, path, cfg, state)
+		if err != nil {
+			t.Fatal(err)
+		}
+		finish(true)
+		b, err := readPrivate(path, uint32(os.Geteuid()))
+		if err != nil {
+			t.Fatal(err)
+		}
+		var d struct{ Proof string }
+		if json.Unmarshal(b, &d) != nil {
+			t.Fatal("proof parse")
+		}
+		return d.Proof
+	}
+	old := checked()
+	first := publish(old, out)
+	if publish(checked(), out+"-repeat") != first {
+		t.Fatal("unchanged source invalidated proof")
+	}
+	source := old.mounts["app"][0].HostPath
+	before, err := os.Stat(source)
+	if err != nil {
+		t.Fatal(err)
+	}
+	replacement := source + "-replacement"
+	if os.WriteFile(replacement, []byte("synthetic-metadata-only"), 0400) != nil || os.Chtimes(replacement, before.ModTime(), before.ModTime()) != nil || os.Rename(replacement, source) != nil {
+		t.Fatal("cannot replace owned fixture source")
+	}
+	current := checked()
+	a, b := old.sources["app"][0], current.sources["app"][0]
+	if a.Device != b.Device || a.Inode == b.Inode || a.Size != b.Size || a.MTime != b.MTime || a.UID != b.UID || a.GID != b.GID || a.Mode != b.Mode || a.Links != b.Links {
+		t.Fatal("replacement fixture did not preserve authorized stat fields")
+	}
+	if _, err := PublishPreview(req, old, key, out+"-stale", cfg, state); err != config.ErrSecretUnavailable {
+		t.Fatal("stale preflight source evidence published")
+	}
+	changed := publish(current, out+"-changed")
+	if changed == first || changed != publish(checked(), out+"-changed-repeat") {
+		t.Fatal("valid replacement did not invalidate stably")
 	}
 }

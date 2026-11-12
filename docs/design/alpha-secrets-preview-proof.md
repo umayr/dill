@@ -67,7 +67,11 @@ unsigned big-endian uint64 byte length followed by exactly those bytes:
 1. UTF-8 domain `dill.alpha-secrets-preview/1`.
 2. Canonical authority JSON: trusted target/stack/engine/canonical socket,
    selected roots and no-deps option, **entire strictly parsed policy and binding
-   documents**, and selected resolved grant metadata. Arrays retain declaration
+   documents**, selected resolved grant metadata, and **observed validated selected-source
+   stat facts**: device, inode, size, mtime/ctime seconds and nanoseconds, UID,
+   GID, full mode/type bits and link count. These observations are retained in
+   opaque preflight evidence and rechecked before publication. Atime, source
+   bytes and content hashes are excluded. Arrays retain declaration
    order; semantically reordered documents may conservatively invalidate.
 3. Effective evaluated configuration JSON: config name/engine/declarations;
    every service field (`secrets`, image, containerName, restart, pullPolicy,
@@ -122,6 +126,14 @@ resource allowlists live in both adapter `PreviewResources` methods. Any future
 change to this surface must update these lists and invalidation tests. It is
 not an assertion that all engine inspect fields influence reconciliation.
 
+Selected-source replacement or detectable stat changes before confirmation
+invalidate the proof even when policy/revision and engine inspect paths are
+unchanged. A change during planning withholds publication until fresh preflight.
+This observes the current authorized host path, **not the inode already mounted
+inside an existing container**. It is not mounted-inode or content attestation;
+explicit revision rotation and external immutability remain required. Identical
+repeated checks and ordinary workload reads (atime only) retain the proof.
+
 ## Private file handling
 
 Keys use the same protected, no-follow, operator-owned, single-link, regular-file
@@ -161,7 +173,8 @@ platform/filesystem behavior fails fixed, never falls back to overwrite.
   real candidate binary with protected per-run synthetic files, actual mapped
   non-root access and foreign-ID denial, independent chmod/write RO denial,
   stable proofs on repeated create/noop plans, equivalent and changed imports,
-  lifecycle invalidation without uptime instability, explicit revision rotation,
+  lifecycle invalidation without uptime instability, valid same-reference source
+  replacement invalidation, atime-independent reads, explicit revision rotation,
   missing/mode/symlink faults before pull/orphan/recreate, repaired inspect mount
   drift and source-independent cleanup retaining external files. Engine inventory
   plus an event stream proven to see a real pull checks zero mutation.

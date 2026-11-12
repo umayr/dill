@@ -35,6 +35,7 @@ type Result struct {
 	selected map[string]bool
 	mounts   map[string][]config.ResolvedSecret
 	runtime  *runtimeEvidence
+	sources  map[string][]sourceObservation
 	policy   *config.SecretPolicy
 	bindings *config.SecretBindings
 }
@@ -103,9 +104,14 @@ func Preflight(ctx context.Context, req Request) (*Result, error) {
 	}
 	if !req.AuthorizationOnly {
 		evidence, err := runtimeMapping(ctx, req.Engine, req.Socket)
-		if err != nil || evidence == nil || Check(result.mounts, evidence.mapping) != nil {
+		if err != nil || evidence == nil {
 			return fail()
 		}
+		observations, err := observeSources(result.mounts, evidence.mapping)
+		if err != nil {
+			return fail()
+		}
+		result.sources = observations
 		result.runtime = evidence
 	}
 	if ctx.Err() != nil {

@@ -43,3 +43,31 @@ func TestPreviewWireGolden(t *testing.T) {
 		t.Fatal("independent five-frame golden mismatch")
 	}
 }
+
+// Independent Python hmac/hashlib vector covering private, observed stat facts.
+func TestPreviewObservedSourcesMACVector(t *testing.T) {
+	base := sourceObservation{Device: 7, Inode: 9, Size: 11, MTime: sourceTimestamp{101, 202}, CTime: sourceTimestamp{303, 404}, UID: 1000, GID: 1001, Mode: 33024, Links: 1}
+	mac := func(o sourceObservation) string {
+		t.Helper()
+		authority, err := CanonicalPreviewJSON(struct {
+			Sources map[string][]sourceObservation
+		}{map[string][]sourceObservation{"app": {o}}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return previewMAC(bytes.Repeat([]byte{0x42}, 32), authority, []byte("{}"), []byte("{}"), []byte(`{"changes":[]}`))
+	}
+	first := mac(base)
+	if first != "kLo8GUAJnshkulAdoSg_24fy-FvNXLwwfBm3vyNblyk" {
+		t.Fatal("observed stat independent vector mismatch")
+	}
+	for name, change := range map[string]func(*sourceObservation){"device": func(o *sourceObservation) { o.Device++ }, "inode": func(o *sourceObservation) { o.Inode++ }, "size": func(o *sourceObservation) { o.Size++ }, "mtime": func(o *sourceObservation) { o.MTime.Nanoseconds++ }, "ctime": func(o *sourceObservation) { o.CTime.Nanoseconds++ }, "owner": func(o *sourceObservation) { o.UID++ }, "group": func(o *sourceObservation) { o.GID++ }, "mode": func(o *sourceObservation) { o.Mode++ }, "links": func(o *sourceObservation) { o.Links++ }} {
+		t.Run(name, func(t *testing.T) {
+			next := base
+			change(&next)
+			if mac(next) == first {
+				t.Fatal("observed field omitted from MAC")
+			}
+		})
+	}
+}

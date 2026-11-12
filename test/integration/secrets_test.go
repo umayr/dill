@@ -57,18 +57,20 @@ func TestDillQualifiedHostFileSecrets(t *testing.T) {
 	}
 	source1, source2, sourceMissing := filepath.Join(sourceDir, "source-r1"), filepath.Join(sourceDir, "source-r2"), filepath.Join(sourceDir, "source-r3")
 	values := []string{"dill-alpha-synthetic-v1", "dill-alpha-synthetic-v2"}
-	for i, p := range []string{source1, source2} {
-		if os.WriteFile(p, []byte(values[i]), 0400) != nil {
-			t.Fatal("cannot provision synthetic source")
-		}
+	chownSource := func(p string) {
+		t.Helper()
 		if err := os.Chown(p, int(hostUID), int(hostGID)); err != nil {
-			// Hosted rootless jobs may provision subordinate-ID ownership using their
-			// disposable runner's sudo, never by changing container namespaces.
 			if out, err := exec.Command("sudo", "-n", "chown", fmt.Sprintf("%d:%d", hostUID, hostGID), p).CombinedOutput(); err != nil {
 				_ = out
 				t.Fatal("cannot provision synthetic mapped ownership")
 			}
 		}
+	}
+	for i, p := range []string{source1, source2} {
+		if os.WriteFile(p, []byte(values[i]), 0400) != nil {
+			t.Fatal("cannot provision synthetic source")
+		}
+		chownSource(p)
 	}
 	sources := []any{}
 	for i, p := range []string{source1, source2, sourceMissing} {
@@ -228,6 +230,38 @@ func TestDillQualifiedHostFileSecrets(t *testing.T) {
 	if stable != proof(bindings[0], 0) || stable == initial {
 		t.Fatal("stable proof or live identity invalidation failed")
 	}
+	readAs := func(id int64, expected string) {
+		t.Helper()
+		out, code := engineCall("exec", "--user", fmt.Sprintf("%d:%d", id, gid), container, "cat", "/run/secrets/db")
+		if code != 0 || string(out) != expected {
+			t.Fatal("authorized mapped non-root workload could not read synthetic source")
+		}
+	}
+	readAs(uid, values[0])
+
+	if proof(bindings[0], 0) != stable {
+		t.Fatal("source access time invalidated proof")
+	}
+	// Metadata-only identity must detect a valid replacement even though inspect
+	// still reports the same path. This does NOT attest the mounted inode.
+	sourceStat, err := os.Stat(source1)
+	if err != nil {
+		t.Fatal("synthetic source stat")
+	}
+	replacement := source1 + "-replacement"
+	if os.WriteFile(replacement, []byte(values[0]), 0400) != nil || os.Chtimes(replacement, sourceStat.ModTime(), sourceStat.ModTime()) != nil {
+		t.Fatal("cannot provision valid synthetic replacement")
+	}
+	chownSource(replacement)
+	if os.Rename(replacement, source1) != nil {
+		t.Fatal("cannot replace owned synthetic source")
+	}
+	previous := stable
+	stable = proof(bindings[0], 0)
+	if stable == previous || stable != proof(bindings[0], 0) {
+		t.Fatal("valid source replacement did not invalidate stably")
+	}
+	assertPlan(bindings[0], 0, 0, 1)
 	// Same effective imported evaluation retains the proof; a changed imported
 	// recipe must invalidate it even if a public plan happens to look the same.
 	imported := filepath.Join(dir, "imported.pkl")
@@ -268,14 +302,6 @@ func TestDillQualifiedHostFileSecrets(t *testing.T) {
 		t.Fatal("volatile lifecycle counters entered proof")
 	}
 
-	readAs := func(id int64, expected string) {
-		t.Helper()
-		out, code := engineCall("exec", "--user", fmt.Sprintf("%d:%d", id, gid), container, "cat", "/run/secrets/db")
-		if code != 0 || string(out) != expected {
-			t.Fatal("authorized mapped non-root workload could not read synthetic source")
-		}
-	}
-	readAs(uid, values[0])
 	if _, code := engineCall("exec", "--user", fmt.Sprintf("%d:%d", uid+1, gid+1), container, "cat", "/run/secrets/db"); code == 0 {
 		t.Fatal("unauthorized non-root identity read synthetic source")
 	}

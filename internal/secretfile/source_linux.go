@@ -34,7 +34,11 @@ func safeDir(fd int, operator uint32) bool {
 	return unix.Fstat(fd, &st) == nil && st.Mode&unix.S_IFMT == unix.S_IFDIR && (st.Uid == 0 || st.Uid == operator) && st.Mode&0022 == 0 && noACL(fd, true)
 }
 func checkSource(s config.ResolvedSecret) (fileID, error) {
-	fail := func() (fileID, error) { return fileID{}, config.ErrSecretUnavailable }
+	o, err := observeSource(s)
+	return fileID{o.Device, o.Inode}, err
+}
+func observeSource(s config.ResolvedSecret) (sourceObservation, error) {
+	fail := func() (sourceObservation, error) { return sourceObservation{}, config.ErrSecretUnavailable }
 	if s.HostMode != 256 && s.HostMode != 288 {
 		return fail()
 	}
@@ -52,5 +56,5 @@ func checkSource(s config.ResolvedSecret) (fileID, error) {
 	if unix.Fstat(file, &st) != nil || st.Mode&unix.S_IFMT != unix.S_IFREG || st.Nlink != 1 || int64(st.Uid) != s.HostUID || int64(st.Gid) != s.HostGID || int64(st.Mode&07777) != s.HostMode || !noACL(file, false) {
 		return fail()
 	}
-	return fileID{device: uint64(st.Dev), inode: st.Ino}, nil
+	return sourceObservation{Device: uint64(st.Dev), Inode: st.Ino, Size: st.Size, MTime: sourceTimestamp{st.Mtim.Sec, st.Mtim.Nsec}, CTime: sourceTimestamp{st.Ctim.Sec, st.Ctim.Nsec}, UID: st.Uid, GID: st.Gid, Mode: st.Mode, Links: uint64(st.Nlink)}, nil
 }

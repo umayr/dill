@@ -26,3 +26,7 @@ func samePrivateEntry(string, string) bool { return false }
 func sourceMetadataIdentity(string) (fileID, error) {
 	return fileID{}, config.ErrSecretUnavailable
 }
+
+func observeSource(config.ResolvedSecret) (sourceObservation, error) {
+	return sourceObservation{}, config.ErrSecretUnavailable
+}

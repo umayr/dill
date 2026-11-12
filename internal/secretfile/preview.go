@@ -11,6 +11,7 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"reflect"
 	"strings"
 
 	"github.com/umayr/dill/internal/config"
@@ -51,6 +52,12 @@ func PublishPreview(req Request, result *Result, keyPath, outputPath, configPath
 	}
 	next, err := authorize(req)
 	if err != nil || !result.sameAuthorization(next) {
+		return fail()
+	}
+	// Bind only validated observations from the checked preflight; reject any
+	// source change during planning rather than authenticating stale evidence.
+	observed, err := observeSources(next.mounts, result.runtime.mapping)
+	if err != nil || result.sources == nil || !reflect.DeepEqual(result.sources, observed) {
 		return fail()
 	}
 	// Never read a source as a key. No-follow ancestry and single-link private
@@ -97,7 +104,8 @@ func PublishPreview(req Request, result *Result, keyPath, outputPath, configPath
 		Policy                        *config.SecretPolicy
 		Bindings                      *config.SecretBindings
 		Mounts                        map[string][]config.ResolvedSecret
-	}{req.Target, req.Stack, req.Engine, req.Socket, req.Services, req.NoDeps, next.policy, next.bindings, next.mounts})
+		Sources                       map[string][]sourceObservation
+	}{req.Target, req.Stack, req.Engine, req.Socket, req.Services, req.NoDeps, next.policy, next.bindings, next.mounts, result.sources})
 	if err != nil {
 		return fail()
 	}
