@@ -238,7 +238,7 @@ func diffConfigsChecked(name string, svc *config.Service, live *orchestrator.Liv
 	liveVolumes := live.Volumes
 	_, marked := live.SystemLabels[orchestrator.SecretEnabledLabel]
 	if len(svc.Secrets) > 0 || marked {
-		if !live.MountsKnown {
+		if !live.MountsKnown || (live.UserNSMode != "" && live.UserNSMode != "host") || len(live.UIDMap) > 0 || len(live.GIDMap) > 0 {
 			return nil, config.ErrSecretUnavailable
 		}
 		ordinary, changed := secretMountDrift(secrets, desiredVols, live.Volumes)

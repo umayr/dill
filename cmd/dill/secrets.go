@@ -97,7 +97,7 @@ func (d *secretDiagnostics) close() {
 }
 
 func (o commandOptions) secretMode() bool {
-	return o.SafeSecrets || o.SecretBindingsSet || o.SecretPolicy != "" || o.SecretTarget != "" || (o.secretDiagnostics != nil && o.secretDiagnostics.safe)
+	return o.proofRequested() || o.SafeSecrets || o.SecretBindingsSet || o.SecretPolicy != "" || o.SecretTarget != "" || (o.secretDiagnostics != nil && o.secretDiagnostics.safe)
 }
 
 // CLI execution is single-command scoped. Both Dill and SDK diagnostics are
@@ -188,7 +188,7 @@ func runSecretsCheck(ctx context.Context, o commandOptions, args []string) error
 }
 
 func requiresSecretPreflight(o commandOptions, c *config.DillConfig) bool {
-	return hasSecretGrants(c) || o.SecretBindingsSet
+	return hasSecretGrants(c) || o.SecretBindingsSet || o.proofRequested()
 }
 func secretCommandOptions(o commandOptions, args []string) (commandOptions, func()) {
 	captureSecretPolicy(&o)
@@ -197,4 +197,10 @@ func secretCommandOptions(o commandOptions, args []string) (commandOptions, func
 		return o, silenceSecretLogs()
 	}
 	return o, func() {}
+}
+
+func (o commandOptions) proofRequested() bool { return o.ProofKeyFileSet || o.ProofFileSet }
+func addProofFlags(fs *flag.FlagSet, o *commandOptions) {
+	fs.Func("proof-key-file", "absolute private 32-byte preview key", func(v string) error { o.ProofKeyFile = v; o.ProofKeyFileSet = true; return nil })
+	fs.Func("proof-file", "fresh absolute private preview output", func(v string) error { o.ProofFile = v; o.ProofFileSet = true; return nil })
 }

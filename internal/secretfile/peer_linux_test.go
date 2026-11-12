@@ -47,6 +47,9 @@ func TestSocketPeerKernelIdentity(t *testing.T) {
 		if err != config.ErrSecretUnavailable {
 			t.Fatal(err)
 		}
+		if os.Getenv("DILL_TEST_ALPHA_SECRETS") == "1" {
+			t.Fatal("required Linux SO_PEERPIDFD qualification failed")
+		}
 		t.Skip("SO_PEERPIDFD is an Alpha runtime prerequisite")
 	}
 	defer unix.Close(fd)

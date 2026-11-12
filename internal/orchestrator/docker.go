@@ -520,6 +520,7 @@ func (d *DockerEngine) InspectConfig(ctx context.Context, name string) (*LiveCon
 
 	return &LiveConfig{
 		MountsKnown:   true,
+		UserNSMode:    string(info.HostConfig.UsernsMode),
 		ID:            info.ID,
 		Image:         info.Config.Image,
 		ImageID:       info.Image,
@@ -769,4 +770,43 @@ func toDockerHealthCheck(hc *config.HealthCheck) *container.HealthConfig {
 		cfg.StartPeriod = d
 	}
 	return cfg
+}
+
+func (d *DockerEngine) PreviewResources(ctx context.Context, stack string, names []string) ([]PreviewResource, error) {
+	out := []PreviewResource{}
+	n, err := d.cli.NetworkInspect(ctx, stack, dockertypes.NetworkInspectOptions{})
+	if err != nil && !client.IsErrNotFound(err) {
+		return nil, err
+	}
+	fact := PreviewResource{Kind: "network", Name: stack, Exists: err == nil, ID: n.ID}
+	if err == nil {
+		fact.Settings, err = json.Marshal(struct {
+			Driver, Scope                       string
+			Internal, IPv6, Attachable, Ingress bool
+			IPAM                                network.IPAM
+			Options, Labels                     map[string]string
+		}{n.Driver, n.Scope, n.Internal, n.EnableIPv6, n.Attachable, n.Ingress, n.IPAM, n.Options, n.Labels})
+		if err != nil {
+			return nil, err
+		}
+	}
+	out = append(out, fact)
+	for _, name := range previewNames(names) {
+		v, err := d.cli.VolumeInspect(ctx, name)
+		if err != nil && !client.IsErrNotFound(err) {
+			return nil, err
+		}
+		f := PreviewResource{Kind: "volume", Name: name, Exists: err == nil}
+		if err == nil {
+			f.Settings, err = json.Marshal(struct {
+				Name, Driver, Scope, CreatedAt, Mountpoint string
+				Options, Labels                            map[string]string
+			}{v.Name, v.Driver, v.Scope, v.CreatedAt, v.Mountpoint, v.Options, v.Labels})
+			if err != nil {
+				return nil, err
+			}
+		}
+		out = append(out, f)
+	}
+	return out, nil
 }

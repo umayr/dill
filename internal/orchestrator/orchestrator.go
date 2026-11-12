@@ -22,24 +22,26 @@ var ErrNotFound = errors.New("container not found")
 // LiveConfig holds the effective configuration of a running or stopped container,
 // extracted from the engine for comparison against desired state.
 type LiveConfig struct {
-	MountsKnown   bool   // adapter exposes ordinary mount type/source/destination/RW metadata
-	ID            string // immutable engine container ID; use for mutations after ownership checks
-	Image         string
-	ImageID       string            // engine image ID the container was created from
-	Env           map[string]string // KEY → value; only user-set vars
-	Ports         []config.PortBinding
-	Volumes       []config.VolumeMount
-	RestartPolicy string
-	UserLabels    map[string]string // excludes dill.* system labels
-	SystemLabels  map[string]string // dill.* system labels
-	NetworkMode   string
-	User          string
-	HealthTest    []string
-	Command       []string
-	CapAdd        []string
-	Init          bool
-	Cpuset        string
-	Resources     config.ResourceLimits
+	UserNSMode     string
+	UIDMap, GIDMap []string
+	MountsKnown    bool   // adapter exposes ordinary mount type/source/destination/RW metadata
+	ID             string // immutable engine container ID; use for mutations after ownership checks
+	Image          string
+	ImageID        string            // engine image ID the container was created from
+	Env            map[string]string // KEY → value; only user-set vars
+	Ports          []config.PortBinding
+	Volumes        []config.VolumeMount
+	RestartPolicy  string
+	UserLabels     map[string]string // excludes dill.* system labels
+	SystemLabels   map[string]string // dill.* system labels
+	NetworkMode    string
+	User           string
+	HealthTest     []string
+	Command        []string
+	CapAdd         []string
+	Init           bool
+	Cpuset         string
+	Resources      config.ResourceLimits
 }
 
 // ContainerStatus holds runtime information about a running or stopped container.

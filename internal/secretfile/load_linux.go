@@ -5,17 +5,12 @@ package secretfile
 import (
 	"io"
 	"os"
-	"path"
 	"strconv"
 	"strings"
 
 	"github.com/umayr/dill/internal/config"
 	"golang.org/x/sys/unix"
 )
-
-func cleanPath(p string) bool {
-	return strings.HasPrefix(p, "/") && p != "/" && path.Clean(p) == p && !strings.ContainsRune(p, 0)
-}
 
 // openParent pins each directory while traversing; no submitted component may
 // be a symlink. This is not protection against the trusted administrator moving
@@ -78,6 +73,7 @@ func readPrivate(p string, owner uint32) ([]byte, error) {
 	}
 	b, err := io.ReadAll(io.LimitReader(f, 65537))
 	if err != nil || int64(len(b)) != before.Size || unix.Fstat(fd, &after) != nil || !sameMetadata(before, after) || !noACL(fd, false) {
+		clear(b)
 		return nil, config.ErrSecretUnavailable
 	}
 	return b, nil

@@ -2,6 +2,7 @@ package orchestrator
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -10,6 +11,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 
 	nettypes "github.com/containers/common/libnetwork/types"
 	"github.com/containers/image/v5/manifest"
@@ -617,7 +619,17 @@ func (p *PodmanEngine) InspectConfig(ctx context.Context, name string) (*LiveCon
 		}
 	}
 
+	var uidMap, gidMap []string
+	if data.HostConfig != nil && data.HostConfig.IDMappings != nil {
+		uidMap = data.HostConfig.IDMappings.UIDMap
+		gidMap = data.HostConfig.IDMappings.GIDMap
+	}
+	userNS := ""
+	if data.HostConfig != nil {
+		userNS = data.HostConfig.UsernsMode
+	}
 	return &LiveConfig{
+		UserNSMode: userNS, UIDMap: uidMap, GIDMap: gidMap,
 		MountsKnown:   data.Config != nil && data.HostConfig != nil,
 		ID:            data.ID,
 		Image:         data.ImageName,
@@ -782,4 +794,40 @@ func volumeOptions(vm config.VolumeMount) []string {
 		return []string{"ro"}
 	}
 	return nil
+}
+
+func (p *PodmanEngine) PreviewResources(ctx context.Context, stack string, names []string) ([]PreviewResource, error) {
+	out := []PreviewResource{}
+	n, err := podmannetwork.Inspect(p.operationContext(ctx), stack, nil)
+	if err != nil && !podmanNotFound(err) {
+		return nil, err
+	}
+	fact := PreviewResource{Kind: "network", Name: stack, Exists: err == nil}
+	if err == nil {
+		fact.ID = n.ID
+		n.Created = time.Time{}
+		fact.Settings, err = json.Marshal(n)
+		if err != nil {
+			return nil, err
+		}
+	}
+	out = append(out, fact)
+	for _, name := range previewNames(names) {
+		v, err := podmanvolumes.Inspect(p.operationContext(ctx), name, nil)
+		if err != nil && !podmanNotFound(err) {
+			return nil, err
+		}
+		f := PreviewResource{Kind: "volume", Name: name, Exists: err == nil}
+		if err == nil {
+			f.Settings, err = json.Marshal(struct {
+				Name, Driver, CreatedAt, Mountpoint string
+				Options, Labels                     map[string]string
+			}{v.Name, v.Driver, v.CreatedAt.UTC().Format(time.RFC3339Nano), v.Mountpoint, v.Options, v.Labels})
+			if err != nil {
+				return nil, err
+			}
+		}
+		out = append(out, f)
+	}
+	return out, nil
 }

@@ -119,6 +119,7 @@ func run(args []string) (retErr error) {
 		fs.SetOutput(io.Discard)
 	}
 	addSecretBindingsFlag(fs, &opts)
+	addProofFlags(fs, &opts)
 	fs.StringVar(&opts.SecretTarget, "secret-target", "", "trusted secret target ID")
 	opts.ConfigFile = "compose.pkl"
 	addConfigFileFlag(fs, &opts)
@@ -199,6 +200,9 @@ Flags:
 		commandArgs = commandArgs[1:]
 	}
 
+	if opts.proofRequested() && cmd != cmdPlan {
+		return config.ErrSecretUnavailable
+	}
 	ctx := context.Background()
 
 	switch cmd {

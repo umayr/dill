@@ -106,3 +106,13 @@ func TestSecretMovedMountCannotLeakThroughOrdinaryVolumeDiff(t *testing.T) {
 		t.Fatal("private old source escaped via ordinary volume diff")
 	}
 }
+
+func TestSecretUnsupportedLiveNamespaceRejected(t *testing.T) {
+	for _, change := range []func(*orchestrator.LiveConfig){func(l *orchestrator.LiveConfig) { l.UserNSMode = "private" }, func(l *orchestrator.LiveConfig) { l.UIDMap = []string{"0:100000:65536"} }, func(l *orchestrator.LiveConfig) { l.GIDMap = []string{"0:100000:65536"} }} {
+		svc, refs, live := secretDiffFixture(t)
+		change(live)
+		if _, err := diffConfigsChecked("app", svc, live, "", "demo", "lab", refs); err != config.ErrSecretUnavailable {
+			t.Fatal("unsupported live namespace accepted")
+		}
+	}
+}

@@ -3,14 +3,18 @@
 package integration
 
 import (
+	"bytes"
 	"context"
+	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"testing"
@@ -42,12 +46,16 @@ func TestDillQualifiedHostFileSecrets(t *testing.T) {
 	if err != nil {
 		t.Fatal("cannot provision protected synthetic directory")
 	}
-	defer os.RemoveAll(dir)
+	t.Cleanup(func() { os.RemoveAll(dir) })
 	root := repoRoot(t)
 	bin := dillBinary(t, root)
 	stack := fmt.Sprintf("alpha-%d", time.Now().UnixNano())
 	configPath, policyPath := filepath.Join(dir, "compose.pkl"), filepath.Join(dir, "policy.json")
-	source1, source2, sourceMissing := filepath.Join(dir, "source-r1"), filepath.Join(dir, "source-r2"), filepath.Join(dir, "source-r3")
+	sourceDir := filepath.Join(dir, "sources")
+	if os.Mkdir(sourceDir, 0700) != nil {
+		t.Fatal("cannot provision synthetic source directory")
+	}
+	source1, source2, sourceMissing := filepath.Join(sourceDir, "source-r1"), filepath.Join(sourceDir, "source-r2"), filepath.Join(sourceDir, "source-r3")
 	values := []string{"dill-alpha-synthetic-v1", "dill-alpha-synthetic-v2"}
 	for i, p := range []string{source1, source2} {
 		if os.WriteFile(p, []byte(values[i]), 0400) != nil {
@@ -87,12 +95,23 @@ func TestDillQualifiedHostFileSecrets(t *testing.T) {
 			declaration = `secrets { new { name = "db" } }`
 			grant = fmt.Sprintf(`secrets { new { name = "db"; target = "/run/secrets/db"; uid = %d; gid = %d; mode = 256 } }`, uid, gid)
 		}
-		text := fmt.Sprintf("amends %q\nconfig { name = %q; engine = %q; %s services { [\"app\"] { image = \"alpine:3.20\"; user = %q; command = List(\"sleep\",\"600\"); %s } } }\n", filepath.Join(root, "dill.pkl"), stack, engine, declaration, fmt.Sprintf("%d:%d", uid, gid), grant)
+		text := fmt.Sprintf("amends %q\nconfig { name = %q; engine = %q; %s services { [\"app\"] { image = \"docker.io/library/alpine:3.20\"; user = %q; command = List(\"sleep\",\"600\"); %s } } }\n", filepath.Join(root, "dill.pkl"), stack, engine, declaration, fmt.Sprintf("%d:%d", uid, gid), grant)
 		if os.WriteFile(configPath, []byte(text), 0600) != nil {
 			t.Fatal("cannot write synthetic recipe")
 		}
 	}
 	writeRecipe(true)
+	keyDir, err := os.MkdirTemp(base, "keys-")
+	if err != nil {
+		t.Fatal("cannot provision private key directory")
+	}
+	t.Cleanup(func() { os.RemoveAll(keyDir) })
+	keyPath := filepath.Join(keyDir, "preview.key")
+	var key [32]byte
+	if _, err := rand.Read(key[:]); err != nil || os.WriteFile(keyPath, key[:], 0600) != nil {
+		t.Fatal("cannot provision private preview key")
+	}
+	clear(key[:])
 	environment := []string{}
 	for _, entry := range os.Environ() {
 		key, _, _ := strings.Cut(entry, "=")
@@ -165,6 +184,35 @@ func TestDillQualifiedHostFileSecrets(t *testing.T) {
 			}
 		}
 	}
+	proofCounter := 0
+	proof := func(binding string, wantCode int) string {
+		t.Helper()
+		proofCounter++
+		path := filepath.Join(dir, fmt.Sprintf("proof-%d.json", proofCounter))
+		out, code := dill(binding, "plan", "--format", "json", "--proof-key-file", keyPath, "--proof-file", path)
+		assertPublic(out)
+		if code != wantCode {
+			t.Fatal("checked proof plan failed")
+		}
+		data, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatal("completed plan did not publish proof")
+		}
+		var doc struct{ Contract, Proof string }
+		if json.Unmarshal(data, &doc) != nil || doc.Contract != "dill.alpha-secrets-preview/1" || len(doc.Proof) != 43 {
+			t.Fatal("invalid real-binary proof interface")
+		}
+		st, err := os.Stat(path)
+		if err != nil || st.Mode().Perm() != 0600 {
+			t.Fatal("proof permissions")
+		}
+		return doc.Proof
+	}
+	// Exact candidate binary interface, including drift exit 1 before creation.
+	initial := proof(bindings[0], 1)
+	if initial != proof(bindings[0], 1) {
+		t.Fatal("stable create plan produced unstable proof")
+	}
 	out, code := dill(bindings[0], "secrets", "check", "--format", "json")
 	assertPublic(out)
 	if code != 0 || strings.TrimSpace(string(out)) != `{"contract":"dill.alpha-secrets/1","status":"available"}` {
@@ -176,6 +224,50 @@ func TestDillQualifiedHostFileSecrets(t *testing.T) {
 		t.Fatal("qualified create failed")
 	}
 	assertPlan(bindings[0], 0, 0, 1)
+	stable := proof(bindings[0], 0)
+	if stable != proof(bindings[0], 0) || stable == initial {
+		t.Fatal("stable proof or live identity invalidation failed")
+	}
+	// Same effective imported evaluation retains the proof; a changed imported
+	// recipe must invalidate it even if a public plan happens to look the same.
+	imported := filepath.Join(dir, "imported.pkl")
+	originalRecipe, err := os.ReadFile(configPath)
+	if err != nil {
+		t.Fatal("synthetic recipe unavailable")
+	}
+	if os.WriteFile(imported, originalRecipe, 0600) != nil || os.WriteFile(configPath, []byte(fmt.Sprintf("amends %q\n", imported)), 0600) != nil {
+		t.Fatal("cannot provision imported recipe")
+	}
+	if proof(bindings[0], 0) != stable {
+		t.Fatal("semantically identical import changed proof")
+	}
+	changedRecipe := bytes.Replace(originalRecipe, []byte(`command = List("sleep","600")`), []byte(`command = List("sleep","601")`), 1)
+	if bytes.Equal(changedRecipe, originalRecipe) || os.WriteFile(imported, changedRecipe, 0600) != nil {
+		t.Fatal("cannot change synthetic import")
+	}
+	if proof(bindings[0], 1) == stable {
+		t.Fatal("changed imported config retained approval")
+	}
+	if os.WriteFile(configPath, originalRecipe, 0600) != nil {
+		t.Fatal("cannot restore synthetic recipe")
+	}
+	if proof(bindings[0], 0) != stable {
+		t.Fatal("restored effective configuration changed proof")
+	}
+	// Immutable resource identity and lifecycle state are confirmation inputs.
+	if _, code := engineCall("stop", container); code != 0 {
+		t.Fatal("cannot inject owned lifecycle fault")
+	}
+	if proof(bindings[0], 0) == stable {
+		t.Fatal("stopped container retained approval")
+	}
+	if _, code := engineCall("start", container); code != 0 {
+		t.Fatal("cannot restore owned lifecycle fault")
+	}
+	if proof(bindings[0], 0) != stable {
+		t.Fatal("volatile lifecycle counters entered proof")
+	}
+
 	readAs := func(id int64, expected string) {
 		t.Helper()
 		out, code := engineCall("exec", "--user", fmt.Sprintf("%d:%d", id, gid), container, "cat", "/run/secrets/db")
@@ -187,8 +279,11 @@ func TestDillQualifiedHostFileSecrets(t *testing.T) {
 	if _, code := engineCall("exec", "--user", fmt.Sprintf("%d:%d", uid+1, gid+1), container, "cat", "/run/secrets/db"); code == 0 {
 		t.Fatal("unauthorized non-root identity read synthetic source")
 	}
-	if _, code := engineCall("exec", "--user", fmt.Sprintf("%d:%d", uid, gid), container, "sh", "-c", "chmod u+w /run/secrets/db; printf mutation > /run/secrets/db"); code == 0 {
-		t.Fatal("owner chmod/write bypassed read-only bind")
+	if _, code := engineCall("exec", "--user", fmt.Sprintf("%d:%d", uid, gid), container, "sh", "-c", "chmod u+w /run/secrets/db"); code == 0 {
+		t.Fatal("owner chmod bypassed read-only bind")
+	}
+	if _, code := engineCall("exec", "--user", fmt.Sprintf("%d:%d", uid, gid), container, "sh", "-c", "printf mutation > /run/secrets/db"); code == 0 {
+		t.Fatal("owner write bypassed read-only bind")
 	}
 	inspect := func() string {
 		t.Helper()
@@ -237,6 +332,9 @@ func TestDillQualifiedHostFileSecrets(t *testing.T) {
 		t.Fatal("denied direct lifecycle changed container identity")
 	}
 	assertPlan(bindings[1], 1, 1, 0)
+	if proof(bindings[1], 1) == stable {
+		t.Fatal("reference rotation retained approval")
+	}
 	out, code = dill(bindings[1], "up")
 	assertPublic(out)
 	if code != 0 {
@@ -245,14 +343,176 @@ func TestDillQualifiedHostFileSecrets(t *testing.T) {
 	readAs(uid, values[1])
 	assertPlan(bindings[1], 0, 0, 1)
 	before = inspect()
-	out, code = dill(bindings[2], "up", "--pull", "always")
+	snapshot := func() string {
+		t.Helper()
+		var facts []string
+		for _, args := range [][]string{{"ps", "-a", "--format", "{{.ID}} {{.State}}"}, {"images", "--format", "{{.ID}}"}, {"network", "ls", "--format", "{{.ID}}"}, {"volume", "ls", "--format", "{{.Name}}"}} {
+			out, code := engineCall(args...)
+			if code != 0 {
+				t.Fatal("cannot observe mutation inventory")
+			}
+			lines := strings.Split(strings.TrimSpace(string(out)), "\n")
+			sort.Strings(lines)
+			facts = append(facts, strings.Join(lines, "\n"))
+		}
+		return strings.Join(facts, "\n---\n")
+	}
+	events := func(since time.Time) []string {
+		t.Helper()
+		until := time.Now().Add(time.Second)
+		format := "{{json .}}"
+		if engine == "podman" {
+			format = "json"
+		}
+		out, code := engineCall("events", "--since", since.UTC().Format(time.RFC3339Nano), "--until", until.UTC().Format(time.RFC3339Nano), "--format", format)
+		if code != 0 {
+			t.Fatal("engine event qualification unavailable")
+		}
+		d := json.NewDecoder(bytes.NewReader(out))
+		actions := []string{}
+		for {
+			var event map[string]any
+			if err := d.Decode(&event); err == io.EOF {
+				break
+			} else if err != nil {
+				t.Fatal("invalid engine event evidence")
+			}
+			action, _ := event["Action"].(string)
+			if action == "" {
+				action, _ = event["Status"].(string)
+			}
+			if action == "" {
+				action, _ = event["status"].(string)
+			}
+			switch action {
+			case "pull", "create", "start", "stop", "remove", "destroy", "kill", "connect", "disconnect":
+				actions = append(actions, action)
+			}
+		}
+		return actions
+	}
+	// Qualify that event capture can observe a real mutation (including image
+	// pulls that preserve image IDs); do not rely on an always-empty stream.
+	probeStart := time.Now()
+	if _, code := engineCall("pull", "docker.io/library/alpine:3.20"); code != 0 {
+		t.Fatal("event probe pull failed")
+	}
+	probe := events(probeStart)
+	seenPull := false
+	for _, action := range probe {
+		seenPull = seenPull || action == "pull"
+	}
+	if !seenPull {
+		t.Fatal("event backend did not observe qualification pull")
+	}
+	checkDenied := func(binding string) {
+		t.Helper()
+		old := snapshot()
+		start := time.Now()
+		out, code := dill(binding, "up", "--pull", "always")
+		assertPublic(out)
+		if code != 1 || !strings.Contains(string(out), "Secret configuration or source unavailable.") {
+			t.Fatal("bad selected source did not safely block apply")
+		}
+		if snapshot() != old || inspect() != before || len(events(start)) != 0 {
+			t.Fatal("unavailable source mutated engine")
+		}
+	}
+	// Real owned orphan plus a desired recreate: failure must precede both.
+	orphan := stack + "_orphan"
+	if _, code := engineCall("run", "-d", "--name", orphan, "--label", "dill.managed=true", "--label", "dill.stack="+stack, "--label", "dill.service=orphan", "docker.io/library/alpine:3.20", "sleep", "600"); code != 0 {
+		t.Fatal("cannot provision owned synthetic orphan")
+	}
+	if os.WriteFile(configPath, changedRecipe, 0600) != nil {
+		t.Fatal("cannot provision desired recreate")
+	}
+	checkDenied(bindings[2])
+	// Inject faults only into owned per-run synthetic fixtures, always restore.
+	// Renaming the directory (not files) also proves no source open/read is used
+	// by cleanup and that a missing parent blocks before pull/orphan/recreate.
+	parked := sourceDir + "-parked"
+	if err := os.Rename(sourceDir, parked); err != nil {
+		t.Fatal("cannot inject missing fixture directory")
+	}
+	func() {
+		defer func() {
+			if os.Rename(parked, sourceDir) != nil {
+				t.Fatal("cannot restore synthetic directory")
+			}
+		}()
+		old := snapshot()
+		start := time.Now()
+		out, code := dill(bindings[1], "up", "--pull", "always")
+		assertPublic(out)
+		if code != 1 || snapshot() != old || len(events(start)) != 0 {
+			t.Fatal("missing synthetic directory caused mutation")
+		}
+	}()
+	// Source metadata and symlink failures are availability, never implicit
+	// rotation. Privileged fixture ownership changes are provisioning only.
+	chmodSource := func(mode string) {
+		t.Helper()
+		if _, code := call("sudo", "-n", "chmod", mode, source2); code != 0 {
+			t.Fatal("cannot provision synthetic source mode fault")
+		}
+	}
+	func() { chmodSource("0444"); defer chmodSource("0400"); checkDenied(bindings[1]) }()
+	func() {
+		savedSource := source2 + "-saved"
+		if os.Rename(source2, savedSource) != nil {
+			t.Fatal("cannot provision synthetic source rename")
+		}
+		defer func() {
+			os.Remove(source2)
+			if os.Rename(savedSource, source2) != nil {
+				t.Fatal("cannot restore synthetic source")
+			}
+		}()
+		if os.Symlink(savedSource, source2) != nil {
+			t.Fatal("cannot provision symlink source fault")
+		}
+		checkDenied(bindings[1])
+	}()
+	if os.WriteFile(configPath, originalRecipe, 0600) != nil {
+		t.Fatal("cannot restore synthetic recipe")
+	}
+	// A changed inspected mount setting must cause drift with unchanged labels.
+	// Recreate this owned synthetic container using identical configuration and
+	// labels, but deliberately make its secret mount writable.
+	inspectJSON, code := engineCall("inspect", container)
+	if code != 0 {
+		t.Fatal("cannot prepare owned mount drift")
+	}
+	var rows []struct {
+		Config struct{ Labels map[string]string }
+	}
+	if json.Unmarshal(inspectJSON, &rows) != nil || len(rows) != 1 {
+		t.Fatal("invalid owned inspect")
+	}
+	if _, code := engineCall("rm", "-f", container); code != 0 {
+		t.Fatal("cannot inject owned mount drift")
+	}
+	args := []string{"run", "-d", "--name", container, "--user", fmt.Sprintf("%d:%d", uid, gid), "--network", stack, "--mount", "type=bind,src=" + source2 + ",dst=/run/secrets/db"}
+	for name, value := range rows[0].Config.Labels {
+		args = append(args, "--label", name+"="+value)
+	}
+	args = append(args, "docker.io/library/alpine:3.20", "sleep", "600")
+	if _, code := engineCall(args...); code != 0 {
+		t.Fatal("cannot create synthetic writable mount")
+	}
+	assertPlan(bindings[1], 1, 1, 0)
+	driftOut, driftCode := dill(bindings[1], "plan", "--format", "json")
+	assertPublic(driftOut)
+	if driftCode != 1 || !strings.Contains(string(driftOut), "secret_mounts") {
+		t.Fatal("writable bind not detected privately")
+	}
+	out, code = dill(bindings[1], "up")
 	assertPublic(out)
-	if code != 1 || !strings.Contains(string(out), "Secret configuration or source unavailable.") {
-		t.Fatal("missing selected source did not safely block apply")
+	if code != 0 {
+		t.Fatal("checked up did not repair inspected mount drift")
 	}
-	if inspect() != before {
-		t.Fatal("unavailable source caused recreation")
-	}
+	readAs(uid, values[1])
+	assertPlan(bindings[1], 0, 0, 1)
 	// Cleanup intentionally uses label-only fallback with a nonexistent recipe,
 	// without bindings and after trusted policy is unavailable. Source retention
 	// is checked before the harness removes its own synthetic fixture directory.

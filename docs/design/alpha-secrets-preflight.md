@@ -1,8 +1,8 @@
 # Alpha secret preflight and delivery (Stages A/B)
 
 The internal preflight layer is consumed by checked CLI planning/deployment and
-both engine adapters. Unchecked delivery still fails closed. Preview proofs and
-real Linux runtime qualification remain separate, pending work; local adapter
+both engine adapters. Unchecked delivery still fails closed. Preview proofs are implemented in Stage C;
+real Linux and paired runtime qualification remain pending; local adapter
 HTTP fixtures and spy tests are not an engine qualification claim. No local
 engine was mutated while developing these stages.
 
@@ -227,7 +227,7 @@ private inspect facts; planner tests cover no-op, rotation, metadata drift and
 redaction. None fabricates runtime authorization evidence.
 
 `test/integration/secrets_test.go` adds an opt-in, Linux-only real-engine test.
-It is **not yet executed/qualified**. Only enable it on a disposable engine whose
+The dedicated Alpha CI matrix now enables it (actual CI results are pending). Only enable it on a disposable engine whose
 exact endpoint, daemon namespace and launch satisfy the contract, using:
 
 ```
@@ -251,5 +251,8 @@ reference rotation, missing-source apply denial, marker lifecycle protection and
 source-independent cleanup. It does not print synthetic source values. Rootful
 Docker, rootful Podman **5.0.0**, and rootless Podman **5.0.0** require separate
 qualification. The ordinary distro-Podman CI job is not secret qualification.
-The next stage must execute and review this matrix together with paired proof
-fixtures; a successful cross-compile or skipped test is not runtime proof.
+The dedicated jobs build exact Podman 5.0.0 source and require real peer pidfds;
+they cover proof stability/import/lifecycle invalidation and event-based zero
+mutation as described in [alpha-secrets-preview-proof.md](alpha-secrets-preview-proof.md).
+Review green matrix and paired Brine results before release; a successful
+cross-compile or skipped test is not runtime proof.

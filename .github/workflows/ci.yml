@@ -189,3 +189,22 @@ jobs:
             echo "eval $f"
             pkl eval "$f" > /dev/null
           done
+
+  alpha-secrets:
+    name: Alpha secrets / ${{ matrix.engine }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    strategy:
+      fail-fast: false
+      matrix:
+        engine: [docker, podman-rootful, podman-rootless]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - name: Build pinned Podman 5.0.0 from verified source commit
+        if: matrix.engine != 'docker'
+        run: scripts/ci-build-podman-alpha.sh
+      - name: Run exact-peer, metadata, proof and real HOST FILE qualification
+        run: scripts/ci-alpha-secrets.sh '${{ matrix.engine }}'

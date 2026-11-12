@@ -23,6 +23,8 @@ type commandOptions struct {
 	SecretBindingsSet, SafeSecrets, SecretPolicyCaptured bool
 	StackNameSet                                         bool
 	ConfigFileSet                                        bool
+	ProofKeyFile, ProofFile                              string
+	ProofKeyFileSet, ProofFileSet                        bool
 	ConfigFile                                           string
 	Timeout                                              time.Duration
 	EnvFile                                              string

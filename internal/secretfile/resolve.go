@@ -35,6 +35,8 @@ type Result struct {
 	selected map[string]bool
 	mounts   map[string][]config.ResolvedSecret
 	runtime  *runtimeEvidence
+	policy   *config.SecretPolicy
+	bindings *config.SecretBindings
 }
 type requestIdentity struct{ policy, bindings, target, stack, engine, socket string }
 type runtimeEvidence struct {
@@ -59,7 +61,11 @@ func (r *Result) Matches(req Request) bool {
 		return false
 	}
 	next, err := authorize(req)
-	return err == nil && reflect.DeepEqual(r.selected, next.selected) && reflect.DeepEqual(r.mounts, next.mounts)
+	return err == nil && r.sameAuthorization(next)
+}
+
+func (r *Result) sameAuthorization(next *Result) bool {
+	return next != nil && reflect.DeepEqual(r.selected, next.selected) && reflect.DeepEqual(r.mounts, next.mounts) && reflect.DeepEqual(r.policy, next.policy) && reflect.DeepEqual(r.bindings, next.bindings)
 }
 
 // Mounts returns independent copies for the matching request only after a full
@@ -141,7 +147,7 @@ func authorize(req Request) (*Result, error) {
 		}
 		sort.Slice(mounts, func(i, j int) bool { return mounts[i].Name < mounts[j].Name })
 	}
-	return &Result{bound: requestID(req), selected: selected, mounts: resolved}, nil
+	return &Result{bound: requestID(req), selected: selected, mounts: resolved, policy: policy, bindings: bindings}, nil
 }
 
 func selectServices(cfg *config.DillConfig, names []string, noDeps bool) (map[string]bool, error) {

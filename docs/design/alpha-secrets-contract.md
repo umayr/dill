@@ -1,8 +1,8 @@
 # Alpha file-secret contract (implementation under qualification)
 
-The approved private preview-confirmation extension is specified in [alpha-secrets-preview-proof.md](alpha-secrets-preview-proof.md); it is not implemented yet.
+The approved private preview-confirmation extension is specified in [alpha-secrets-preview-proof.md](alpha-secrets-preview-proof.md); it is implemented, with Linux and paired runtime qualification pending.
 
-The Stage A preflight and Stage B CLI/adapter implementation, including narrower runtime prerequisites (Linux >=6.5 exact peer pidfds and a dedicated qualified Podman service), are documented in [alpha-secrets-preflight.md](alpha-secrets-preflight.md). Core delivery is wired; preview proofs and real Linux runtime qualification remain pending. This is not release qualification.
+The Stage A preflight and Stage B CLI/adapter implementation, including narrower runtime prerequisites (Linux >=6.5 exact peer pidfds and a dedicated qualified Podman service), are documented in [alpha-secrets-preflight.md](alpha-secrets-preflight.md). Core delivery is wired; preview proofs are implemented; real Linux and paired runtime qualification remain pending. This is not release qualification.
 
 This is a bounded implementation contract for the single-host Alpha, not completion of [#10](https://github.com/umayr/dill/issues/10), [#16](https://github.com/umayr/dill/issues/16), [#19](https://github.com/umayr/dill/issues/19), [#38](https://github.com/umayr/dill/issues/38), or [Brine #8](https://github.com/umayr/brine/issues/8). It requires paired implementation and review. The existing `dill protocol` advertises only `protocol.check`; its metadata codec does **not** execute deployments, discover targets or resolve secrets. This contract does not extend that protocol or require a new IR/RPC system.
 
