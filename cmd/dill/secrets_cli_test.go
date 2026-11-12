@@ -460,3 +460,12 @@ func TestSecretSelectorPreventsFormatterAndDoctorDiagnostics(t *testing.T) {
 		t.Fatal("legacy doctor details changed")
 	}
 }
+
+func TestSecretStaticDiscoveryDoesNotTreatSelectorValueAsCommand(t *testing.T) {
+	for _, args := range [][]string{{"--secret-target", "protocol", "secret-capabilities"}, {"--secret-bindings", "protocol", "caps", "--engine", "docker"}} {
+		out, stderr, code := secretMain(t, "static", true, args...)
+		if code != 0 || stderr != "" || out == "" {
+			t.Fatal("selector value misclassified as protocol command")
+		}
+	}
+}
