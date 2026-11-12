@@ -187,10 +187,12 @@ func TestDillQualifiedHostFileSecrets(t *testing.T) {
 		}
 	}
 	proofCounter := 0
+	lastProofPath := ""
 	proof := func(binding string, wantCode int) string {
 		t.Helper()
 		proofCounter++
 		path := filepath.Join(keyDir, fmt.Sprintf("proof-%d.json", proofCounter))
+		lastProofPath = path
 		out, code := dill(binding, "plan", "--format", "json", "--proof-key-file", keyPath, "--proof-file", path)
 		assertPublic(out)
 		if code != wantCode {
@@ -305,18 +307,44 @@ func TestDillQualifiedHostFileSecrets(t *testing.T) {
 	if proof(bindings[0], 0) != stable {
 		t.Fatal("restored effective configuration changed proof")
 	}
+	// Test-only read-only snapshots must reproduce the actual CLI MAC before
+	// their field-path diff is treated as evidence. Never print private frames,
+	// key/proof values or source bytes, and never retry/rebaseline to pass.
+	previewDiagnostic := func(stage string) {
+		t.Helper()
+		probe := os.Getenv("DILL_ALPHA_PREVIEW_DIAGNOSTIC_BINARY")
+		if engine != "podman" || probe == "" || os.Getenv("GITHUB_ACTIONS") != "true" {
+			return
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
+		defer cancel()
+		cmd := exec.CommandContext(ctx, probe, "-test.run=^TestQualifiedAlphaPreviewSnapshot$", "-test.v")
+		cmd.Env = append(append([]string{}, environment...), "DILL_ALPHA_DIAG_CONFIG="+configPath, "DILL_ALPHA_DIAG_BINDINGS="+bindings[0], "DILL_ALPHA_DIAG_STACK="+stack, "DILL_ALPHA_DIAG_PREVIEW_DIR="+keyDir, "DILL_ALPHA_DIAG_PREVIEW_PROOF="+lastProofPath, "DILL_ALPHA_DIAG_PREVIEW_STAGE="+stage)
+		out, err := cmd.CombinedOutput()
+		assertPublic(out)
+		if len(out) > 16384 {
+			out = out[:16384]
+		}
+		t.Logf("synthetic preview fact diagnostic stage=%s (%v):\n%s", stage, err, out)
+		// Diagnostics do not replace or bypass the original lifecycle assertions.
+	}
+	previewDiagnostic("before")
 	// Immutable resource identity and lifecycle state are confirmation inputs.
 	if _, code := engineCall("stop", container); code != 0 {
 		t.Fatal("cannot inject owned lifecycle fault")
 	}
-	if proof(bindings[0], 0) == stable {
+	stopped := proof(bindings[0], 0)
+	previewDiagnostic("stopped")
+	if stopped == stable {
 		t.Fatal("stopped container retained approval")
 	}
 	if _, code := engineCall("start", container); code != 0 {
 		t.Fatal("cannot restore owned lifecycle fault")
 	}
-	if proof(bindings[0], 0) != stable {
-		t.Fatal("volatile lifecycle counters entered proof")
+	restarted := proof(bindings[0], 0)
+	previewDiagnostic("restarted")
+	if restarted != stable {
+		t.Fatal("restored lifecycle proof changed; inspect verified field-path diagnostics")
 	}
 
 	if _, code := engineCall("exec", "--user", fmt.Sprintf("%d:%d", uid+1, gid+1), container, "cat", "/run/secrets/db"); code == 0 {

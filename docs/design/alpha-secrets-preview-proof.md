@@ -247,8 +247,35 @@ paired harness cleanup error for intentionally retained networks.
 Initial published `ff4d11a` CI (run 43306923484) passed Linux unit/metadata and
 Docker Alpha qualification. The later diagnostic run identified the Podman
 runtime mismatch above, and `20ef7a7` passed the source-stat/workspace unit tests.
-The new source-built runtime and PATH correction require fresh matrix execution.
-A CI-only test-binary probe replays the same independently checked adapter
+Run 43319430110 at `ffbca6c` subsequently passed baseline jobs and Alpha Docker;
+both Podman jobs built and selected exact crun 1.26 successfully, then failed
+the restored-lifecycle proof equality assertion. That assertion's old wording
+("volatile lifecycle counters entered proof") did not identify the differing
+HMAC component. Pinned Podman's `libpod/container_inspect.go` builds inspect
+configuration/host fields from `specFromState()` as well as stored configuration;
+reading those definitions does not establish which normalized fact changed in
+this run. Full Podman qualification remains pending, not established by the
+successful runtime build or the earlier create/access/proof phases.
+
+A test-only diagnostic now captures the four private HMAC frames immediately
+after the actual CLI proof, before stop, while stopped, and after restart. Its
+copied authority shape is checked against production publication in a regression
+test; each real-engine snapshot must also reproduce that phase's actual CLI MAC
+before its diff can be interpreted as exact evidence. This includes validated
+source device/inode, size, mtime/ctime (seconds/nanoseconds), UID/GID, mode and
+link count, rather than assuming only live counters changed. The read-only probe
+uses the same evaluator, preflight and planner with the same options. It has no
+engine mutations, readiness polling, retries or replacement approval baseline.
+Snapshots stay in exclusive protected fixture files and are removed with the
+fixture. Logs contain only a stage, MAC-match boolean and up to 64 changed field
+paths; dynamic keys are masked. No source bytes, values/value hashes, keys,
+proofs or canonical frame values are printed. The original stop, restart,
+immutable-ID and valid-replacement assertions remain enforced. If a snapshot
+cannot match the just-published CLI proof, the probe explicitly fails and its
+fresh observations must not be mistaken for exact CLI evidence. Next disposable
+CI must establish the changed fields before a product or test assumption fix.
+
+A separate CI-only test-binary probe replays the same independently checked adapter
 phases on synthetic fixtures after a failed Podman create, reporting bounded
 native SDK causes. It does not replace real CLI acceptance or relax production
 errors, preflight, namespace or RO settings. Dedicated daemon logs are collected
