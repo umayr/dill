@@ -16,6 +16,9 @@ func ValidateRuntime(cfg *DillConfig) error {
 	if cfg == nil {
 		return fmt.Errorf("config is nil")
 	}
+	if err := ValidateSecrets(cfg); err != nil {
+		return err
+	}
 	containerNames := make(map[string]string)
 	names := make([]string, 0, len(cfg.Services))
 	for name := range cfg.Services {

@@ -48,6 +48,9 @@ func runPlanNamed(ctx context.Context, opts commandOptions, args []string, name 
 		return err
 	}
 
+	if err := config.RejectUnsupportedSecretDelivery(cfg); err != nil {
+		return err
+	}
 	engine, err := openEngine(ctx, cfg, opts)
 	if err != nil {
 		return fmt.Errorf("initialising engine: %w", err)

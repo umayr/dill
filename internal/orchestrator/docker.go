@@ -147,6 +147,9 @@ func (d *DockerEngine) LocalImageID(ctx context.Context, img string) (string, er
 }
 
 func (d *DockerEngine) StartService(ctx context.Context, name string, svc *config.Service, stackName string) (string, error) {
+	if svc == nil || len(svc.Secrets) > 0 {
+		return "", config.ErrSecretUnavailable
+	}
 	logger.Debug("starting service", "service", name, "image", svc.Image)
 
 	ports, err := config.NormalizePorts(svc.Ports)

@@ -26,6 +26,17 @@ func validateDecodedShape(raw json.RawMessage, cfg *DillConfig) error {
 	if _, ok := obj["engine"]; ok && cfg.Engine != "docker" && cfg.Engine != "podman" {
 		return fmt.Errorf("config.engine: invalid engine %q", cfg.Engine)
 	}
+	if v, ok := obj["secrets"]; ok {
+		var items []json.RawMessage
+		if err := json.Unmarshal(v, &items); err != nil {
+			return ErrSecretUnavailable
+		}
+		for _, item := range items {
+			if err := requireJSONFields(item, "name"); err != nil {
+				return ErrSecretUnavailable
+			}
+		}
+	}
 	var services map[string]json.RawMessage
 	if err := json.Unmarshal(obj["services"], &services); err != nil {
 		return fmt.Errorf("config.services: %w", err)
@@ -44,6 +55,24 @@ func validateDecodedShape(raw json.RawMessage, cfg *DillConfig) error {
 			return err
 		}
 		svc := cfg.Services[name]
+		if v, ok := fields["secrets"]; ok {
+			var items []json.RawMessage
+			if err := json.Unmarshal(v, &items); err != nil {
+				return ErrSecretUnavailable
+			}
+			for i, item := range items {
+				if err := requireJSONFields(item, "name", "target"); err != nil {
+					return ErrSecretUnavailable
+				}
+				var grant map[string]json.RawMessage
+				if err := json.Unmarshal(item, &grant); err != nil {
+					return ErrSecretUnavailable
+				}
+				if _, ok := grant["mode"]; !ok {
+					svc.Secrets[i].Mode = 256
+				}
+			}
+		}
 		if svc.Image == "" {
 			return fmt.Errorf("%s.image: must not be empty", path)
 		}

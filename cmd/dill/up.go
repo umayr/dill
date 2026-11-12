@@ -51,6 +51,9 @@ func runUp(ctx context.Context, opts commandOptions, args []string) error {
 }
 
 func runUpConfig(ctx context.Context, opts commandOptions, cfg *config.DillConfig, names []string, noDeps bool, pullPolicy string, open func(context.Context, *config.DillConfig) (orchestrator.Engine, error)) error {
+	if err := config.RejectUnsupportedSecretDelivery(cfg); err != nil {
+		return err
+	}
 	if err := config.ValidateRuntime(cfg); err != nil {
 		return err
 	}

@@ -102,6 +102,9 @@ func (p *PodmanEngine) LocalImageID(ctx context.Context, img string) (string, er
 }
 
 func (p *PodmanEngine) StartService(ctx context.Context, name string, svc *config.Service, stackName string) (string, error) {
+	if svc == nil || len(svc.Secrets) > 0 {
+		return "", config.ErrSecretUnavailable
+	}
 	if err := ValidateCapabilities("podman", map[string]*config.Service{name: svc}); err != nil {
 		return "", err
 	}

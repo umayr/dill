@@ -8,6 +8,7 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/umayr/dill/internal/config"
 	"github.com/umayr/dill/internal/dag"
 	"github.com/umayr/dill/internal/log"
 	"github.com/umayr/dill/internal/orchestrator"
@@ -110,6 +111,9 @@ func runStart(ctx context.Context, opts commandOptions, services []string) error
 	if err != nil {
 		return err
 	}
+	if err := config.RejectUnsupportedSecretDelivery(cfg); err != nil {
+		return err
+	}
 	sn := resolveStackNameWithOptions(cfg, opts)
 	engine, err := openEngine(ctx, cfg, opts)
 	if err != nil {
@@ -157,6 +161,9 @@ func runRestart(ctx context.Context, opts commandOptions, args []string) error {
 
 	cfg, err := loadConfig(ctx, opts)
 	if err != nil {
+		return err
+	}
+	if err := config.RejectUnsupportedSecretDelivery(cfg); err != nil {
 		return err
 	}
 	sn := resolveStackNameWithOptions(cfg, opts)
