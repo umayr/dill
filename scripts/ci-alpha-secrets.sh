@@ -11,6 +11,11 @@ v = tuple(int(x) for x in platform.release().split('-')[0].split('.')[:2])
 assert v >= (6, 5), 'Alpha requires Linux >=6.5; no pidfd fallback'
 print('Qualification kernel:', platform.release())
 PY
+# Keep /usr/bin first for the source-built Podman/crun, but retain admin tools
+# needed by daemon networking and resolver helpers. Version checks do not alter
+# host firewall, bridge or forwarding policy.
+alpha_test_path=/usr/bin:/usr/local/bin:/usr/sbin:/usr/local/sbin:/bin:/sbin
+env PATH="$alpha_test_path" sh -ec 'for tool in iptables ip6tables ip; do command -v "$tool"; done; iptables --version; ip6tables --version; ip -Version'
 base=/srv/dill-alpha-$mode
 [[ ! -e $base ]] || { echo 'Dedicated fixture directory already exists' >&2; exit 1; }
 operator=0; group=0
@@ -50,7 +55,7 @@ trap cleanup EXIT
 if [[ $mode == docker ]]; then
   printf '{}' | sudo tee "$base/docker.json" >/dev/null
   sudo chmod 0600 "$base/docker.json"
-  sudo env -i PATH=/usr/bin:/usr/local/bin:/bin HOME=/root \
+  sudo env -i PATH="$alpha_test_path" HOME=/root \
     /usr/bin/dockerd --config-file "$base/docker.json" --host "unix://$socket" \
     --data-root "$base/data" --exec-root "$base/exec" --pidfile "$base/daemon.pid" \
     --bridge=none --iptables=false --ip6tables=false --ip-forward=false --ip-masq=false \
@@ -64,13 +69,13 @@ else
   if [[ $mode == podman-rootless ]]; then
     # Native rootless service, not podman unshare: Dill remains in the initial
     # host namespace and proves the exact daemon child namespace via pidfd.
-    env -i PATH=/usr/bin:/usr/local/bin:/bin HOME="$HOME" USER="$(id -un)" LOGNAME="$(id -un)" \
+    env -i PATH="$alpha_test_path" HOME="$HOME" USER="$(id -un)" LOGNAME="$(id -un)" \
       XDG_RUNTIME_DIR="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}" \
       CONTAINERS_CONF="$base/containers.conf" \
       /usr/bin/podman system service --time=0 "unix://$socket" \
       >"$RUNNER_TEMP/alpha-daemon.log" 2>&1 &
   else
-    sudo env -i PATH=/usr/bin:/usr/local/bin:/bin HOME=/root USER=root LOGNAME=root \
+    sudo env -i PATH="$alpha_test_path" HOME=/root USER=root LOGNAME=root \
       CONTAINERS_CONF="$base/containers.conf" \
       /usr/bin/podman system service --time=0 "unix://$socket" \
       >"$RUNNER_TEMP/alpha-daemon.log" 2>&1 &
@@ -120,9 +125,19 @@ if [[ $engine == docker ]]; then
   sudo docker --host "unix://$socket" version --format '{{.Server.Version}}'
 else
   run_operator /usr/bin/podman --url "unix://$socket" version --format '{{.Server.Version}}'
+  # Check the actual dedicated server's selected runtime, not merely a client
+  # executable or the distro package database. Keep CONTAINERS_CONF unchanged.
+  alpha_runtime_name=$(run_operator /usr/bin/podman --url "unix://$socket" info --format '{{.Host.OCIRuntime.Name}}')
+  alpha_runtime_path=$(run_operator /usr/bin/podman --url "unix://$socket" info --format '{{.Host.OCIRuntime.Path}}')
+  alpha_runtime_version=$(run_operator /usr/bin/podman --url "unix://$socket" info --format '{{.Host.OCIRuntime.Version}}')
+  test "$alpha_runtime_name" = crun
+  test "$alpha_runtime_path" = /usr/bin/crun
+  test "$(printf '%s\n' "$alpha_runtime_version" | sed -n '1p')" = 'crun version 1.26'
+  printf 'Dedicated server OCI runtime: %s %s\n%s\n' "$alpha_runtime_name" "$alpha_runtime_path" "$alpha_runtime_version"
+  sha256sum /usr/bin/crun
 fi
 # Restore the validated CI marker explicitly across sudo's environment reset.
-common=(GITHUB_ACTIONS=true PATH=/usr/bin:/usr/local/bin:/bin DILL_TEST_ALPHA_SECRETS=1 DILL_TEST_SECRET_DIR="$base/fixtures" DILL_BINARY="$repo/bin/dill" \
+common=(GITHUB_ACTIONS=true PATH="$alpha_test_path" DILL_TEST_ALPHA_SECRETS=1 DILL_TEST_SECRET_DIR="$base/fixtures" DILL_BINARY="$repo/bin/dill" \
   DILL_PKL_PATH="$base/pkl" DILL_ALPHA_DIAGNOSTIC_BINARY="$RUNNER_TEMP/alpha-diagnostics.test" DILL_ALPHA_ENGINE="$engine" DILL_ALPHA_SOCKET="$socket" \
   DILL_ALPHA_FIXTURE_ROOT="$base/fixtures" DILL_ALPHA_CONTAINER_UID=1000 DILL_ALPHA_CONTAINER_GID=1000 \
   DILL_ALPHA_HOST_UID="$host_uid" DILL_ALPHA_HOST_GID="$host_gid")

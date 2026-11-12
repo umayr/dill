@@ -188,8 +188,9 @@ platform/filesystem behavior fails fixed, never falls back to overwrite.
   plus an event stream proven to see a real pull checks zero mutation.
 - Podman jobs compile exact upstream 5.0.0 source commit
   `e71ec6f1d94d2d97fb3afe08aae0d8adaf8bddf0` with pinned Go 1.22.12 for that old
-  source, explicit build tags and vendored dependencies. Native distro helpers
-  and their versions are recorded; no opaque Podman binary is downloaded. The
+  source, explicit build tags and vendored dependencies. crun 1.26 is built from
+  pinned verified source as described below; other native distro helpers and
+  their versions are recorded. No opaque Podman/crun binary is downloaded. The
   built executable uses the distro `/usr/bin/podman` AppArmor path on the
   disposable runner only. Baseline jobs are unchanged.
 - Jobs require Linux >=6.5 and actual SO_PEERPIDFD success, record kernel and
@@ -197,13 +198,58 @@ platform/filesystem behavior fails fixed, never falls back to overwrite.
   only `[containers] userns = "host"`. Rootless host IDs come from the exact
   socket peer's kernel maps, not an independent `unshare` assumption.
 
+### OCI runtime compatibility correction
+
+Run 43314699489 at `20ef7a7` established that both Podman variants passed
+preflight, mapping, ownership, image and network phases, then failed native
+create/start with `crun: unknown version specified`. Source inspection explains
+that precise failure independently of the runtime's `spec: 1.0.0` banner:
+
+- Pinned Podman `e71ec6f1d94d2d97fb3afe08aae0d8adaf8bddf0` calls
+  `generate.New("linux")` in `pkg/specgen/generate/oci_linux.go`.
+  Its vendored `github.com/opencontainers/runtime-tools/generate/generate.go`
+  initializes `Spec.Version` from `rspec.Version`; the vendored
+  `github.com/opencontainers/runtime-spec/specs-go/version.go` defines **1.2.0**.
+  There is no version downgrade on that generation path.
+- Ubuntu's observed crun **1.14.1**, upstream source
+  `de537a7965bfbe9992e2cfae0baeb56a08128171`, rejects
+  `def->oci_version && strstr(def->oci_version, "1.0") == NULL` in
+  `src/libcrun/container.c` create/run/restore paths, producing exactly
+  `unknown version specified`. OCI 1.2.0 fails that check.
+- The qualification build now uses upstream crun **1.26**, tag target
+  `3241e671f92c33b0c003cd7de319e4f32add6231`. That source no longer contains
+  the 1.0-only rejection. Its parser submodule is pinned by the superproject:
+  libocispec `bf749566cda632fb2f5dcf9c4eb5bbec71ac7d5f`, with runtime-spec
+  `d64c1d945da7cf6970061c7c9ff4391fafdf2a15` (newer OCI schemas).
+  Recursive submodules are checked out at recorded gitlinks, never floating
+  remote branches. The tag's peeled commit is verified before building, and
+  submodule identities, executable version and SHA-256 are logged.
+
+`scripts/ci-build-podman-alpha.sh` builds with seccomp/systemd enabled and installs
+root-owned mode-0755 `/usr/bin/crun` only on the disposable qualification runner.
+The service retains its exact Podman 5.0.0 argv and host-userns-only private
+`CONTAINERS_CONF`. The actual dedicated server must report runtime name `crun`,
+path `/usr/bin/crun`, and executable version `crun version 1.26`; a client binary
+or stale dpkg package label is not accepted as proof of selection. The package
+database still describes distro crun, so its package version is not the built
+executable's version. Compatibility reasoning concerns acceptance of this
+profile's OCI 1.2.0 input, not a blanket OCI conformance claim based on a banner.
+Actual create/inspect/access/RO tests remain mandatory; source audit alone is
+not a successful runtime qualification.
+
+The daemon and client test PATH now includes `/usr/sbin` and `/sbin`, retaining
+`/usr/bin` first for the pinned executables. The runner explicitly resolves and
+prints versions for `iptables`, `ip6tables` and `ip`. Docker's existing isolated
+bridge/firewall/forwarding flags are unchanged. This corrects executable lookup
+for resolver/network helpers; it is **not** asserted to explain the separate
+paired harness cleanup error for intentionally retained networks.
+
 Initial published `ff4d11a` CI (run 43306923484) passed Linux unit/metadata and
-Docker Alpha qualification. Both exact-source Podman jobs passed peer/source
-and private proof tests, then failed the first CLI create without an underlying
-SDK cause in their logs. The latest review-fix candidate requires fresh matrix
-execution: the four corrections above are not qualified by those older results.
-A CI-only test-binary probe now replays the same independently checked adapter
-phases on that synthetic fixture after a failed Podman create, reporting bounded
+Docker Alpha qualification. The later diagnostic run identified the Podman
+runtime mismatch above, and `20ef7a7` passed the source-stat/workspace unit tests.
+The new source-built runtime and PATH correction require fresh matrix execution.
+A CI-only test-binary probe replays the same independently checked adapter
+phases on synthetic fixtures after a failed Podman create, reporting bounded
 native SDK causes. It does not replace real CLI acceptance or relax production
 errors, preflight, namespace or RO settings. Dedicated daemon logs are collected
 on failure with synthetic-value/hash filtering; no source bytes are read by the
