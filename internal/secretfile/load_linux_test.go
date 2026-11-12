@@ -52,9 +52,26 @@ func TestReadPrivate(t *testing.T) {
 	if err != nil || string(b) != `{"synthetic":"metadata"}` {
 		t.Fatalf("private regular file: %v", err)
 	}
-	for _, mode := range []os.FileMode{0400, 0600, 0644, 0660, 0700, 0000, 04600} {
+	for _, mode := range []os.FileMode{0400, 0600, 0644, 0660, 0700, 0000, 0600 | os.ModeSetuid, 0600 | os.ModeSetgid, 0600 | os.ModeSticky} {
 		if err := os.Chmod(p, mode); err != nil {
 			t.Fatal(err)
+		}
+		// Go FileMode special flags are high bits, not Unix octal 04000.
+		// Assert the synthetic inode actually has the forbidden bits: testing
+		// a silently truncated 0600 fixture would wrongly blame production.
+		want := uint32(mode.Perm())
+		if mode&os.ModeSetuid != 0 {
+			want |= unix.S_ISUID
+		}
+		if mode&os.ModeSetgid != 0 {
+			want |= unix.S_ISGID
+		}
+		if mode&os.ModeSticky != 0 {
+			want |= unix.S_ISVTX
+		}
+		var st unix.Stat_t
+		if err := unix.Stat(p, &st); err != nil || st.Mode&07777 != want {
+			t.Fatalf("synthetic mode fixture: requested=%v want=%o got=%o stat=%v", mode, want, st.Mode&07777, err)
 		}
 		_, err := readPrivate(p, uint32(os.Geteuid()))
 		if (mode == 0400 || mode == 0600) != (err == nil) {

@@ -74,10 +74,12 @@ jobs:
         env:
           DILL_TEST_SECRET_DIR: /srv/dill-secretfile-tests
       - name: Diagnose synthetic workspace and protected-source qualification
+        if: ${{ !cancelled() }}
         env:
           DILL_TEST_SECRET_DIR: /srv/dill-secretfile-tests
         run: go test -tags containers_image_openpgp,exclude_graphdriver_devicemapper,exclude_graphdriver_btrfs -run 'TestWorkspaceAncestryQualification|TestSourceMetadata$' -v ./internal/secretfile
       - name: Test metadata-only access without source read permission
+        if: ${{ !cancelled() }}
         run: |
           CGO_ENABLED=0 go test -tags containers_image_openpgp,exclude_graphdriver_devicemapper,exclude_graphdriver_btrfs -c -o "$RUNNER_TEMP/secretfile.test" ./internal/secretfile
           sudo "$RUNNER_TEMP/secretfile.test" -test.run '^TestSourceMetadataWithoutReadPermission$' -test.v
