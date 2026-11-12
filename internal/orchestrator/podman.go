@@ -25,6 +25,7 @@ import (
 	specs "github.com/opencontainers/runtime-spec/specs-go"
 	"github.com/umayr/dill/internal/config"
 	"github.com/umayr/dill/internal/log"
+	"github.com/umayr/dill/internal/secretfile"
 )
 
 func podmanNotFound(err error) bool {
@@ -105,6 +106,29 @@ func (p *PodmanEngine) StartService(ctx context.Context, name string, svc *confi
 	if svc == nil || len(svc.Secrets) > 0 {
 		return "", config.ErrSecretUnavailable
 	}
+	return p.startService(ctx, name, svc, stackName, nil, "")
+}
+
+func (p *PodmanEngine) StartServiceChecked(ctx context.Context, name string, svc *config.Service, stackName string, req secretfile.Request) (id string, retErr error) {
+	defer func() {
+		if retErr != nil {
+			retErr = config.ErrSecretUnavailable
+		}
+	}()
+	mounts, err := checkedSecretMounts(ctx, name, svc, stackName, "podman", p.socket, req)
+	if err != nil {
+		return "", config.ErrSecretUnavailable
+	}
+	return p.startService(ctx, name, svc, stackName, mounts, req.Target)
+}
+
+func (p *PodmanEngine) startService(ctx context.Context, name string, svc *config.Service, stackName string, secrets []config.ResolvedSecret, target string) (string, error) {
+	for key := range svc.Labels {
+		if strings.HasPrefix(key, config.SystemLabelPrefix) {
+			return "", config.ErrSecretUnavailable
+		}
+	}
+
 	if err := ValidateCapabilities("podman", map[string]*config.Service{name: svc}); err != nil {
 		return "", err
 	}
@@ -137,10 +161,13 @@ func (p *PodmanEngine) StartService(ctx context.Context, name string, svc *confi
 		"dill.stack":       stackName,
 		"dill.config-hash": "",
 	}
-	if hash, err := config.ServiceConfigHash(stackName, name, svc); err != nil {
+	if hash, err := config.SecretServiceConfigHash(stackName, name, svc, target, secrets); err != nil {
 		return "", fmt.Errorf("service %s: %w", name, err)
 	} else {
 		s.Labels["dill.config-hash"] = hash
+	}
+	if len(secrets) > 0 {
+		s.Labels[SecretEnabledLabel] = "true"
 	}
 	for k, v := range svc.Labels {
 		s.Labels[k] = v
@@ -186,6 +213,9 @@ func (p *PodmanEngine) StartService(ctx context.Context, name string, svc *confi
 		}
 	}
 
+	for _, secret := range secrets {
+		s.Mounts = append(s.Mounts, specs.Mount{Type: "bind", Source: secret.HostPath, Destination: secret.Target, Options: []string{"ro"}})
+	}
 	if len(svc.Command) > 0 {
 		s.Command = svc.Command
 	}
@@ -588,6 +618,7 @@ func (p *PodmanEngine) InspectConfig(ctx context.Context, name string) (*LiveCon
 	}
 
 	return &LiveConfig{
+		MountsKnown:   data.Config != nil && data.HostConfig != nil,
 		ID:            data.ID,
 		Image:         data.ImageName,
 		ImageID:       data.Image,

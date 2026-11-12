@@ -2,7 +2,11 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"os"
+	"path/filepath"
+	"syscall"
 
 	"github.com/umayr/dill/internal/config"
 	"github.com/umayr/dill/internal/log"
@@ -21,6 +25,22 @@ type labelStack struct {
 // stack name there is no way to identify the stack, so the load error is
 // returned with a hint.
 func resolveLabelStack(ctx context.Context, opts commandOptions) (*labelStack, error) {
+	// A launcher may intentionally provide an invocation-private nonexistent
+	// absolute recipe for label-only cleanup. Never invoke Pkl for this narrow
+	// fully explicit identity. Existing entries (including dangling symlinks)
+	// and errors other than ENOENT retain the ordinary resolution path.
+	if opts.ConfigFileSet && filepath.IsAbs(opts.ConfigFile) && opts.StackNameSet && config.ValidateSecretStackName(opts.StackName) == nil && opts.Engine != "" && opts.EngineSocketSet {
+		if _, err := os.Lstat(opts.ConfigFile); errors.Is(err, syscall.ENOENT) {
+			if opts.Engine != "docker" && opts.Engine != "podman" {
+				return nil, usageError{"invalid explicit cleanup engine"}
+			}
+			if _, err := localEngineSocket(opts); err != nil {
+				return nil, err
+			}
+			return &labelStack{Name: opts.StackName, Engine: opts.Engine}, nil
+		}
+	}
+
 	cfg, err := loadConfig(ctx, opts)
 	if err == nil {
 		return &labelStack{

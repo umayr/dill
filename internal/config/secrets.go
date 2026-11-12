@@ -5,6 +5,15 @@ import (
 	"strings"
 )
 
+// ValidateSecretStackName validates the Alpha trusted stack identifier without
+// evaluating a recipe or acquiring any policy/bindings/source availability.
+func ValidateSecretStackName(name string) error {
+	if !secretIdentifier.MatchString(name) {
+		return ErrSecretUnavailable
+	}
+	return nil
+}
+
 // ValidateSecrets validates authoring without accessing policy or source files.
 func ValidateSecrets(cfg *DillConfig) error {
 	if cfg == nil {
@@ -27,7 +36,7 @@ func ValidateSecrets(cfg *DillConfig) error {
 		if err != nil {
 			return err
 		}
-		if len(svc.Secrets) > 0 && !secretIdentifier.MatchString(cfg.Name) {
+		if len(svc.Secrets) > 0 && ValidateSecretStackName(cfg.Name) != nil {
 			return ErrSecretUnavailable
 		}
 		for _, grant := range svc.Secrets {
@@ -57,9 +66,9 @@ func pathsOverlap(a, b string) bool {
 	return a == b || a == "/" || b == "/" || strings.HasPrefix(a, b+"/") || strings.HasPrefix(b, a+"/")
 }
 
-// RejectUnsupportedSecretDelivery prevents partial builds from silently starting
-// workloads without their requested files. Removed when runtime delivery lands.
-func RejectUnsupportedSecretDelivery(cfg *DillConfig) error {
+// RejectUncheckedSecretDelivery prevents unchecked entrypoints from silently
+// ignoring grants. Checked delivery must consume secretfile.Preflight evidence.
+func RejectUncheckedSecretDelivery(cfg *DillConfig) error {
 	if cfg == nil {
 		return ErrSecretUnavailable
 	}

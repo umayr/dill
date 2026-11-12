@@ -10,6 +10,7 @@ import (
 	"golang.org/x/sync/errgroup"
 	"golang.org/x/term"
 
+	"github.com/umayr/dill/internal/config"
 	"github.com/umayr/dill/internal/log"
 )
 
@@ -26,6 +27,10 @@ func runPull(ctx context.Context, opts commandOptions, args []string) error {
 	cfg, err := loadConfig(ctx, opts)
 	if err != nil {
 		return err
+	}
+
+	if hasSecretGrants(cfg) {
+		return config.ErrSecretUnavailable
 	}
 
 	engine, err := openEngine(ctx, cfg, opts)

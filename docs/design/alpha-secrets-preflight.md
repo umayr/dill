@@ -1,9 +1,57 @@
-# Alpha secret preflight implementation (Stage A)
+# Alpha secret preflight and delivery (Stages A/B)
 
-This is the internal preflight layer, **not** an advertisement of the Alpha
-feature. CLI/adapters, lifecycle routing and preview proofs are separate stages.
-The existing rejection of secret delivery stays in place. No engine was mutated
-to develop or test this stage.
+The internal preflight layer is consumed by checked CLI planning/deployment and
+both engine adapters. Unchecked delivery still fails closed. Preview proofs and
+real Linux runtime qualification remain separate, pending work; local adapter
+HTTP fixtures and spy tests are not an engine qualification claim. No local
+engine was mutated while developing these stages.
+
+## CLI and mutation boundary
+
+The trusted launcher supplies `-p STACK --engine docker|podman --engine-socket
+/ABS/SOCKET --secret-target ID --secret-bindings /ABS/BINDINGS`, with independently
+provisioned `DILL_SECRET_POLICY=/ABS/POLICY`. Target is not taken from bindings. The existing `unix:///ABS/SOCKET` flag spelling
+is also accepted and bound to the canonical absolute policy socket.
+For secret paths an explicit nonempty config name must match the trusted binding/
+policy stack and `-p` when supplied (Brine always supplies it; standalone Dill
+may omit it). Strict ordinary target/policy calls also reject nonempty evaluated
+name mismatch with explicit `-p`, without demanding secret bindings. Safe
+selectors can also accompany an ordinary config without requiring bindings or
+sources; their presence controls diagnostics, not secret classification.
+
+- `secret-capabilities --format json` is static; no recipe, policy or engine is
+  opened. `secrets check --format json` emits only fixed available/unavailable
+  status and uses a ten-second deadline, with no engine mutations.
+- `validate --secret-bindings ...` performs authorization-only checks. It does
+  not claim sources or an engine are available.
+- `plan`/`diff` run full checked preflight and private mount comparison. They keep
+  their legacy full-stack, no-positional-service interface and their distinct
+  drift exit contracts. `up [services...] [--no-deps]` authorizes the entire
+  recipe but checks availability and plans only its selected closure. Only a full
+  stack up considers orphans for removal.
+- `up` checks selected sources and desired/orphan ownership before pulls,
+  network creation, stop/recreate or orphan removal. Each adapter repeats full
+  preflight immediately before creation. This is not atomic: a later recheck
+  may fail after a successful pull/network operation; externally immutable
+  sources and operator quiescence remain required.
+- Both adapters use read-only regular-file binds (Docker `Mount`, not auto-create
+  `Binds`), reserve `dill.secret-enabled=true`, and store only reference-based
+  config hashes. Actual private inspect source/type/destination/RW facts and
+  mount visibility are compared even when labels/hash match. Missing, writable,
+  overlapping, extra or unknown mounts fail closed or force recreation. Plans
+  show logical desired revisions and generic reasons, never resolved sources.
+- Direct `start`/`restart` precheck the whole selected closure and all existing
+  ownership/marker facts before network/stop/start. Selected grants or any
+  persisted secret marker require checked `up`; changing/removing a recipe
+  cannot bypass a marker. Unchecked standalone `pull` rejects grants.
+- `stop`, `down`, `rm` and safe-config `teardown` do not require binding/policy/
+  source availability and never delete externally provisioned files. Existing
+  confirmation prompts and immutable-ID ownership checks remain. An explicit
+  absolute nonexistent `-f`, explicit valid Alpha `-p`, engine and socket enables
+  label-only stop/down without locating or invoking Pkl; `Lstat` must report
+  exactly ENOENT (not a symlink, existing entry or other error). Named-service
+  cleanup still requires a valid recipe; teardown still needs image metadata
+  from a safe recipe. Legacy fallback behavior is otherwise unchanged.
 
 ## Entry point
 
@@ -167,3 +215,41 @@ process's UID). Treat unexpected metadata/ACL skips as a qualification failure.
 Widening Podman server versions requires inspecting their config precedence and
 namespace implementation plus equivalent disposable tests; do not just loosen
 the version comparison. Compilation and synthetic fixtures are not that proof.
+
+## Evidence and pending runtime qualification
+
+`cmd/dill/secrets_cli_test.go` exercises real CLI main/parser/error output in
+subprocesses, actual imported-grant evaluation, target-only ordinary behavior,
+and the no-Pkl missing-recipe cleanup interface. `secrets_wiring_test.go` uses
+explicit spies for selection and mutation ordering, including partial recheck
+failure. Adapter HTTP tests capture both engines' RO mounts, marker/hash and
+private inspect facts; planner tests cover no-op, rotation, metadata drift and
+redaction. None fabricates runtime authorization evidence.
+
+`test/integration/secrets_test.go` adds an opt-in, Linux-only real-engine test.
+It is **not yet executed/qualified**. Only enable it on a disposable engine whose
+exact endpoint, daemon namespace and launch satisfy the contract, using:
+
+```
+DILL_TEST_ALPHA_SECRETS=1
+DILL_ALPHA_ENGINE=docker|podman
+DILL_ALPHA_SOCKET=/ABS/QUALIFIED/SOCKET
+DILL_ALPHA_FIXTURE_ROOT=/srv/PROTECTED_SYNTHETIC_ROOT
+DILL_ALPHA_CONTAINER_UID=1000
+DILL_ALPHA_CONTAINER_GID=1000
+DILL_ALPHA_HOST_UID=<proven mapped UID>
+DILL_ALPHA_HOST_GID=<proven mapped GID>
+DILL_PKL_PATH=/ABS/PINNED/PKL
+```
+
+Run `DILL_TEST_RUN=TestDillQualifiedHostFileSecrets make integration-test` with
+those environment values. The fixture root must be protected from `/`; test
+source IDs must be provisionable by the runner (or disposable runner sudo).
+The test uses explicit native CLI endpoints to verify authorized non-root reads,
+unauthorized-ID denial, chmod/write denial, inspect mounts/marker, no-op, explicit
+reference rotation, missing-source apply denial, marker lifecycle protection and
+source-independent cleanup. It does not print synthetic source values. Rootful
+Docker, rootful Podman **5.0.0**, and rootless Podman **5.0.0** require separate
+qualification. The ordinary distro-Podman CI job is not secret qualification.
+The next stage must execute and review this matrix together with paired proof
+fixtures; a successful cross-compile or skipped test is not runtime proof.

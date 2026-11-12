@@ -5,7 +5,7 @@ cannot establish that the evaluated configuration, policy and relevant live
 state are unchanged. This is a narrow private confirmation mechanism, not a
 saved plan, transaction or new deployment protocol.
 
-`dill plan [existing flags] --proof-key-file ABS --proof-file ABS` accepts both
+`dill --secret-target ID -p STACK --engine ENGINE --engine-socket /ABS/SOCKET plan [existing flags] --proof-key-file ABS --proof-file ABS` accepts both
 flags together, only on a secret-enabled plan. On a successfully completed
 plan, including the normal drift exit status 1, Dill atomically writes a fresh,
 private mode-0600 file containing exactly:

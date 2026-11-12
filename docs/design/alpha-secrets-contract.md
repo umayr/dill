@@ -1,10 +1,36 @@
-# Alpha file-secret contract (proposed, not implemented)
+# Alpha file-secret contract (implementation under qualification)
 
 The approved private preview-confirmation extension is specified in [alpha-secrets-preview-proof.md](alpha-secrets-preview-proof.md); it is not implemented yet.
 
-The internal Stage A preflight implementation and its narrower runtime prerequisites (Linux >=6.5 exact peer pidfds and a dedicated qualified Podman service) are documented in [alpha-secrets-preflight.md](alpha-secrets-preflight.md). This does not advertise completed CLI/adapter delivery or runtime CI qualification.
+The Stage A preflight and Stage B CLI/adapter implementation, including narrower runtime prerequisites (Linux >=6.5 exact peer pidfds and a dedicated qualified Podman service), are documented in [alpha-secrets-preflight.md](alpha-secrets-preflight.md). Core delivery is wired; preview proofs and real Linux runtime qualification remain pending. This is not release qualification.
 
 This is a bounded implementation contract for the single-host Alpha, not completion of [#10](https://github.com/umayr/dill/issues/10), [#16](https://github.com/umayr/dill/issues/16), [#19](https://github.com/umayr/dill/issues/19), [#38](https://github.com/umayr/dill/issues/38), or [Brine #8](https://github.com/umayr/brine/issues/8). It requires paired implementation and review. The existing `dill protocol` advertises only `protocol.check`; its metadata codec does **not** execute deployments, discover targets or resolve secrets. This contract does not extend that protocol or require a new IR/RPC system.
+
+## CLI authority and safe diagnostics
+
+`--secret-bindings ABS` selects a deployment document; `--secret-target ID` is
+supplied independently by the trusted launcher/operator. The binding may never
+select policy authority. `DILL_SECRET_POLICY` is captured from the trusted process
+environment before loading recipe environment files; no target environment
+variable or recipe field selects the target. Global and command forms share the
+same options. Brine always supplies explicit matching `-p`, engine and socket.
+Standalone Dill may omit `-p` only with an explicit nonempty `config.name` that
+matches the trusted binding/policy stack. With strict target/policy selectors, a
+nonempty evaluated name may not override or disagree with explicit `-p`, even for
+an ordinary binding-free config; an empty ordinary name may use trusted `-p`.
+Legacy no-selector ordinary name overrides remain unchanged.
+
+The presence (even empty) of binding, target, proof selectors, trusted policy
+setting, or `secrets check` enables fixed errors and suppresses parser, Pkl, SDK
+and debug diagnostics before evaluation. Known-private Pkl evaluation has a
+10-second deadline, stdout bound of 8 MiB and stderr bound of 64 KiB. This is not
+Pkl sandboxing. Successful decoding that reveals grants enables the same safe
+diagnostics thereafter. Without selectors, an evaluation failure retains legacy
+Pkl diagnostics; no text scanning/classifier is introduced. A target/policy hint
+alone is **not** secret classification: ordinary evaluated configs without grants
+or explicit binding/proof requests keep ordinary semantics, without bindings or
+source checks. Evaluated/imported grants without bindings fail before engine
+access. Cleanup is exempt from availability checks, not from ownership checks.
 
 ## Trust and scope
 
@@ -37,7 +63,7 @@ Bindings are a separate, operator-selected deployment JSON file, not injected in
 {"version":"dill.secret-bindings/1","target":"lab-a","stack":"demo","bindings":[{"name":"db-password","source":"db-prod","revision":"r2"}]}
 ```
 
-Exact keys, non-null values, no duplicates/unknowns, bounded input (64 KiB, 256 entries, 128-byte strings), UTF-8, one JSON object and EOF. `target`, `stack`, `name`, `source`, `revision` match the name grammar above. Require explicit `config.name` and `-p` if supplied must equal it; no path-derived name for secret-enabled deployments. The file target and stack must equal the resolved trusted target and stack. Bindings may contain only declared names, at most one each; unused declared bindings may exist but do not grant access. References are metadata, not secret bytes; use opaque non-sensitive identifiers, never passwords as names or revisions. Brine stores only this document per deployment, not source paths. Changing the reference is an explicit reviewed config change.
+Exact keys, non-null values, no duplicates/unknowns, bounded input (64 KiB, 256 entries, 128-byte strings), UTF-8, one JSON object and EOF. `target`, `stack`, `name`, `source`, `revision` match the name grammar above. Require explicit nonempty `config.name`, exact trusted binding/policy stack identity, explicit `--engine`, canonical absolute `--engine-socket` (or its existing `unix:///` spelling) and operator-selected `--secret-target <id>`; if `-p` is supplied it must equal `config.name`. No path-derived name or binding-selected target for secret-enabled deployments. Brine always supplies trusted `-p`; standalone Dill does not require it. The file target and stack must equal the resolved trusted target and stack. Bindings may contain only declared names, at most one each; unused declared bindings may exist but do not grant access. References are metadata, not secret bytes; use opaque non-sensitive identifiers, never passwords as names or revisions. Brine stores only this document per deployment, not source paths. Changing the reference is an explicit reviewed config change.
 
 Trusted policy is provisioned independently outside the checkout/Brine workspace, selected by operator-controlled `DILL_SECRET_POLICY` (absolute path), not by Pkl or a deployment binding. Strict JSON, same parser limits, owned and writable only by the operator, with protected parent directories. Example, one entry per authorized source revision:
 
@@ -94,7 +120,7 @@ Add a separate static `dill secret-capabilities --format json` command, no confi
 
 This advertises implementation of this contract, **not** target readiness, actual availability, or protocol operations. Unknown flag/format fails. When operator `--secret-target` and `--secret-policy` enable secret mode, Brine requires the exact known contract, both binding/policy versions and engine entry before every Brine plan, up, start or restart, including apparently ordinary or unmarked stacks; malformed, missing, old or unsupported discovery fails closed with upgrade guidance. Legacy old-binary behavior is available only with secret mode explicitly disabled, and persisted known-secret records still fail closed when configuration is removed. Cleanup remains independent of secret availability and capabilities. The new Dill must reject grants without matching authorized bindings before mutation. Do not fall back to `caps`, `version`, parsing help, or legacy deployment. No claim that metadata protocol runs this feature.
 
-Add `dill secrets check --secret-bindings ABSOLUTE -f CONFIG --engine-socket ABSOLUTE --format json` (global flag ordering as existing CLI requires). It runs the same full-stack read-only authorization/availability preflight without pulling or creating anything. Success is `{"contract":"dill.alpha-secrets/1","status":"available"}` exit 0; failure is `{"contract":"dill.alpha-secrets/1","status":"unavailable","error":{"code":"SECRET_UNAVAILABLE","message":"Secret configuration or source unavailable."}}` exit 1. No identities, paths, parser text, Pkl stderr, SDK errors or input echo on stdout/stderr, including authorization denial, malformed input, timeout and unavailable engine; wrong invocation also gets this fixed failure. Do not distinguish missing from unauthorized to Brine. Use bounded output and timeout; no generic logging of wrapped errors. All secret-related errors in plan/up/validate are likewise fixed and identity-free; suppress raw Pkl/engine errors on this secret path, including debug logs. General legacy commands remain outside this guarantee. Status is a point-in-time check, not authorization to skip apply preflight. Plan exit remains 1 on drift, diff 0 on drift, errors nonzero.
+Add `dill secrets check --secret-target ID --secret-bindings ABSOLUTE -f CONFIG --engine ENGINE --engine-socket ABSOLUTE --format json` (global flag ordering as existing CLI requires). It runs the same full-stack read-only authorization/availability preflight without pulling or creating anything. Success is `{"contract":"dill.alpha-secrets/1","status":"available"}` exit 0; failure is `{"contract":"dill.alpha-secrets/1","status":"unavailable","error":{"code":"SECRET_UNAVAILABLE","message":"Secret configuration or source unavailable."}}` exit 1. No identities, paths, parser text, Pkl stderr, SDK errors or input echo on stdout/stderr, including authorization denial, malformed input, timeout and unavailable engine; wrong invocation also gets this fixed failure. Do not distinguish missing from unauthorized to Brine. Use bounded output and timeout; no generic logging of wrapped errors. All secret-related errors in plan/up/validate are likewise fixed and identity-free; suppress raw Pkl/engine errors on this secret path, including debug logs. General legacy commands remain outside this guarantee. Status is a point-in-time check, not authorization to skip apply preflight. Plan exit remains 1 on drift, diff 0 on drift, errors nonzero.
 
 ## Brine handoff and packaging
 

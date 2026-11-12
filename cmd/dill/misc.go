@@ -42,11 +42,17 @@ func runInit(opts commandOptions, args []string) error {
 }
 
 func runValidate(ctx context.Context, opts commandOptions, args []string) (retErr error) {
+	opts, restore := secretCommandOptions(opts, args)
+	defer restore()
+
 	fs := flag.NewFlagSet("validate", flag.ContinueOnError)
-	addFileFlag(fs, &opts)
+	addConfigFlags(fs, &opts)
 	format := fs.String("format", "text", "output format: text, json, or operation-v1")
 	stdin := fs.Bool("stdin", false, "read config from stdin instead of file")
 	defer func() {
+		if opts.secretMode() {
+			retErr = fixedSecretError(retErr)
+		}
 		if *format == "json" && retErr != nil {
 			if err := json.NewEncoder(os.Stdout).Encode(map[string]any{"valid": false, "error": retErr.Error(), "kind": failureKind(retErr)}); err != nil {
 				retErr = fmt.Errorf("rendering failure: %w", err)
@@ -83,11 +89,30 @@ func runValidate(ctx context.Context, opts commandOptions, args []string) (retEr
 		target = tmp.Name()
 	}
 
-	cfg, validateErr := config.Load(ctx, target)
+	if opts.secretMode() {
+		ctx = config.WithPrivateEvaluation(ctx)
+	}
+	cfg, validateErr := configLoader(ctx, target)
 	if validateErr == nil {
+		validateErr = validateTrustedStack(opts, cfg)
+	}
+	if validateErr == nil {
+		if opts.Engine != "" {
+			cfg.Engine = opts.Engine
+		}
 		if err := config.ValidateContainerNames(cfg.Services, resolveStackNameWithOptions(cfg, opts)); err != nil {
 			validateErr = &config.InvalidError{Err: err}
 		}
+	}
+	if hasSecretGrants(cfg) {
+		opts.secretDiagnostics.enable()
+		opts.SafeSecrets = true
+	}
+	if validateErr == nil && requiresSecretPreflight(opts, cfg) {
+		_, _, validateErr = prepareSecrets(ctx, opts, cfg, nil, false, true)
+	}
+	if opts.secretMode() {
+		validateErr = fixedSecretError(validateErr)
 	}
 
 	if *format == "operation-v1" {

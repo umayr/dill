@@ -5,6 +5,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"os"
 	"time"
 
@@ -48,6 +49,8 @@ func main() {
 		var ue usageError
 		var pe protocolExit
 		switch {
+		case errors.Is(err, config.ErrSecretUnavailable):
+			fmt.Fprintln(os.Stderr, config.ErrSecretUnavailable.Error())
 		case errors.As(err, &pe):
 			// Protocol output is already complete or undeliverable; no prose.
 		case errors.Is(err, errPlanHasChanges) || errors.Is(err, errDoctorFoundIssues):
@@ -81,7 +84,28 @@ func exitCodeFor(err error) int {
 	return 1
 }
 
-func run(args []string) error {
+func run(args []string) (retErr error) {
+	safe := secretInvocation(args)
+	check := secretCheckInvocation(args)
+	diagnostics := &secretDiagnostics{}
+	if safe {
+		diagnostics.enable()
+	}
+	defer diagnostics.close()
+	defer func() {
+		if diagnostics.safe {
+			retErr = fixedSecretError(retErr)
+		}
+		if check {
+			if retErr != nil {
+				fmt.Fprintln(os.Stdout, secretUnavailableJSON)
+				retErr = protocolExit{1}
+			} else {
+				fmt.Fprintln(os.Stdout, secretAvailableJSON)
+			}
+		}
+	}()
+
 	if isProtocolInvocation(args) {
 		if code := runProtocol(args); code != 0 {
 			return protocolExit{code}
@@ -89,11 +113,16 @@ func run(args []string) error {
 		return nil
 	}
 	fs := flag.NewFlagSet("dill", flag.ContinueOnError)
-	opts := commandOptions{}
-	fs.StringVar(&opts.ConfigFile, "f", "compose.pkl", "path to the .pkl config file")
-	fs.StringVar(&opts.StackName, "p", "", "stack name override")
-	fs.StringVar(&opts.StackName, "stack-name", "", "stack name override")
-	fs.StringVar(&opts.StackName, "project-name", "", "stack name override")
+	opts := commandOptions{SafeSecrets: safe, secretDiagnostics: diagnostics}
+	captureSecretPolicy(&opts)
+	if safe {
+		fs.SetOutput(io.Discard)
+	}
+	addSecretBindingsFlag(fs, &opts)
+	fs.StringVar(&opts.SecretTarget, "secret-target", "", "trusted secret target ID")
+	opts.ConfigFile = "compose.pkl"
+	addConfigFileFlag(fs, &opts)
+	addStackFlags(fs, &opts)
 	fs.StringVar(&opts.Engine, "engine", "", "container engine override: podman or docker")
 	addEngineSocketFlag(fs, &opts)
 	fs.DurationVar(&opts.Timeout, "timeout", 5*time.Minute, "timeout for the entire stack to become ready")
@@ -104,6 +133,9 @@ func run(args []string) error {
 	fs.BoolVar(&opts.Yes, "yes", false, "assume yes for destructive prompts")
 	fs.BoolVar(&opts.Yes, "y", false, "assume yes for destructive prompts")
 	fs.Usage = func() {
+		if safe {
+			return
+		}
 		fmt.Fprintf(os.Stderr, `Usage: dill [flags] <command>
 
 Commands:
@@ -125,6 +157,8 @@ Commands:
   stacks    List dill-managed stacks (alias: ls)
   doctor    Check local dill, Pkl, and engine readiness
   caps      Show known adapter limitations as JSON
+  secret-capabilities  Discover the Alpha file-secret contract as JSON
+  secrets check        Check authorized local secret sources without mutation
   protocol  Discover the experimental metadata-only operation protocol
   rm        Remove stopped containers in the stack
   wait      Wait for services to become ready
@@ -147,48 +181,59 @@ Flags:
 		return usageError{err.Error()}
 	}
 
-	if opts.EnvFile != "" {
-		if err := loadEnvFile(opts.EnvFile); err != nil {
-			return fmt.Errorf("loading env file: %w", err)
-		}
-	}
-
 	cmd := cmdUp
 	if fs.NArg() > 0 {
 		cmd = fs.Arg(0)
 	}
 
+	if cmd != cmdSecretCapabilities {
+		if opts.EnvFile != "" {
+			if err := loadEnvFile(opts.EnvFile); err != nil {
+				return fmt.Errorf("loading env file: %w", err)
+			}
+		}
+
+	}
+	commandArgs := fs.Args()
+	if len(commandArgs) > 0 {
+		commandArgs = commandArgs[1:]
+	}
+
 	ctx := context.Background()
 
 	switch cmd {
+	case cmdSecretCapabilities:
+		return runSecretCapabilities(commandArgs)
+	case cmdSecrets:
+		return runSecretsCheck(ctx, opts, commandArgs)
 	case cmdUp:
-		return runUp(ctx, opts, fs.Args()[1:])
+		return runUp(ctx, opts, commandArgs)
 	case cmdDown:
-		return runDown(ctx, opts, fs.Args()[1:])
+		return runDown(ctx, opts, commandArgs)
 	case cmdTeardown:
-		return runTeardown(ctx, opts, fs.Args()[1:])
+		return runTeardown(ctx, opts, commandArgs)
 	case cmdStop:
-		return runStop(ctx, opts, fs.Args()[1:])
+		return runStop(ctx, opts, commandArgs)
 	case cmdStart:
-		return runStart(ctx, opts, fs.Args()[1:])
+		return runStart(ctx, opts, commandArgs)
 	case cmdRestart:
-		return runRestart(ctx, opts, fs.Args()[1:])
+		return runRestart(ctx, opts, commandArgs)
 	case cmdPs:
-		return runPs(ctx, opts, fs.Args()[1:])
+		return runPs(ctx, opts, commandArgs)
 	case cmdLogs:
-		return runLogs(ctx, opts, fs.Args()[1:])
+		return runLogs(ctx, opts, commandArgs)
 	case cmdPull:
-		return runPull(ctx, opts, fs.Args()[1:])
+		return runPull(ctx, opts, commandArgs)
 	case cmdImages:
-		return runImages(ctx, opts, fs.Args()[1:])
+		return runImages(ctx, opts, commandArgs)
 	case cmdVolumes:
-		return runVolumes(ctx, opts, fs.Args()[1:])
+		return runVolumes(ctx, opts, commandArgs)
 	case cmdExec:
-		return runExec(ctx, opts, fs.Args()[1:])
+		return runExec(ctx, opts, commandArgs)
 	case cmdPlan:
-		return runPlan(ctx, opts, fs.Args()[1:])
+		return runPlan(ctx, opts, commandArgs)
 	case cmdDiff:
-		err := runDiff(ctx, opts, fs.Args()[1:])
+		err := runDiff(ctx, opts, commandArgs)
 		// diff is for humans and exits successfully when it renders drift.
 		// plan keeps the CI-oriented non-zero exit for changes.
 		if errors.Is(err, errPlanHasChanges) {
@@ -196,33 +241,33 @@ Flags:
 		}
 		return err
 	case cmdStatus:
-		return runStatus(ctx, opts, fs.Args()[1:])
+		return runStatus(ctx, opts, commandArgs)
 	case cmdDoctor:
-		return runDoctor(ctx, opts, fs.Args()[1:])
+		return runDoctor(ctx, opts, commandArgs)
 	case cmdCaps:
-		return runCaps(opts, fs.Args()[1:])
+		return runCaps(opts, commandArgs)
 	case cmdStacks, cmdLs:
-		return runStacks(ctx, opts, fs.Args()[1:])
+		return runStacks(ctx, opts, commandArgs)
 	case cmdRm:
-		return runRm(ctx, opts, fs.Args()[1:])
+		return runRm(ctx, opts, commandArgs)
 	case cmdWait:
-		return runWait(ctx, opts, fs.Args()[1:])
+		return runWait(ctx, opts, commandArgs)
 	case cmdPort:
-		return runPort(ctx, opts, fs.Args()[1:])
+		return runPort(ctx, opts, commandArgs)
 	case cmdTop:
-		return runTop(ctx, opts, fs.Args()[1:])
+		return runTop(ctx, opts, commandArgs)
 	case cmdCp:
-		return runCp(ctx, opts, fs.Args()[1:])
+		return runCp(ctx, opts, commandArgs)
 	case cmdConfig:
-		return runConfig(ctx, opts, fs.Args()[1:])
+		return runConfig(ctx, opts, commandArgs)
 	case cmdInit:
-		return runInit(opts, fs.Args()[1:])
+		return runInit(opts, commandArgs)
 	case cmdValidate:
-		return runValidate(ctx, opts, fs.Args()[1:])
+		return runValidate(ctx, opts, commandArgs)
 	case cmdFmt:
-		return runFmt(ctx, opts, fs.Args()[1:])
+		return runFmt(ctx, opts, commandArgs)
 	case cmdVersion:
-		if err := ensureNoArgs(fs.Args()[1:], "version"); err != nil {
+		if err := ensureNoArgs(commandArgs, "version"); err != nil {
 			return err
 		}
 		fmt.Println(version)

@@ -6,11 +6,9 @@ import (
 	"flag"
 	"fmt"
 	"strings"
-	"sync"
 
 	"github.com/umayr/dill/internal/config"
 	"github.com/umayr/dill/internal/dag"
-	"github.com/umayr/dill/internal/log"
 	"github.com/umayr/dill/internal/orchestrator"
 )
 
@@ -95,145 +93,89 @@ func runStop(ctx context.Context, opts commandOptions, services []string) error 
 	return errors.Join(errs...)
 }
 
-// runStart starts all stopped containers in dependency order.
-func runStart(ctx context.Context, opts commandOptions, services []string) error {
-	fs := flag.NewFlagSet("start", flag.ContinueOnError)
-	addConfigFlags(fs, &opts)
-	addActionFlags(fs, &opts)
-	addTimeoutFlag(fs, &opts)
-	noDeps := fs.Bool("no-deps", false, "do not include service dependencies when selecting services")
-	if err := fs.Parse(services); err != nil {
-		return usageError{err.Error()}
-	}
-	services = fs.Args()
-
-	cfg, err := loadConfig(ctx, opts)
-	if err != nil {
-		return err
-	}
-	if err := config.RejectUnsupportedSecretDelivery(cfg); err != nil {
-		return err
-	}
-	sn := resolveStackNameWithOptions(cfg, opts)
-	engine, err := openEngine(ctx, cfg, opts)
-	if err != nil {
-		return err
-	}
-	defer engine.Close()
-
-	svcs := cfg.Services
-	if len(services) > 0 {
-		svcs, err = selectServices(cfg.Services, services, !*noDeps)
-		if err != nil {
-			return err
-		}
-	}
-
-	g, err := dag.Build(svcs)
-	if err != nil {
-		return fmt.Errorf("building dependency graph: %w", err)
-	}
-	actions := make(map[string]dag.Action, len(svcs))
-	for name := range svcs {
-		actions[name] = dag.ActionStart
-	}
-	if opts.DryRun {
-		for name := range svcs {
-			fmt.Printf("would start %s\n", name)
-		}
-		return nil
-	}
-	return g.Run(ctx, engine, sn, opts.Timeout, actions, opts.progress(),
-		dag.MakePullSink(func(service string) dag.PullSink { return &plainPullSink{service: service} }))
+// Direct start/restart never substitutes a prior plan for checked up.
+func runStart(ctx context.Context, opts commandOptions, args []string) error {
+	return runDirectStart(ctx, opts, args, false)
+}
+func runRestart(ctx context.Context, opts commandOptions, args []string) error {
+	return runDirectStart(ctx, opts, args, true)
 }
 
-// runRestart stops all containers concurrently, then starts them in dependency order.
-func runRestart(ctx context.Context, opts commandOptions, args []string) error {
-	fs := flag.NewFlagSet("restart", flag.ContinueOnError)
+func runDirectStart(ctx context.Context, opts commandOptions, args []string, restart bool) (retErr error) {
+	opts, restore := secretCommandOptions(opts, args)
+	defer restore()
+	defer func() {
+		if opts.secretMode() {
+			retErr = fixedSecretError(retErr)
+		}
+	}()
+	name := "start"
+	if restart {
+		name = "restart"
+	}
+	fs := flag.NewFlagSet(name, flag.ContinueOnError)
 	addConfigFlags(fs, &opts)
 	addActionFlags(fs, &opts)
 	addTimeoutFlag(fs, &opts)
-	noDeps := fs.Bool("no-deps", false, "do not include service dependencies when selecting services")
+	noDeps := fs.Bool("no-deps", false, "do not include service dependencies")
 	if err := fs.Parse(args); err != nil {
 		return usageError{err.Error()}
 	}
-	services := fs.Args()
-
 	cfg, err := loadConfig(ctx, opts)
 	if err != nil {
 		return err
 	}
-	if err := config.RejectUnsupportedSecretDelivery(cfg); err != nil {
+	if hasSecretGrants(cfg) {
+		opts.SafeSecrets = true
+	}
+	selected, err := selectServices(cfg.Services, fs.Args(), !*noDeps)
+	if err != nil {
 		return err
 	}
-	sn := resolveStackNameWithOptions(cfg, opts)
+	for _, svc := range selected {
+		if len(svc.Secrets) > 0 {
+			return config.ErrSecretUnavailable
+		}
+	}
+	if *noDeps {
+		selected = withoutDependencies(selected)
+	}
+	g, err := dag.Build(selected)
+	if err != nil {
+		return err
+	}
 	engine, err := openEngine(ctx, cfg, opts)
 	if err != nil {
 		return err
 	}
 	defer engine.Close()
-
-	var names []string
-	if len(services) > 0 {
-		if _, err := selectServices(cfg.Services, services, false); err != nil {
-			return err
-		}
-		for _, svc := range services {
-			names = append(names, serviceContainerName(sn, svc, cfg.Services[svc]))
-		}
-	} else {
-		names, err = engine.ListStack(ctx, sn)
-		if err != nil {
-			return fmt.Errorf("listing stack: %w", err)
-		}
-		if len(names) == 0 {
-			if !opts.Quiet {
-				fmt.Printf("no containers found for stack %s\n", sn)
-			}
-			return nil
-		}
+	stack := resolveStackNameWithOptions(cfg, opts)
+	ids, err := orchestrator.DirectStartIDs(ctx, engine, stack, selected, len(fs.Args()) == 0)
+	if err != nil {
+		return config.ErrSecretUnavailable
 	}
-
 	if opts.DryRun {
-		for _, name := range names {
-			fmt.Printf("would restart %s\n", name)
+		for service := range selected {
+			fmt.Printf("would %s %s\n", name, service)
 		}
 		return nil
 	}
-
-	var wg sync.WaitGroup
-	for _, name := range names {
-		name := name
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			display := strings.TrimPrefix(name, sn+"_")
-			if !opts.Quiet {
-				printProgress(display, "stopping")
+	if restart {
+		// Use immutable IDs from the pre-mutation ownership/classification pass.
+		// Any stop failure aborts rather than proceeding with an uncertain restart.
+		var failures []error
+		for _, id := range ids {
+			if err := engine.StopService(ctx, id); err != nil {
+				failures = append(failures, err)
 			}
-			if err := engine.StopService(ctx, name); err != nil {
-				logger.Warn("stop failed", "name", name, "err", err)
-			}
-		}()
-	}
-	wg.Wait()
-
-	svcs := cfg.Services
-	if len(services) > 0 {
-		svcs, err = selectServices(cfg.Services, services, !*noDeps)
-		if err != nil {
+		}
+		if err := errors.Join(failures...); err != nil {
 			return err
 		}
 	}
-
-	g, err := dag.Build(svcs)
-	if err != nil {
-		return fmt.Errorf("building dependency graph: %w", err)
+	actions := map[string]dag.Action{}
+	for service := range selected {
+		actions[service] = dag.ActionStart
 	}
-	actions := make(map[string]dag.Action, len(svcs))
-	for name := range svcs {
-		actions[name] = dag.ActionStart
-	}
-	return g.Run(ctx, engine, sn, opts.Timeout, actions, opts.progress(),
-		dag.MakePullSink(func(service string) dag.PullSink { return &plainPullSink{service: service} }))
+	return g.Run(ctx, engine, stack, opts.Timeout, actions, opts.progress(), dag.MakePullSink(func(service string) dag.PullSink { return &plainPullSink{service: service} }))
 }

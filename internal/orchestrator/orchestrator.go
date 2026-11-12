@@ -22,6 +22,7 @@ var ErrNotFound = errors.New("container not found")
 // LiveConfig holds the effective configuration of a running or stopped container,
 // extracted from the engine for comparison against desired state.
 type LiveConfig struct {
+	MountsKnown   bool   // adapter exposes ordinary mount type/source/destination/RW metadata
 	ID            string // immutable engine container ID; use for mutations after ownership checks
 	Image         string
 	ImageID       string            // engine image ID the container was created from

@@ -10,6 +10,7 @@ import (
 
 	"github.com/umayr/dill/internal/config"
 	"github.com/umayr/dill/internal/plan"
+	"github.com/umayr/dill/internal/secretfile"
 )
 
 func runPlan(ctx context.Context, opts commandOptions, args []string) error {
@@ -21,12 +22,18 @@ func runDiff(ctx context.Context, opts commandOptions, args []string) error {
 }
 
 func runPlanNamed(ctx context.Context, opts commandOptions, args []string, name string) (retErr error) {
+	opts, restore := secretCommandOptions(opts, args)
+	defer restore()
+
 	fs := flag.NewFlagSet(name, flag.ContinueOnError)
 	addConfigFlags(fs, &opts)
 	format := fs.String("format", "text", "output format: text or json")
 	// Once JSON mode is selected, failures before rendering still produce one
 	// JSON document. Successful plan output and drift exits remain unchanged.
 	defer func() {
+		if opts.secretMode() {
+			retErr = fixedSecretError(retErr)
+		}
 		if *format == "json" && retErr != nil && !errors.Is(retErr, errPlanHasChanges) {
 			if err := json.NewEncoder(os.Stdout).Encode(map[string]any{"error": retErr.Error(), "kind": failureKind(retErr)}); err != nil {
 				retErr = fmt.Errorf("rendering failure: %w", err)
@@ -39,6 +46,7 @@ func runPlanNamed(ctx context.Context, opts commandOptions, args []string, name 
 	if err := validateFormat(*format, "text", "json"); err != nil {
 		return err
 	}
+
 	if err := ensureNoArgs(fs.Args(), name); err != nil {
 		return err
 	}
@@ -48,8 +56,19 @@ func runPlanNamed(ctx context.Context, opts commandOptions, args []string, name 
 		return err
 	}
 
-	if err := config.RejectUnsupportedSecretDelivery(cfg); err != nil {
-		return err
+	if hasSecretGrants(cfg) {
+		opts.SafeSecrets = true
+		restore := silenceSecretLogs()
+		defer restore()
+	}
+	secret := requiresSecretPreflight(opts, cfg)
+	var req secretfile.Request
+	var evidence *secretfile.Result
+	if secret {
+		req, evidence, err = prepareSecrets(ctx, opts, cfg, nil, false, false)
+		if err != nil {
+			return err
+		}
 	}
 	engine, err := openEngine(ctx, cfg, opts)
 	if err != nil {
@@ -58,7 +77,12 @@ func runPlanNamed(ctx context.Context, opts commandOptions, args []string, name 
 	defer engine.Close()
 
 	sn := resolveStackNameWithOptions(cfg, opts)
-	result, err := plan.Compute(ctx, cfg, engine, sn)
+	var result *plan.Plan
+	if secret {
+		result, err = secretPlanCompute(ctx, cfg, engine, sn, req, evidence)
+	} else {
+		result, err = plan.Compute(ctx, cfg, engine, sn)
+	}
 	if err != nil {
 		return fmt.Errorf("computing plan: %w", err)
 	}

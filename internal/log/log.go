@@ -4,6 +4,7 @@ import (
 	"os"
 	"regexp"
 	"strconv"
+	"sync/atomic"
 
 	charm "github.com/charmbracelet/log"
 )
@@ -57,7 +58,28 @@ func Init(verbosity int) {
 	}
 }
 
-func Debug(msg string, args ...any) { l.Debug(msg, args...) }
-func Info(msg string, args ...any)  { l.Info(msg, args...) }
-func Warn(msg string, args ...any)  { l.Warn(msg, args...) }
-func Error(msg string, args ...any) { l.Error(msg, args...) }
+var suppressed atomic.Int32
+
+// Suppress nests diagnostic suppression for a single CLI invocation. Restore
+// only after its synchronous work and worker goroutines have completed.
+func Suppress() func() { suppressed.Add(1); return func() { suppressed.Add(-1) } }
+func Debug(msg string, args ...any) {
+	if suppressed.Load() == 0 {
+		l.Debug(msg, args...)
+	}
+}
+func Info(msg string, args ...any) {
+	if suppressed.Load() == 0 {
+		l.Info(msg, args...)
+	}
+}
+func Warn(msg string, args ...any) {
+	if suppressed.Load() == 0 {
+		l.Warn(msg, args...)
+	}
+}
+func Error(msg string, args ...any) {
+	if suppressed.Load() == 0 {
+		l.Error(msg, args...)
+	}
+}

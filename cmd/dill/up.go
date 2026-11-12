@@ -19,9 +19,18 @@ import (
 	"github.com/umayr/dill/internal/log"
 	"github.com/umayr/dill/internal/orchestrator"
 	"github.com/umayr/dill/internal/plan"
+	"github.com/umayr/dill/internal/secretfile"
 )
 
-func runUp(ctx context.Context, opts commandOptions, args []string) error {
+func runUp(ctx context.Context, opts commandOptions, args []string) (retErr error) {
+	opts, restore := secretCommandOptions(opts, args)
+	defer restore()
+	defer func() {
+		if opts.secretMode() {
+			retErr = fixedSecretError(retErr)
+		}
+	}()
+
 	fs := flag.NewFlagSet("up", flag.ContinueOnError)
 	addConfigFlags(fs, &opts)
 	addActionFlags(fs, &opts)
@@ -50,8 +59,17 @@ func runUp(ctx context.Context, opts commandOptions, args []string) error {
 	})
 }
 
-func runUpConfig(ctx context.Context, opts commandOptions, cfg *config.DillConfig, names []string, noDeps bool, pullPolicy string, open func(context.Context, *config.DillConfig) (orchestrator.Engine, error)) error {
-	if err := config.RejectUnsupportedSecretDelivery(cfg); err != nil {
+func runUpConfig(ctx context.Context, opts commandOptions, cfg *config.DillConfig, names []string, noDeps bool, pullPolicy string, open func(context.Context, *config.DillConfig) (orchestrator.Engine, error)) (retErr error) {
+	secret := requiresSecretPreflight(opts, cfg)
+	safe := opts.secretMode() || secret
+	if safe {
+		restore := silenceSecretLogs()
+		defer restore()
+		opts.Quiet = true
+		defer func() { retErr = fixedSecretError(retErr) }()
+	}
+
+	if err := validateTrustedStack(opts, cfg); err != nil {
 		return err
 	}
 	if err := config.ValidateRuntime(cfg); err != nil {
@@ -91,11 +109,27 @@ func runUpConfig(ctx context.Context, opts commandOptions, cfg *config.DillConfi
 		return fmt.Errorf("building dependency graph: %w", err)
 	}
 
+	var req secretfile.Request
+	var evidence *secretfile.Result
+	if secret {
+		req, evidence, err = prepareSecrets(ctx, opts, cfg, names, noDeps, false)
+		if err != nil {
+			return err
+		}
+	}
+
 	engine, err := open(ctx, cfg)
 	if err != nil {
 		return fmt.Errorf("initialising engine: %w", err)
 	}
 	defer engine.Close()
+
+	if secret {
+		engine, err = secretEngineWrap(engine, req, evidence)
+		if err != nil {
+			return err
+		}
+	}
 
 	sn := resolveStackNameWithOptions(cfg, opts)
 	logger.Debug("using stack name", "stack", sn)
@@ -106,11 +140,25 @@ func runUpConfig(ctx context.Context, opts commandOptions, cfg *config.DillConfi
 	}
 	var pullMu sync.Mutex
 	mkSink := newMakePullSink(isTTY, &pullMu)
+	if safe {
+		mkSink = secretPullSink
+	}
 
 	// Check ownership before pulling images or applying any planned mutations.
-	p, err := plan.Compute(ctx, cfg, engine, sn)
+	compute := func() (*plan.Plan, error) {
+		if secret {
+			return secretPlanCompute(ctx, cfg, engine, sn, req, evidence)
+		}
+		return plan.Compute(ctx, cfg, engine, sn)
+	}
+	p, err := compute()
 	if err != nil {
 		return fmt.Errorf("computing plan: %w", err)
+	}
+	if !subset {
+		if err := preflightOrphans(ctx, engine, p, sn); err != nil {
+			return err
+		}
 	}
 	if !opts.DryRun {
 		for _, svc := range selected {
@@ -119,7 +167,7 @@ func runUpConfig(ctx context.Context, opts commandOptions, cfg *config.DillConfi
 					return err
 				}
 				// Recompute after pulling so moved tags still trigger recreation.
-				p, err = plan.Compute(ctx, cfg, engine, sn)
+				p, err = compute()
 				if err != nil {
 					return fmt.Errorf("computing plan after pull: %w", err)
 				}
@@ -288,3 +336,28 @@ func filterServices(all map[string]*config.Service, names []string) map[string]*
 	}
 	return out
 }
+
+func preflightOrphans(ctx context.Context, e orchestrator.Engine, p *plan.Plan, stack string) error {
+	for _, ch := range p.Changes {
+		if ch.Kind != plan.KindRemove {
+			continue
+		}
+		live, err := e.InspectConfig(ctx, ch.Service)
+		if errors.Is(err, orchestrator.ErrNotFound) {
+			continue
+		}
+		if err != nil {
+			return err
+		}
+		if live == nil || live.ID == "" {
+			return config.ErrSecretUnavailable
+		}
+		if err := orchestrator.CheckOwnership(ch.Service, stack, live.SystemLabels["dill.service"], live); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+var secretPlanCompute = plan.ComputeChecked
+var secretEngineWrap = orchestrator.WithSecrets

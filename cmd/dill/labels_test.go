@@ -3,6 +3,8 @@ package main
 import (
 	"context"
 	"errors"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -67,5 +69,42 @@ func TestLabelStackRequireConfig(t *testing.T) {
 	}
 	if err := (&labelStack{Config: &config.DillConfig{}}).requireConfig("down"); err != nil {
 		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestResolveLabelStackMissingFastPathIsNarrow(t *testing.T) {
+	dir := t.TempDir()
+	missing := filepath.Join(dir, "missing.pkl")
+	existing := filepath.Join(dir, "existing.pkl")
+	link := filepath.Join(dir, "symlink.pkl")
+	if os.WriteFile(existing, []byte("synthetic"), 0600) != nil || os.Symlink(missing, link) != nil {
+		t.Fatal("cannot provision synthetic entries")
+	}
+	calls := 0
+	withConfigLoader(t, func(context.Context, string) (*config.DillConfig, error) { calls++; return testConfig(), nil })
+	opts := commandOptions{ConfigFile: missing, ConfigFileSet: true, StackName: "demo", StackNameSet: true, Engine: "docker", EngineSocket: "/run/synthetic.sock", EngineSocketSet: true}
+	st, err := resolveLabelStack(context.Background(), opts)
+	if err != nil || st.Config != nil || calls != 0 {
+		t.Fatal("explicit missing path did not bypass loader")
+	}
+	if st.requireConfig("stop") == nil || st.requireConfig("down") == nil {
+		t.Fatal("label-only scope accepted named services")
+	}
+	for _, change := range []func(*commandOptions){func(o *commandOptions) { o.ConfigFile = existing }, func(o *commandOptions) { o.ConfigFile = link }, func(o *commandOptions) { o.ConfigFile = filepath.Join(existing, "not-a-directory.pkl") }, func(o *commandOptions) { o.ConfigFile = "relative.pkl" }, func(o *commandOptions) { o.ConfigFileSet = false }, func(o *commandOptions) { o.StackNameSet = false }, func(o *commandOptions) { o.EngineSocketSet = false }, func(o *commandOptions) { o.Engine = "" }, func(o *commandOptions) { o.StackName = "invalid stack" }} {
+		bad := opts
+		change(&bad)
+		calls = 0
+		st, err := resolveLabelStack(context.Background(), bad)
+		if err != nil || st.Config == nil || calls != 1 {
+			t.Fatalf("nonmissing/nonexplicit entry misclassified: %v", err)
+		}
+	}
+	for _, change := range []func(*commandOptions){func(o *commandOptions) { o.Engine = "invalid" }, func(o *commandOptions) { o.EngineSocket = "tcp://untrusted" }, func(o *commandOptions) { o.EngineSocket = "" }} {
+		bad := opts
+		change(&bad)
+		calls = 0
+		if _, err := resolveLabelStack(context.Background(), bad); err == nil || calls != 0 {
+			t.Fatal("invalid explicit cleanup endpoint accepted")
+		}
 	}
 }
