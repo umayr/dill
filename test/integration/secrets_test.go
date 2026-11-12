@@ -223,6 +223,23 @@ func TestDillQualifiedHostFileSecrets(t *testing.T) {
 	out, code = dill(bindings[0], "up")
 	assertPublic(out)
 	if code != 0 {
+		cliDiagnostic := out
+		if len(cliDiagnostic) > 8192 {
+			cliDiagnostic = cliDiagnostic[:8192]
+		}
+		t.Logf("synthetic CLI create exit=%d diagnostic=%q", code, cliDiagnostic)
+		if probe := os.Getenv("DILL_ALPHA_DIAGNOSTIC_BINARY"); engine == "podman" && probe != "" && os.Getenv("GITHUB_ACTIONS") == "true" {
+			ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
+			cmd := exec.CommandContext(ctx, probe, "-test.run=^TestQualifiedAlphaCreateDiagnostics$", "-test.v")
+			cmd.Env = append(append([]string{}, environment...), "DILL_ALPHA_DIAG_CONFIG="+configPath, "DILL_ALPHA_DIAG_BINDINGS="+bindings[0], "DILL_ALPHA_DIAG_STACK="+stack)
+			diagnostic, probeErr := cmd.CombinedOutput()
+			cancel()
+			assertPublic(diagnostic)
+			if len(diagnostic) > 16384 {
+				diagnostic = diagnostic[:16384]
+			}
+			t.Logf("synthetic checked adapter failure probe (%v):\n%s", probeErr, diagnostic)
+		}
 		t.Fatal("qualified create failed")
 	}
 	assertPlan(bindings[0], 0, 0, 1)

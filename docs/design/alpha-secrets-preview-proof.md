@@ -197,6 +197,16 @@ platform/filesystem behavior fails fixed, never falls back to overwrite.
   only `[containers] userns = "host"`. Rootless host IDs come from the exact
   socket peer's kernel maps, not an independent `unshare` assumption.
 
-Actual results for these new jobs and paired Brine candidate/old-binary tests
-remain pending until the parent publishes the reviewed commit and CI completes.
+Initial published `ff4d11a` CI (run 43306923484) passed Linux unit/metadata and
+Docker Alpha qualification. Both exact-source Podman jobs passed peer/source
+and private proof tests, then failed the first CLI create without an underlying
+SDK cause in their logs. The latest review-fix candidate requires fresh matrix
+execution: the four corrections above are not qualified by those older results.
+A CI-only test-binary probe now replays the same independently checked adapter
+phases on that synthetic fixture after a failed Podman create, reporting bounded
+native SDK causes. It does not replace real CLI acceptance or relax production
+errors, preflight, namespace or RO settings. Dedicated daemon logs are collected
+on failure with synthetic-value/hash filtering; no source bytes are read by the
+probe. Both Podman jobs must pass before merge. Paired Brine candidate/old-binary
+qualification and final-head independent review also remain required.
 No production or unverified local engine was mutated during implementation.

@@ -24,10 +24,25 @@ CGO_ENABLED=0 go test -tags integration,containers_image_openpgp,exclude_graphdr
   -c -o "$RUNNER_TEMP/alpha-integration.test" ./test/integration
 CGO_ENABLED=0 go test -tags containers_image_openpgp,exclude_graphdriver_devicemapper,exclude_graphdriver_btrfs \
   -c -o "$RUNNER_TEMP/alpha-secretfile.test" ./internal/secretfile
+CGO_ENABLED=0 go test -tags integration,containers_image_openpgp,exclude_graphdriver_devicemapper,exclude_graphdriver_btrfs \
+  -c -o "$RUNNER_TEMP/alpha-diagnostics.test" ./internal/orchestrator
 socket=$base/engine.sock
 pid=''
 launcher=''
 cleanup() {
+  status=$?
+  if [[ $status != 0 && -f $RUNNER_TEMP/alpha-daemon.log ]]; then
+    python3 - "$RUNNER_TEMP/alpha-daemon.log" <<'PYDIAG'
+import hashlib, sys
+with open(sys.argv[1], 'rb') as f:
+    f.seek(0, 2); f.seek(max(0, f.tell()-65536)); text = f.read(65536).decode('utf-8', 'replace')
+blocked = ['dill-alpha-synthetic-v1', 'dill-alpha-synthetic-v2']
+blocked += [hashlib.sha256(x.encode()).hexdigest() for x in blocked]
+print('Dedicated synthetic Alpha daemon diagnostics (bounded):')
+for line in text.splitlines():
+    print('[synthetic source diagnostic withheld]' if any(x in line for x in blocked) else line)
+PYDIAG
+  fi
   # Stop only our exact recorded launch after the test has cleaned its containers.
   if [[ -n $pid ]]; then sudo kill "$pid" 2>/dev/null || true; elif [[ -n $launcher ]]; then sudo kill "$launcher" 2>/dev/null || true; fi
 }
@@ -107,7 +122,7 @@ else
   run_operator /usr/bin/podman --url "unix://$socket" version --format '{{.Server.Version}}'
 fi
 common=(PATH=/usr/bin:/usr/local/bin:/bin DILL_TEST_ALPHA_SECRETS=1 DILL_TEST_SECRET_DIR="$base/fixtures" DILL_BINARY="$repo/bin/dill" \
-  DILL_PKL_PATH="$base/pkl" DILL_ALPHA_ENGINE="$engine" DILL_ALPHA_SOCKET="$socket" \
+  DILL_PKL_PATH="$base/pkl" DILL_ALPHA_DIAGNOSTIC_BINARY="$RUNNER_TEMP/alpha-diagnostics.test" DILL_ALPHA_ENGINE="$engine" DILL_ALPHA_SOCKET="$socket" \
   DILL_ALPHA_FIXTURE_ROOT="$base/fixtures" DILL_ALPHA_CONTAINER_UID=1000 DILL_ALPHA_CONTAINER_GID=1000 \
   DILL_ALPHA_HOST_UID="$host_uid" DILL_ALPHA_HOST_GID="$host_gid")
 (cd "$repo/internal/secretfile"; run_operator env "${common[@]}" "$RUNNER_TEMP/alpha-secretfile.test" -test.v)
