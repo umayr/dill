@@ -94,7 +94,7 @@ func runValidate(ctx context.Context, opts commandOptions, args []string) (retEr
 		outcome := "succeeded"
 		if validateErr != nil {
 			outcome = "failed"
-			if errors.Is(ctx.Err(), context.Canceled) || errors.Is(ctx.Err(), context.DeadlineExceeded) {
+			if errors.Is(validateErr, context.Canceled) || errors.Is(validateErr, context.DeadlineExceeded) {
 				outcome = "cancelled"
 			} else if failureKind(validateErr) == "invalid_input" {
 				outcome = "invalid_input"
