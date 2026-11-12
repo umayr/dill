@@ -23,6 +23,7 @@ import (
 	"github.com/docker/go-connections/nat"
 	"github.com/umayr/dill/internal/config"
 	"github.com/umayr/dill/internal/log"
+	"github.com/umayr/dill/internal/secretfile"
 )
 
 type DockerEngine struct {
@@ -147,6 +148,32 @@ func (d *DockerEngine) LocalImageID(ctx context.Context, img string) (string, er
 }
 
 func (d *DockerEngine) StartService(ctx context.Context, name string, svc *config.Service, stackName string) (string, error) {
+	if svc == nil || len(svc.Secrets) > 0 {
+		return "", config.ErrSecretUnavailable
+	}
+	return d.startService(ctx, name, svc, stackName, nil, "")
+}
+
+func (d *DockerEngine) StartServiceChecked(ctx context.Context, name string, svc *config.Service, stackName string, req secretfile.Request) (id string, retErr error) {
+	defer func() {
+		if retErr != nil {
+			retErr = config.ErrSecretUnavailable
+		}
+	}()
+	mounts, err := checkedSecretMounts(ctx, name, svc, stackName, "docker", d.cli.DaemonHost(), req)
+	if err != nil {
+		return "", config.ErrSecretUnavailable
+	}
+	return d.startService(ctx, name, svc, stackName, mounts, req.Target)
+}
+
+func (d *DockerEngine) startService(ctx context.Context, name string, svc *config.Service, stackName string, secrets []config.ResolvedSecret, target string) (string, error) {
+	for key := range svc.Labels {
+		if strings.HasPrefix(key, config.SystemLabelPrefix) {
+			return "", config.ErrSecretUnavailable
+		}
+	}
+
 	logger.Debug("starting service", "service", name, "image", svc.Image)
 
 	ports, err := config.NormalizePorts(svc.Ports)
@@ -206,6 +233,10 @@ func (d *DockerEngine) StartService(ctx context.Context, name string, svc *confi
 		})
 	}
 
+	for _, secret := range secrets {
+		mounts = append(mounts, mount.Mount{Type: mount.TypeBind, Source: secret.HostPath, Target: secret.Target, ReadOnly: true})
+	}
+
 	// Build env slice.
 	env := make([]string, 0, len(svc.Environment))
 	for k, v := range svc.Environment {
@@ -218,10 +249,13 @@ func (d *DockerEngine) StartService(ctx context.Context, name string, svc *confi
 		"dill.stack":       stackName,
 		"dill.config-hash": "",
 	}
-	if hash, err := config.ServiceConfigHash(stackName, name, svc); err != nil {
+	if hash, err := config.SecretServiceConfigHash(stackName, name, svc, target, secrets); err != nil {
 		return "", fmt.Errorf("service %s: %w", name, err)
 	} else {
 		labels["dill.config-hash"] = hash
+	}
+	if len(secrets) > 0 {
+		labels[SecretEnabledLabel] = "true"
 	}
 	for k, v := range svc.Labels {
 		labels[k] = v
@@ -407,6 +441,10 @@ func (d *DockerEngine) InspectConfig(ctx context.Context, name string) (*LiveCon
 		return nil, err
 	}
 
+	if info.Config == nil || info.HostConfig == nil || info.NetworkSettings == nil {
+		return nil, config.ErrSecretUnavailable
+	}
+
 	// Env: split "KEY=VAL" pairs into a map.
 	env := make(map[string]string, len(info.Config.Env))
 	for _, e := range info.Config.Env {
@@ -481,6 +519,8 @@ func (d *DockerEngine) InspectConfig(ctx context.Context, name string) (*LiveCon
 	}
 
 	return &LiveConfig{
+		MountsKnown:   true,
+		UserNSMode:    string(info.HostConfig.UsernsMode),
 		ID:            info.ID,
 		Image:         info.Config.Image,
 		ImageID:       info.Image,
@@ -730,4 +770,43 @@ func toDockerHealthCheck(hc *config.HealthCheck) *container.HealthConfig {
 		cfg.StartPeriod = d
 	}
 	return cfg
+}
+
+func (d *DockerEngine) PreviewResources(ctx context.Context, stack string, names []string) ([]PreviewResource, error) {
+	out := []PreviewResource{}
+	n, err := d.cli.NetworkInspect(ctx, stack, dockertypes.NetworkInspectOptions{})
+	if err != nil && !client.IsErrNotFound(err) {
+		return nil, err
+	}
+	fact := PreviewResource{Kind: "network", Name: stack, Exists: err == nil, ID: n.ID}
+	if err == nil {
+		fact.Settings, err = json.Marshal(struct {
+			Driver, Scope                       string
+			Internal, IPv6, Attachable, Ingress bool
+			IPAM                                network.IPAM
+			Options, Labels                     map[string]string
+		}{n.Driver, n.Scope, n.Internal, n.EnableIPv6, n.Attachable, n.Ingress, n.IPAM, n.Options, n.Labels})
+		if err != nil {
+			return nil, err
+		}
+	}
+	out = append(out, fact)
+	for _, name := range previewNames(names) {
+		v, err := d.cli.VolumeInspect(ctx, name)
+		if err != nil && !client.IsErrNotFound(err) {
+			return nil, err
+		}
+		f := PreviewResource{Kind: "volume", Name: name, Exists: err == nil}
+		if err == nil {
+			f.Settings, err = json.Marshal(struct {
+				Name, Driver, Scope, CreatedAt, Mountpoint string
+				Options, Labels                            map[string]string
+			}{v.Name, v.Driver, v.Scope, v.CreatedAt, v.Mountpoint, v.Options, v.Labels})
+			if err != nil {
+				return nil, err
+			}
+		}
+		out = append(out, f)
+	}
+	return out, nil
 }

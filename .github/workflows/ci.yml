@@ -68,7 +68,21 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
+      - name: Provision protected synthetic secret fixtures
+        run: sudo install -d -m 0700 -o "$(id -u)" -g "$(id -g)" /srv/dill-secretfile-tests
       - run: make test
+        env:
+          DILL_TEST_SECRET_DIR: /srv/dill-secretfile-tests
+      - name: Diagnose synthetic workspace and protected-source qualification
+        if: ${{ !cancelled() }}
+        env:
+          DILL_TEST_SECRET_DIR: /srv/dill-secretfile-tests
+        run: go test -tags containers_image_openpgp,exclude_graphdriver_devicemapper,exclude_graphdriver_btrfs -run 'TestWorkspaceAncestryQualification|TestSourceMetadata$' -v ./internal/secretfile
+      - name: Test metadata-only access without source read permission
+        if: ${{ !cancelled() }}
+        run: |
+          CGO_ENABLED=0 go test -tags containers_image_openpgp,exclude_graphdriver_devicemapper,exclude_graphdriver_btrfs -c -o "$RUNNER_TEMP/secretfile.test" ./internal/secretfile
+          sudo "$RUNNER_TEMP/secretfile.test" -test.run '^TestSourceMetadataWithoutReadPermission$' -test.v
 
   integration-docker:
     name: Integration / Docker
@@ -175,3 +189,22 @@ jobs:
             echo "eval $f"
             pkl eval "$f" > /dev/null
           done
+
+  alpha-secrets:
+    name: Alpha secrets / ${{ matrix.engine }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    strategy:
+      fail-fast: false
+      matrix:
+        engine: [docker, podman-rootful, podman-rootless]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - name: Build pinned Podman 5.0.0 from verified source commit
+        if: matrix.engine != 'docker'
+        run: scripts/ci-build-podman-alpha.sh
+      - name: Run exact-peer, metadata, proof and real HOST FILE qualification
+        run: scripts/ci-alpha-secrets.sh '${{ matrix.engine }}'

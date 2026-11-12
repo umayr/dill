@@ -22,7 +22,7 @@ func isProtocolInvocation(args []string) bool {
 			name, _, inline := strings.Cut(strings.TrimLeft(a, "-"), "=")
 			if !inline {
 				switch name {
-				case "f", "p", "stack-name", "project-name", "engine", "engine-socket", "timeout", "env-file":
+				case "f", "p", "stack-name", "project-name", "engine", "engine-socket", "timeout", "env-file", "secret-target", "secret-bindings", "proof-key-file", "proof-file":
 					i++
 				}
 			}

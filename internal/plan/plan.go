@@ -10,6 +10,7 @@ import (
 
 	"github.com/umayr/dill/internal/config"
 	"github.com/umayr/dill/internal/orchestrator"
+	"github.com/umayr/dill/internal/secretfile"
 )
 
 type ChangeKind int
@@ -51,6 +52,54 @@ type Plan struct {
 }
 
 func Compute(ctx context.Context, cfg *config.DillConfig, engine orchestrator.Engine, stackName string) (*Plan, error) {
+	if config.RejectUncheckedSecretDelivery(cfg) != nil {
+		return nil, config.ErrSecretUnavailable
+	}
+	return compute(ctx, cfg, engine, stackName, nil, nil, "")
+}
+
+// ComputeChecked consumes opaque point-in-time evidence and only inspects the
+// requested closure. Orphan detection still uses the full declared config.
+func ComputeChecked(ctx context.Context, cfg *config.DillConfig, engine orchestrator.Engine, stackName string, req secretfile.Request, result *secretfile.Result) (p *Plan, retErr error) {
+	defer func() {
+		if retErr != nil {
+			retErr = config.ErrSecretUnavailable
+		}
+	}()
+	endpoint, ok := engine.(interface{ CLIEndpoint() string })
+	if req.Config != cfg || stackName != req.Stack || cfg == nil || cfg.Engine != req.Engine || !ok || endpoint.CLIEndpoint() != "unix://"+req.Socket {
+		return nil, config.ErrSecretUnavailable
+	}
+	mounts, err := result.Mounts(req)
+	if err != nil {
+		return nil, err
+	}
+	selected := map[string]bool{}
+	var add func(string)
+	add = func(name string) {
+		if selected[name] {
+			return
+		}
+		selected[name] = true
+		if !req.NoDeps {
+			for _, dep := range cfg.Services[name].DependsOn {
+				add(dep)
+			}
+		}
+	}
+	if len(req.Services) == 0 {
+		for name := range cfg.Services {
+			selected[name] = true
+		}
+	} else {
+		for _, name := range req.Services {
+			add(name)
+		}
+	}
+	return compute(ctx, cfg, engine, stackName, selected, mounts, req.Target)
+}
+
+func compute(ctx context.Context, cfg *config.DillConfig, engine orchestrator.Engine, stackName string, selected map[string]bool, mounts map[string][]config.ResolvedSecret, target string) (*Plan, error) {
 	// Build desired map: serviceName → containerName.
 	type desired struct {
 		svc           *config.Service
@@ -69,6 +118,9 @@ func Compute(ctx context.Context, cfg *config.DillConfig, engine orchestrator.En
 
 	// For each desired service, compare against live state.
 	for name, d := range desiredMap {
+		if selected != nil && !selected[name] {
+			continue
+		}
 		live, err := engine.InspectConfig(ctx, d.containerName)
 		if err != nil {
 			if isNotFound(err) {
@@ -87,7 +139,7 @@ func Compute(ctx context.Context, cfg *config.DillConfig, engine orchestrator.En
 			return nil, fmt.Errorf("resolving local image for %s: %w", name, err)
 		}
 
-		diffs, err := diffConfigs(name, d.svc, live, localImageID, stackName)
+		diffs, err := diffConfigsChecked(name, d.svc, live, localImageID, stackName, target, mounts[name])
 		if err != nil {
 			return nil, fmt.Errorf("diff %s: %w", name, err)
 		}
@@ -131,12 +183,22 @@ func isNotFound(err error) bool {
 // diffConfigs compares desired service config against live container config
 // and returns a list of field-level diffs.
 func diffConfigs(name string, svc *config.Service, live *orchestrator.LiveConfig, localImageID, stackName string) ([]FieldDiff, error) {
+	return diffConfigsChecked(name, svc, live, localImageID, stackName, "", nil)
+}
+func diffConfigsChecked(name string, svc *config.Service, live *orchestrator.LiveConfig, localImageID, stackName, target string, secrets []config.ResolvedSecret) ([]FieldDiff, error) {
 	var diffs []FieldDiff
 
-	if wantHash, err := config.ServiceConfigHash(stackName, name, svc); err != nil {
+	if wantHash, err := config.SecretServiceConfigHash(stackName, name, svc, target, secrets); err != nil {
 		return nil, fmt.Errorf("hashing desired config: %w", err)
-	} else if gotHash := live.SystemLabels["dill.config-hash"]; gotHash != "" && gotHash != wantHash {
-		diffs = append(diffs, FieldDiff{Field: "config_hash", Before: gotHash, After: wantHash})
+	} else if gotHash := live.SystemLabels["dill.config-hash"]; (gotHash != "" || len(svc.Secrets) > 0) && gotHash != wantHash {
+		if len(svc.Secrets) > 0 {
+			diffs = append(diffs, FieldDiff{Field: "secret_references", Before: "previous", After: "changed"})
+			for _, r := range secrets {
+				diffs = append(diffs, FieldDiff{Field: "secret." + r.Name, Before: "previous", After: r.Revision})
+			}
+		} else {
+			diffs = append(diffs, FieldDiff{Field: "config_hash", Before: gotHash, After: wantHash})
+		}
 	}
 
 	// image
@@ -173,7 +235,32 @@ func diffConfigs(name string, svc *config.Service, live *orchestrator.LiveConfig
 		return nil, fmt.Errorf("normalizing volumes: %w", err)
 	}
 	desiredVols = config.ResolveVolumes(desiredVols, stackName)
-	diffs = append(diffs, diffVolumes(desiredVols, live.Volumes)...)
+	liveVolumes := live.Volumes
+	_, marked := live.SystemLabels[orchestrator.SecretEnabledLabel]
+	if len(svc.Secrets) > 0 || marked {
+		if !live.MountsKnown || (live.UserNSMode != "" && live.UserNSMode != "host") || len(live.UIDMap) > 0 || len(live.GIDMap) > 0 {
+			return nil, config.ErrSecretUnavailable
+		}
+		ordinary, changed := secretMountDrift(secrets, desiredVols, live.Volumes)
+		liveVolumes = ordinary
+		if changed || (len(svc.Secrets) > 0 && live.SystemLabels[orchestrator.SecretEnabledLabel] != "true") || (len(svc.Secrets) == 0 && marked) {
+			diffs = append(diffs, FieldDiff{Field: "secret_mounts", Before: "previous", After: "checked configuration"})
+		}
+	}
+	volumeDiffs := diffVolumes(desiredVols, liveVolumes)
+	if len(svc.Secrets) > 0 || marked {
+		// A stale/moved secret bind can occupy an ordinary target. Never render
+		// any live mount source inventory from a secret-marked service.
+		for i := range volumeDiffs {
+			if volumeDiffs[i].Before != "" {
+				volumeDiffs[i].Before = "previous mount"
+			}
+			if volumeDiffs[i].After != "" {
+				volumeDiffs[i].After = "configured mount"
+			}
+		}
+	}
+	diffs = append(diffs, volumeDiffs...)
 
 	// restart policy
 	wantRestart := normalizeRestart(svc.Restart)
@@ -495,4 +582,48 @@ func formatBool(b bool) string {
 		return "true"
 	}
 	return "false"
+}
+
+// Secret paths never flow into ordinary volume rendering, including drifted,
+// writable, missing and extra mounts. Unknown mount metadata fails upstream.
+func secretMountDrift(desired []config.ResolvedSecret, configured, live []config.VolumeMount) ([]config.VolumeMount, bool) {
+	want := map[string]config.ResolvedSecret{}
+	sources := map[string]bool{}
+	for _, s := range desired {
+		want[s.Target] = s
+		sources[s.HostPath] = true
+	}
+	ordinaryTargets := map[string]bool{}
+	for _, m := range configured {
+		ordinaryTargets[m.Target] = true
+	}
+	ordinary := []config.VolumeMount{}
+	seen := map[string]bool{}
+	changed := false
+	for _, m := range live {
+		overlaps := false
+		for t := range want {
+			if m.Target == "/" || t == m.Target || strings.HasPrefix(t, m.Target+"/") || strings.HasPrefix(m.Target, t+"/") {
+				overlaps = true
+			}
+		}
+		if strings.HasPrefix(m.Target, "/run/secrets/") || m.Target == "/run/secrets" || sources[m.Source] || overlaps {
+			s, ok := want[m.Target]
+			if !ok || seen[m.Target] || m.Type != "bind" || m.Source != s.HostPath || !m.ReadOnly {
+				changed = true
+			}
+			seen[m.Target] = true
+		} else if m.Type == "bind" && !ordinaryTargets[m.Target] {
+			// Unknown host-file binds are not image-injected anonymous volumes.
+			changed = true
+		} else {
+			ordinary = append(ordinary, m)
+		}
+	}
+	for t := range want {
+		if !seen[t] {
+			changed = true
+		}
+	}
+	return ordinary, changed
 }

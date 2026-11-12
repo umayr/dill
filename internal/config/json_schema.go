@@ -22,7 +22,7 @@ func nullableSchemaField(t reflect.Type, name string) bool {
 	case reflect.TypeOf(DillConfig{}):
 		return name == "name"
 	case reflect.TypeOf(Service{}):
-		return name != "image" && name != "restart" && name != "pullPolicy"
+		return name != "image" && name != "restart" && name != "pullPolicy" && name != "secrets"
 	case reflect.TypeOf(Port{}):
 		return name == "published" || name == "hostIp"
 	case reflect.TypeOf(Mount{}):

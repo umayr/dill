@@ -6,6 +6,7 @@ import (
 	"flag"
 	"fmt"
 	"hash/fnv"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -17,17 +18,24 @@ import (
 )
 
 type commandOptions struct {
-	ConfigFile      string
-	Timeout         time.Duration
-	EnvFile         string
-	Engine          string
-	EngineSocket    string
-	EngineSocketSet bool
-	StackName       string
-	Quiet           bool
-	DryRun          bool
-	Yes             bool
-	ForceRecreate   bool
+	secretDiagnostics                                    *secretDiagnostics
+	SecretBindings, SecretPolicy, SecretTarget           string
+	SecretBindingsSet, SafeSecrets, SecretPolicyCaptured bool
+	StackNameSet                                         bool
+	ConfigFileSet                                        bool
+	ProofKeyFile, ProofFile                              string
+	ProofKeyFileSet, ProofFileSet                        bool
+	ConfigFile                                           string
+	Timeout                                              time.Duration
+	EnvFile                                              string
+	Engine                                               string
+	EngineSocket                                         string
+	EngineSocketSet                                      bool
+	StackName                                            string
+	Quiet                                                bool
+	DryRun                                               bool
+	Yes                                                  bool
+	ForceRecreate                                        bool
 }
 
 // printProgress writes a clean, fixed-width progress line to stdout.
@@ -52,7 +60,7 @@ func (o commandOptions) downProgress(stackName string) dag.Progress {
 // addFileFlag registers the -f config-file flag for commands that only need
 // the path (init, fmt) and do not resolve a full config.
 func addFileFlag(fs *flag.FlagSet, opts *commandOptions) {
-	fs.StringVar(&opts.ConfigFile, "f", opts.ConfigFile, "path to the .pkl config file")
+	addConfigFileFlag(fs, opts)
 }
 
 // addEngineFlag registers the --engine override used to select which container
@@ -70,14 +78,22 @@ func addEngineSocketFlag(fs *flag.FlagSet, opts *commandOptions) {
 	})
 }
 
+func addConfigFileFlag(fs *flag.FlagSet, opts *commandOptions) {
+	fs.Func("f", "path to the .pkl config file", func(v string) error { opts.ConfigFile = v; opts.ConfigFileSet = true; return nil })
+}
+
 // addConfigFlags registers the flags shared by every command that resolves a
 // config file: the path itself, the stack/project name, the engine override,
 // and an optional env file.
 func addConfigFlags(fs *flag.FlagSet, opts *commandOptions) {
+	captureSecretPolicy(opts)
+	if opts.secretMode() {
+		fs.SetOutput(io.Discard)
+	}
+	addSecretBindingsFlag(fs, opts)
+	fs.StringVar(&opts.SecretTarget, "secret-target", opts.SecretTarget, "trusted secret target ID")
 	addFileFlag(fs, opts)
-	fs.StringVar(&opts.StackName, "p", opts.StackName, "stack name override")
-	fs.StringVar(&opts.StackName, "stack-name", opts.StackName, "stack name override")
-	fs.StringVar(&opts.StackName, "project-name", opts.StackName, "stack name override")
+	addStackFlags(fs, opts)
 	addEngineFlag(fs, opts)
 	addEngineSocketFlag(fs, opts)
 	fs.StringVar(&opts.EnvFile, "env-file", opts.EnvFile, "path to an env file to load before running")
@@ -160,15 +176,34 @@ func resolveStackNameWithOptions(cfg *config.DillConfig, opts commandOptions) st
 	return resolveStackName(cfg, opts.ConfigFile)
 }
 
-func loadConfig(ctx context.Context, opts commandOptions) (*config.DillConfig, error) {
+func loadConfig(ctx context.Context, opts commandOptions) (result *config.DillConfig, retErr error) {
+	captureSecretPolicy(&opts)
+	discovered := false
+	defer func() {
+		if opts.secretMode() || discovered || hasSecretGrants(result) {
+			retErr = fixedSecretError(retErr)
+		}
+	}()
+
 	if opts.EnvFile != "" {
 		if err := loadEnvFile(opts.EnvFile); err != nil {
 			return nil, fmt.Errorf("loading env file: %w", err)
 		}
 	}
+	if opts.secretMode() {
+		ctx = config.WithPrivateEvaluation(ctx)
+	}
 	cfg, err := configLoader(ctx, opts.ConfigFile)
+	result = cfg
+	discovered = hasSecretGrants(cfg)
+	if discovered {
+		opts.secretDiagnostics.enable()
+	}
 	if err != nil {
 		return nil, fmt.Errorf("loading config: %w", err)
+	}
+	if err := validateTrustedStack(opts, cfg); err != nil {
+		return nil, err
 	}
 	if opts.Engine != "" {
 		cfg.Engine = opts.Engine
@@ -276,4 +311,10 @@ func loadEnvFile(path string) error {
 		}
 	}
 	return scanner.Err()
+}
+
+func addStackFlags(fs *flag.FlagSet, o *commandOptions) {
+	for _, name := range []string{"p", "stack-name", "project-name"} {
+		fs.Func(name, "stack name override", func(v string) error { o.StackName = v; o.StackNameSet = true; return nil })
+	}
 }

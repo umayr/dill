@@ -8,6 +8,7 @@ import "encoding/json"
 
 type DillConfig struct {
 	Name     string              `json:"name"`
+	Secrets  []SecretRequirement `json:"secrets"`
 	Engine   string              `json:"engine"`
 	Services map[string]*Service `json:"services"`
 }
@@ -18,6 +19,7 @@ type Service struct {
 	// Relative bind-mount paths are resolved against it.
 	BaseDir string `json:"-"`
 
+	Secrets        []SecretGrant     `json:"secrets"`
 	Image          string            `json:"image"`
 	ContainerName  string            `json:"containerName"`
 	Restart        string            `json:"restart"`
@@ -69,4 +71,18 @@ type HealthCheck struct {
 	Timeout     *json.RawMessage `json:"timeout"`
 	Retries     *int             `json:"retries"`
 	StartPeriod *json.RawMessage `json:"startPeriod"`
+}
+
+// SecretRequirement declares a logical, value-free secret reference.
+type SecretRequirement struct {
+	Name string `json:"name"`
+}
+
+// SecretGrant describes the container-facing file and numeric permissions.
+type SecretGrant struct {
+	Name   string `json:"name"`
+	Target string `json:"target"`
+	UID    int64  `json:"uid"`
+	GID    int64  `json:"gid"`
+	Mode   int64  `json:"mode"`
 }

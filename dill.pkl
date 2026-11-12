@@ -34,8 +34,21 @@ class HealthCheck {
   startPeriod: Duration?
 }
 
+class SecretRequirement {
+  name: String
+}
+
+class SecretGrant {
+  name: String
+  target: String
+  uid: Int = 0
+  gid: Int = 0
+  mode: Int = 256
+}
+
 class Service {
   image: String
+  secrets: Listing<SecretGrant> = new {}
   containerName: String?
   restart: "no" | "always" | "on-failure" | "unless-stopped" = "no"
   pullPolicy: "always" | "missing" | "never" = "missing"
@@ -74,6 +87,7 @@ class DillConfig {
   /// Stack name used for container labels and network naming.
   /// When omitted, a deterministic adjective-animal name is derived from the config file path.
   name: String?
+  secrets: Listing<SecretRequirement> = new {}
   services: Mapping<String, Service>
   /// Specify the container engine to use for this deployment
   engine: "podman" | "docker" = "podman"
