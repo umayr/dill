@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -43,7 +44,7 @@ func runInit(opts commandOptions, args []string) error {
 func runValidate(ctx context.Context, opts commandOptions, args []string) (retErr error) {
 	fs := flag.NewFlagSet("validate", flag.ContinueOnError)
 	addFileFlag(fs, &opts)
-	format := fs.String("format", "text", "output format: text or json")
+	format := fs.String("format", "text", "output format: text, json, or operation-v1")
 	stdin := fs.Bool("stdin", false, "read config from stdin instead of file")
 	defer func() {
 		if *format == "json" && retErr != nil {
@@ -55,7 +56,7 @@ func runValidate(ctx context.Context, opts commandOptions, args []string) (retEr
 	if err := fs.Parse(args); err != nil {
 		return usageError{err.Error()}
 	}
-	if err := validateFormat(*format, "text", "json"); err != nil {
+	if err := validateFormat(*format, "text", "json", "operation-v1"); err != nil {
 		return err
 	}
 	if err := ensureNoArgs(fs.Args(), "validate"); err != nil {
@@ -87,6 +88,33 @@ func runValidate(ctx context.Context, opts commandOptions, args []string) (retEr
 		if err := config.ValidateContainerNames(cfg.Services, resolveStackNameWithOptions(cfg, opts)); err != nil {
 			validateErr = &config.InvalidError{Err: err}
 		}
+	}
+
+	if *format == "operation-v1" {
+		outcome := "succeeded"
+		if validateErr != nil {
+			outcome = "failed"
+			if errors.Is(validateErr, context.Canceled) || errors.Is(validateErr, context.DeadlineExceeded) {
+				outcome = "cancelled"
+			} else if failureKind(validateErr) == "invalid_input" {
+				outcome = "invalid_input"
+			}
+		}
+		stack := ""
+		if validateErr == nil {
+			stack = resolveStackNameWithOptions(cfg, opts)
+		}
+		result := struct {
+			Version       string `json:"version"`
+			Operation     string `json:"operation"`
+			Outcome       string `json:"outcome"`
+			EngineEffects string `json:"engineEffects"`
+			Stack         string `json:"stack"`
+		}{"dill.validate/1", "validate", outcome, "none", stack}
+		if err := json.NewEncoder(os.Stdout).Encode(result); err != nil {
+			return fmt.Errorf("rendering failure: %w", err)
+		}
+		return validateErr
 	}
 
 	if *format == "json" {
