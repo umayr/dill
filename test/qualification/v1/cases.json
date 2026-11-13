@@ -22,8 +22,8 @@
     {"id": "failed-start-cleanup", "mode": "engine", "test": "TestDillRealEngineFailedStartCleanup"},
     {"id": "operation-contract-baseline", "mode": "operation-engine", "test": "TestAlphaOperationEnvelopeConformance", "requires": [77], "reason": "Requires explicit --operations opt-in, discovered dill.operation/1 and actual disposable-engine execution; not qualified by compilation."},
     {"id": "operation-outcomes", "mode": "blocked", "requires": [77, 78, 79], "reason": "Prepared executable consumer covers the bounded operation contract; final combined guardrail/coordinator outcomes remain unqualified."},
-    {"id": "no-prune", "mode": "blocked", "requires": [79], "reason": "Explicit no-prune flag and omitted-service preservation assertions await approved interface."},
-    {"id": "bounded-storage-preflight", "mode": "blocked", "requires": [79], "reason": "Approved disposable mount/capability and destructive-intent contract required; prove zero mutations on rejection."},
+    {"id": "no-prune", "mode": "guardrail-engine", "test": "TestAlphaNoPruneBothEngines", "requires": [79], "reason": "Requires actual --profiles execution on the pinned disposable engine; ordinary no-prune parity is separate from qualified coordination."},
+    {"id": "bounded-storage-preflight", "mode": "profile-engine", "test": "TestAlphaDisposableProfileDocker", "requires": [79], "reason": "Requires Docker prepared-image profile runtime, inventory/state/data preservation and no-event rejection assertions; not coordinator qualification."},
     {"id": "same-stack-concurrency", "mode": "blocked", "requires": [77, 78], "reason": "CLI and Brine must contend while different stacks remain independent; final integrated hooks required."},
     {"id": "crash-unknown-recovery", "mode": "blocked", "requires": [77, 78], "reason": "SIGKILL and durable unknown outcome/recovery inspection require final trusted-state interface."},
     {"id": "foreign-resource-inventory", "mode": "blocked", "requires": [78, 79], "reason": "Combined suite must compare foreign container/network/volume identities and state before/after every failure and cleanup."},
@@ -34,6 +34,6 @@
     {"id": "alias-concurrency", "mode": "blocked", "requires": [78], "reason": "Path/URI/symlink socket aliases and CLI/Brine sources must contend on one daemon+stack identity."},
     {"id": "corrupt-journal-rejection", "mode": "blocked", "requires": [78], "reason": "Malformed, stale or mismatched trusted state must fail closed before engine mutation."},
     {"id": "inspected-exact-operation-recovery", "mode": "blocked", "requires": [78], "reason": "Unknown state stays blocked until manual live inspection and exact-ID acknowledgement with explicit inspected intent."},
-    {"id": "qualified-image-volume-rejected", "mode": "blocked", "requires": [79], "reason": "All image-declared VOLUME entries are initially denied, even named-mount-covered; unknown metadata cannot pass."}
+    {"id": "qualified-image-volume-rejected", "mode": "profile-engine", "test": "TestAlphaDisposableProfileDocker", "requires": [79], "reason": "All image-declared VOLUME entries are denied, even named-mount-covered; actual prepared negative-image execution required, not compilation."}
   ]
 }

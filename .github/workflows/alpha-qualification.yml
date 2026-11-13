@@ -82,13 +82,17 @@ jobs:
           if [ -f internal/operation/testdata/manifest.json ]; then
             operations=(--operations)
           fi
+          profiles=()
+          if [ -f internal/orchestrator/disposable.go ]; then
+            profiles=(--profiles)
+          fi
           python3 scripts/qualify-alpha.py \
             --expected-commit "$CANDIDATE_SHA" \
             --binary "$PWD/bin/dill" \
             --binary-sha256 "$(sha256sum bin/dill | cut -d ' ' -f 1)" \
             --pkl "$RUNNER_TEMP/pkl" \
             --output "$PWD/bin/alpha-evidence-$ENGINE" \
-            --engine "$ENGINE" --socket "$socket" --disposable "${operations[@]}"
+            --engine "$ENGINE" --socket "$socket" --disposable "${operations[@]}" "${profiles[@]}"
       - name: Publish exact candidate and bounded evidence for inspection/Brine
         if: always()
         uses: actions/upload-artifact@v4

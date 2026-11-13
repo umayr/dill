@@ -26,6 +26,8 @@ class QualificationTests(unittest.TestCase):
         for case in manifest["cases"]:
             if case["id"] in q.QUALIFIED_CASES:
                 case["mode"], kind = "qualified-engine", "real-qualified-engine"
+            elif case["id"] in q.PROFILE_CASES:
+                case["mode"], kind = "profile-engine", "real-profile-engine"
             elif case["mode"] == "offline":
                 kind = "offline"
             else:
@@ -277,7 +279,7 @@ print('private-empty-auth-only')
         return argparse.Namespace(expected_commit=COMMIT, binary=str(root / "dill"),
                                   binary_sha256=q.sha256(root / "dill"), pkl=str(root / "pkl"),
                                   output=str(root / "evidence"), allow_dirty=False,
-                                  engine=None, socket=None, disposable=False, operations=False, require_complete=False)
+                                  engine=None, socket=None, disposable=False, operations=False, profiles=False, require_complete=False)
 
     def fake_recorder(self, revision=COMMIT, modified="false", dirty=False, pkl_version="Pkl 0.31.1 (Linux)"):
         class Fake(q.Recorder):
@@ -396,6 +398,47 @@ print('private-empty-auth-only')
                 self.assertEqual(evidence["qualification"], "incomplete")
                 self.assertEqual(evidence["baselinePassed"], expected == 0)
 
+    def test_profile_selection_and_evidence_are_not_qualified_coordination(self):
+        # Mock plumbing only; no engine evidence is produced by this unit test.
+        for engine in ("docker", "podman"):
+            with self.subTest(engine=engine), tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp)
+                args = self.fake_candidate(root)
+                args.engine, args.disposable, args.operations, args.profiles = engine, True, True, True
+                args.socket = str(root / "engine.sock")
+                path = root / "test/qualification/v1/cases.json"
+                manifest = json.loads(path.read_text())
+                manifest["cases"].extend([
+                    {"id": "guardrail", "mode": "guardrail-engine", "test": "TestGuardrail"},
+                    {"id": "profile", "mode": "profile-engine", "test": "TestDockerProfile"}])
+                path.write_text(json.dumps(manifest))
+                outer = self
+                class FakeProfile(self.fake_recorder()):
+                    def run(self, argv, timeout=120, expected=0, env=None):
+                        if "operation-capabilities" in argv:
+                            return json.dumps({"version": "dill.operation/1", "engines": [engine],
+                                "operations": ["validate", "plan", "diff", "up", "down", "stop", "start", "restart", "rm", "teardown"]}).encode(), True
+                        if str(argv[0]) == engine:
+                            return b'{"Server":{"Version":"synthetic"}}', True
+                        if str(argv[0]) == "make":
+                            names = ["TestGuardrail"] + (["TestDockerProfile"] if engine == "docker" else [])
+                            outer.assertEqual(argv[-1], q.make_test_selector(names))
+                            outer.assertEqual(env["DILL_TEST_ALPHA_GUARDRAILS"], "1")
+                            return "".join("--- PASS: " + name + " (1s)\n" for name in names).encode(), True
+                        return super().run(argv, timeout, expected, env)
+                with socket.socket(socket.AF_UNIX) as sock:
+                    sock.bind(args.socket)
+                    with patch.object(q, "ROOT", root), patch.object(q, "FIXTURES", root / "test/qualification/v1"), patch.object(q, "Recorder", FakeProfile):
+                        self.assertEqual(q.collect(args), 0)
+                evidence = json.loads((Path(args.output) / "evidence.json").read_text())
+                results = {case["id"]: case for case in evidence["cases"]}
+                self.assertEqual(results["guardrail"]["evidenceKind"], "real-engine")
+                if engine == "docker":
+                    self.assertEqual(results["profile"]["evidenceKind"], "real-profile-engine")
+                else:
+                    self.assertEqual(results["profile"]["status"], "not-run")
+                self.assertEqual(evidence["qualification"], "incomplete")
+
     def test_operation_discovery_rejection_precedes_engine_or_make(self):
         for document in ([], {}, {"version": "dill.operation/999"},
                          {"version": "dill.operation/1", "operations": None, "engines": ["docker"]}):
@@ -441,7 +484,7 @@ print('private-empty-auth-only')
         self.assertEqual(len(ids), len(set(ids)))
         source = "\n".join(p.read_text() for p in (q.ROOT / "test/integration").glob("*_test.go"))
         for case in manifest["cases"]:
-            if case["mode"] in {"engine", "operation-engine"}:
+            if case["mode"] in {"engine", "operation-engine", "guardrail-engine", "profile-engine"}:
                 self.assertRegex(case["test"], r"^Test[A-Za-z0-9]+$")
                 self.assertIn("func " + case["test"] + "(", source)
 

@@ -52,6 +52,27 @@ truncated observations. These are **prepared runtime assertions**, not recorded
 runtime evidence until actually executed against the pinned candidate. They do
 not establish complete foreign-resource preservation or coordinated recovery.
 
+With `--profiles` (which also requires `--operations` discovery), the runner
+selects `TestAlphaNoPruneBothEngines` on either adapter and
+`TestAlphaDisposableProfileDocker` only on Docker. The latter prepares verified
+no-VOLUME images, asserts immutable-ID create and strict repeat/no-op identity,
+preserves omitted services even with `--no-prune=false`, tests retained data,
+foreign container/network/volume collisions, unsupported mounts/caps/secrets/
+pull intent, locally prepared image-VOLUME and covered-VOLUME rejection, and
+same-name replacement after captured removal confirmation. Rejected requests
+must have no observed effects, no Docker mutation events and unchanged full
+synthetic resource inventory/state/data. Negative Pkl fixtures must evaluate
+successfully so parser failure cannot masquerade as policy enforcement.
+
+These are **prepared profile assertions, not executed local engine evidence**.
+The profile is not the #78 daemon-attested coordinator: profile runtime evidence
+is labeled separately from qualified runtime evidence. Known pinned-image/no-op
+reconciliation corrections must pass the strict repeat expectation, not relax it.
+The workflow enables these cases for a candidate containing the stable disposable
+implementation; missing/skipped selected tests still fail. Full qualified mode
+must later also test unsupported/foreign preflight **without** adding the separate
+profile flag, so that flag cannot hide a coordinator preflight gap.
+
 ### Still required on combined final heads
 
 `cases.json` lists the following explicitly blocked cases. Do not remove a block
@@ -149,7 +170,9 @@ python3 scripts/qualify-alpha.py \
 Podman uses `--engine podman` with its explicitly approved service socket. Add
 `--operations` only when deliberately qualifying the known operation contract;
 unsupported/malformed discovery fails before any integration-test mutation.
-Without that opt-in, the prepared operation case remains explicitly blocked. The
+Add `--profiles` to deliberately exercise the narrower prepared-image guardrail
+suite too. Without these opt-ins, prepared cases remain blocked/not-run, never
+implicitly passed. The
 runner clears ambient engine selectors and credentials, uses a private HOME,
 and pins both Dill SDK and direct engine CLI operations to the same endpoint.
 Ambient `XDG_RUNTIME_DIR` is not inherited: private runtime/config directories,

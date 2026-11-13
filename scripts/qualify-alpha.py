@@ -23,7 +23,7 @@ SELECTORS = {
     "CONTAINER_CONNECTION", "CONTAINER_SSHKEY", "PODMAN_SOCKET",
     "DILL_ENGINE", "DILL_TEST_ENGINE", "DILL_ENGINE_SOCKET", "DILL_BINARY",
     "DILL_PKL_PATH", "DILL_TEST_RUN", "DILL_TEST_KEEP", "DILL_TEST_ALPHA_SECRETS", "DILL_TEST_ALPHA_OPERATIONS",
-    "DILL_SECRET_POLICY", "DILL_SECRET_TARGET", "GOFLAGS",
+    "DILL_SECRET_POLICY", "DILL_SECRET_TARGET", "GOFLAGS", "DILL_TEST_ALPHA_GUARDRAILS",
 }
 
 
@@ -36,7 +36,8 @@ FINAL_REQUIRED_CASES = frozenset({
     "qualified-podman-rejected", "different-stack-concurrency", "alias-concurrency",
     "corrupt-journal-rejection", "inspected-exact-operation-recovery", "qualified-image-volume-rejected",
 })
-QUALIFIED_CASES = FINAL_REQUIRED_CASES - {
+PROFILE_CASES = frozenset({"bounded-storage-preflight", "qualified-image-volume-rejected"})
+QUALIFIED_CASES = FINAL_REQUIRED_CASES - PROFILE_CASES - {"no-prune"} - {
     "offline-valid", "offline-invalid-graph", "success-repeat-config-change", "changed-image",
     "invalid-config-preserves-live", "foreign-container-collision", "retained-volume",
     "cancellation", "failed-start-cleanup", "operation-contract-baseline",
@@ -87,8 +88,9 @@ def final_acceptance(evidence, manifest):
         case_id = case.get("id")
         result = by_id.get(case_id, {})
         mode = case.get("mode")
-        if (mode not in {"offline", "engine", "operation-engine", "qualified-engine"}
+        if (mode not in {"offline", "engine", "operation-engine", "guardrail-engine", "profile-engine", "qualified-engine"}
                 or (case_id in QUALIFIED_CASES and mode != "qualified-engine")
+                or (case_id in PROFILE_CASES and mode != "profile-engine")
                 or (case_id in {"offline-valid", "offline-invalid-graph"} and mode != "offline")):
             reasons.append("required-case-not-implemented")
         if result.get("status") != "passed" or mode == "blocked":
@@ -97,6 +99,8 @@ def final_acceptance(evidence, manifest):
         kind = "offline" if case.get("mode") == "offline" else "real-engine"
         if case_id in QUALIFIED_CASES:
             kind = "real-qualified-engine"
+        elif case_id in PROFILE_CASES:
+            kind = "real-profile-engine"
         if result.get("evidenceKind") != kind:
             reasons.append("required-case-runtime-evidence-missing")
         if (result.get("candidateCommit") != commit or result.get("binarySha256") != binary.get("sha256")
@@ -254,8 +258,10 @@ def collect(args):
         raise ValueError("candidate binary checksum mismatch")
     if args.engine and (not args.disposable or not args.socket):
         raise ValueError("engine mode requires --disposable and --socket; no ambient target fallback")
-    if not args.engine and (args.socket or args.disposable or args.operations):
-        raise ValueError("socket/disposable/operations require an engine")
+    if not args.engine and (args.socket or args.disposable or args.operations or args.profiles):
+        raise ValueError("socket/disposable/operations/profiles require an engine")
+    if args.profiles and not args.operations:
+        raise ValueError("profile cases require explicit operation-contract discovery opt-in")
     endpoint = local_socket(args.socket) if args.engine else None
     # A new directory prevents clobbering or accidentally mixing prior evidence.
     output = Path(args.output).resolve()
@@ -328,6 +334,11 @@ def collect(args):
             target_env = engine_env(env, args.engine, endpoint)
             target_env["DILL_BINARY"] = str(binary)
             modes = {"engine"}
+            if args.profiles:
+                target_env["DILL_TEST_ALPHA_GUARDRAILS"] = "1"
+                modes.add("guardrail-engine")
+                if args.engine == "docker":
+                    modes.add("profile-engine")
             if args.operations:
                 capabilities, passed = recorder.run([binary, "operation-capabilities", "--format", "json"])
                 if not passed or len(capabilities) > 64 * 1024:
@@ -353,13 +364,14 @@ def collect(args):
             if len(engine_version) > 64 * 1024:
                 raise ValueError("unexpected engine version response size")
             evidence["engineVersion"] = json.loads(engine_version)
-            tests = [c["test"] for c in manifest["cases"] if c["mode"] in modes]
+            tests = list(dict.fromkeys(c["test"] for c in manifest["cases"] if c["mode"] in modes))
             data, passed = recorder.run(["make", "integration-test", make_test_selector(tests)],
                                         timeout=1800, env=target_env)
             states = test_results(data, tests)
             for case, result in zip(manifest["cases"], evidence["cases"]):
                 if case["mode"] in modes:
-                    result.update(status=states[case["test"]], test=case["test"], evidenceKind="real-engine",
+                    kind = "real-profile-engine" if case["mode"] == "profile-engine" else "real-engine"
+                    result.update(status=states[case["test"]], test=case["test"], evidenceKind=kind,
                                   candidateCommit=commit, binarySha256=evidence["binary"]["sha256"], target=endpoint)
             ok &= passed and all(s == "passed" for s in states.values())
         if dirty or settings.get("vcs.modified") != "false":
@@ -404,6 +416,7 @@ def main():
     parser.add_argument("--require-complete", action="store_true", help="fail unless every final required case has pinned disposable runtime evidence")
     parser.add_argument("--engine", choices=("docker", "podman"))
     parser.add_argument("--operations", action="store_true", help="require discovered dill.operation/1 and run its real-engine consumer cases")
+    parser.add_argument("--profiles", action="store_true", help="run no-prune parity and Docker prepared-image profile cases; not qualified coordination")
     parser.add_argument("--socket")
     parser.add_argument("--disposable", action="store_true", help="attest target is exclusively disposable")
     args = parser.parse_args()
