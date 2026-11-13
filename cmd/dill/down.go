@@ -109,6 +109,9 @@ func runTeardown(ctx context.Context, opts commandOptions, args []string) error 
 	vols, listErr := engine.ListStackVolumes(ctx, sn)
 	if listErr != nil {
 		listErr = fmt.Errorf("list volumes for stack %q: %w", sn, listErr)
+		if opts.operation != nil {
+			return listErr
+		}
 	}
 
 	names, err := engine.ListStack(ctx, sn)
@@ -134,6 +137,9 @@ func runTeardown(ctx context.Context, opts commandOptions, args []string) error 
 				continue
 			}
 			id, err := engine.LocalImageID(ctx, svc.Image)
+			if err != nil {
+				id = ""
+			}
 			imageIDs[svc.Image] = id
 			if err != nil {
 				imageErrors = append(imageErrors, &orchestrator.ResourceError{Operation: "inspect image", Resource: svc.Image, Err: err})

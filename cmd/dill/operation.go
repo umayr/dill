@@ -95,6 +95,8 @@ func runOperation(ctx context.Context, args []string) error {
 	addActionFlags(fs, &opts)
 	addTimeoutFlag(fs, &opts)
 	fs.BoolVar(&opts.ForceRecreate, "force-recreate", false, "force recreate containers")
+	fs.BoolVar(&opts.NoPrune, "no-prune", false, "retain omitted services during up")
+	fs.BoolVar(&opts.AlphaDisposable, "alpha-disposable", false, "restrict up to the disposable-volume Alpha profile")
 	contract := fs.String("contract", "", "required operation contract version")
 	format := fs.String("format", "json", "output format: json")
 	noDeps := fs.Bool("no-deps", false, "omit dependencies")
@@ -103,6 +105,15 @@ func runOperation(ctx context.Context, args []string) error {
 	fs.SetOutput(io.Discard)
 	if fs.Parse(args[1:]) != nil {
 		return emit(2, "INVALID_ARGUMENTS", "Invalid operation arguments.")
+	}
+	guardrailFlag := false
+	fs.Visit(func(f *flag.Flag) {
+		if f.Name == "no-prune" || f.Name == "alpha-disposable" {
+			guardrailFlag = true
+		}
+	})
+	if guardrailFlag && name != "up" {
+		return emit(2, "INVALID_ARGUMENTS", "Unsupported options for this operation.")
 	}
 	if *contract != operation.Version {
 		return emit(2, "UNSUPPORTED_CONTRACT", "Unsupported operation contract. Use operation-capabilities discovery.")
