@@ -109,7 +109,9 @@ func runPlanNamed(ctx context.Context, opts commandOptions, args []string, name 
 		return fmt.Errorf("computing plan: %w", err)
 	}
 
-	if opts.proofRequested() {
+	if opts.operation != nil {
+		opts.operation.planned(result, sn)
+	} else if opts.proofRequested() {
 		var out bytes.Buffer
 		if *format == "json" {
 			err = plan.RenderJSON(result, &out)

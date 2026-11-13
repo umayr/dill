@@ -1,0 +1,12 @@
+{
+  "version": "dill.operation-fixtures/1",
+  "contract": "dill.operation/1",
+  "operationIdNormalization": "Validate ^op_[0-9a-f]{32}$ and uniqueness; normalize to op_00000000000000000000000000000000 only for fixture comparison.",
+  "fixtures": [
+    "success.json",
+    "failure.json",
+    "unsupported-version.json",
+    "unsupported-operation.json"
+  ],
+  "scope": "CLI result summaries; synthetic test runtime, not engine conformance or Brine consumer evidence."
+}
