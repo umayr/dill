@@ -671,10 +671,23 @@ func (p *PodmanEngine) InspectConfig(ctx context.Context, name string) (*LiveCon
 		gidMap = data.HostConfig.IDMappings.GIDMap
 	}
 	userNS := ""
+	hasDevices := false
+	privileged := false
+	hasTmpfs := false
+	pidMode, ipcMode, utsMode, cgroupNSMode := "", "", "", ""
 	if data.HostConfig != nil {
 		userNS = data.HostConfig.UsernsMode
+		hasDevices = len(data.HostConfig.Devices) > 0
+		privileged = data.HostConfig.Privileged
+		hasTmpfs = len(data.HostConfig.Tmpfs) > 0
+		pidMode, ipcMode, utsMode, cgroupNSMode = data.HostConfig.PidMode, data.HostConfig.IpcMode, data.HostConfig.UTSMode, data.HostConfig.CgroupMode
 	}
 	return &LiveConfig{
+		HostConfigKnown: data.Config != nil && data.HostConfig != nil,
+		HasDevices:      hasDevices,
+		Privileged:      privileged,
+		HasTmpfs:        hasTmpfs,
+		PIDMode:         pidMode, IPCMode: ipcMode, UTSMode: utsMode, CgroupNSMode: cgroupNSMode,
 		UserNSMode: userNS, UIDMap: uidMap, GIDMap: gidMap,
 		MountsKnown:   data.Config != nil && data.HostConfig != nil,
 		ID:            data.ID,

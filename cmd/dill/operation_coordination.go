@@ -172,6 +172,10 @@ func (c *operationCoordination) prepare(ctx context.Context, opts commandOptions
 			return usageError{"qualified operations cannot prune undeclared containers"}
 		}
 	}
+	actualImages, ok := c.guard.Engine.(orchestrator.DisposableImageInspector)
+	if !ok {
+		return orchestrator.ErrDisposableUnavailable
+	}
 	for service, svc := range cfg.Services {
 		container := serviceContainerName(stack, service, svc)
 		live, err := engine.InspectConfig(ctx, container)
@@ -188,10 +192,30 @@ func (c *operationCoordination) prepare(ctx context.Context, opts commandOptions
 		if live == nil || live.ID == "" || !live.MountsKnown || !modeOK || !live.NetworksKnown || len(live.Networks) != 1 || live.Networks[0] != stack {
 			return usageError{"unsupported qualified live resource layout"}
 		}
-		for _, mount := range live.Volumes {
-			if mount.Type == "tmpfs" {
-				continue
+		// Ownership labels and safe desired config do not attest the existing
+		// workload. Census the actual host settings before any lifecycle write.
+		if !live.HostConfigKnown || live.Privileged || len(live.CapAdd) > 0 || live.HasDevices || live.HasTmpfs || live.UserNSMode != "" || len(live.UIDMap) > 0 || len(live.GIDMap) > 0 {
+			return usageError{"unsupported qualified live workload"}
+		}
+		for _, mode := range []string{live.PIDMode, live.IPCMode, live.UTSMode, live.CgroupNSMode} {
+			if mode != "" && mode != "private" {
+				return usageError{"unsupported qualified live namespace"}
 			}
+		}
+		// start/restart can execute an OLD immutable image despite a safe new
+		// desired reference. Apply the same no-VOLUME pilot boundary to the
+		// actual image, even when a declared owned mount covers its destination.
+		if live.ImageID == "" {
+			return orchestrator.ErrDisposableUnavailable
+		}
+		actualID, implicitVolumes, imageErr := actualImages.DisposableImage(ctx, live.ImageID)
+		if imageErr != nil || actualID != live.ImageID {
+			return orchestrator.ErrDisposableUnavailable
+		}
+		if len(implicitVolumes) > 0 {
+			return orchestrator.ErrDisposableUnsupported
+		}
+		for _, mount := range live.Volumes {
 			if mount.Type != "volume" || !volumes[mount.Source] {
 				return usageError{"live storage is outside qualified inventory"}
 			}

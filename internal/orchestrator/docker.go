@@ -578,6 +578,11 @@ func (d *DockerEngine) InspectConfig(ctx context.Context, name string) (*LiveCon
 	}
 
 	return &LiveConfig{
+		HostConfigKnown: true,
+		Privileged:      info.HostConfig.Privileged,
+		HasTmpfs:        len(info.HostConfig.Tmpfs) > 0,
+		PIDMode:         string(info.HostConfig.PidMode), IPCMode: string(info.HostConfig.IpcMode), UTSMode: string(info.HostConfig.UTSMode), CgroupNSMode: string(info.HostConfig.CgroupnsMode),
+		HasDevices:    len(info.HostConfig.Devices) > 0 || len(info.HostConfig.DeviceRequests) > 0 || len(info.HostConfig.DeviceCgroupRules) > 0,
 		MountsKnown:   true,
 		UserNSMode:    string(info.HostConfig.UsernsMode),
 		ID:            info.ID,

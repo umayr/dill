@@ -40,6 +40,15 @@ an established operation to a different daemon. Disconnects, daemon idle closes,
 streaming/hijack use and concurrent HTTP requests can reduce availability: there
 is deliberately no transparent reconnect. `Target.Close` is idempotent.
 
+The CLI's locked whole-inventory census separately requires known ACTUAL host
+settings and immutable image metadata for each existing container. It rejects
+added capabilities, privileged mode, devices, explicit tmpfs and special user/
+PID/IPC/UTS/cgroup namespaces, preserving ordinary empty/private defaults. The
+canonical DisposableImage inspector must resolve actual live.ImageID exactly
+and report no VOLUME, even if a safe new desired image or a covering named mount
+exists. This does not compare labels/hashes as provenance; safe older images are
+valid. Unqualified legacy behavior is unchanged.
+
 ## Integration API
 
 ```

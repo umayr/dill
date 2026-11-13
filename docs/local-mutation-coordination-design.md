@@ -61,10 +61,25 @@ Additional conservative restrictions:
 - `up` requires effective `pullPolicy = "never"` for every service, or an explicit
   `--pull never`. The guard refuses every attempted pull even if a future handler
   accidentally reaches one. Local image metadata must be available before writes.
+- The complete locked census validates ACTUAL existing workloads, not just safe
+  desired config or labels: actual host config must be known, with no added
+  capabilities, privileged mode, device mappings/requests/grants, explicit tmpfs,
+  user-namespace modes/ID maps, or special PID/IPC/UTS/cgroup namespace modes.
+  Ordinary empty/private namespace defaults are allowed. Actual ordinary mount
+  evidence also rejects tmpfs; engine-internal `/dev/shm` is not invented as a
+  user mount. Both adapters expose native inspection evidence; enforcement stays
+  opt-in qualified only, with no legacy behavior or desired IR/schema change.
 - Image-declared `VOLUME` destinations are all unsupported initially. Otherwise
   Docker can create anonymous storage not present in the declared inventory.
   The shared disposable image preflight/strict adapter pins the inspected local
   immutable image ID at create time rather than trusting a mutable tag.
+  This ALSO checks every existing container's ACTUAL immutable `live.ImageID`
+  through that same canonical read-only inspector before ANY handler write;
+  desired new image metadata does not attest an older workload. Missing, malformed
+  or ID-mismatched actual image evidence fails closed, and any VOLUME rejects even
+  if an owned declared mount covers its destination. This is bounded pilot
+  validation, not a new provenance/hash-equality system: safe older images remain
+  valid for direct lifecycle operations.
 - The canonical #79 disposable static boundary applies automatically, without
   requiring a separate profile flag: bind/external/anonymous/explicit-engine-name
   volumes, tmpfs, special network modes, devices and added capabilities reject

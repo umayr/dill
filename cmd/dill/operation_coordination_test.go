@@ -35,11 +35,15 @@ type coordinatedDockerFixture struct {
 	exists, running, orphan, implicitVolumes, dropWrites bool
 	labels                                               map[string]string
 	image                                                string
+	liveHost                                             map[string]any
+	liveMountType                                        string
+	liveImageID, liveImageStatus                         string
 	writes, connections                                  int
 	uncoordinatedWrite, failTerminal                     bool
 	redirectList, blockReads                             bool
 	blockWrite                                           bool
 	unknownNetworks, extraNetwork                        bool
+	unknownLiveHost                                      bool
 	networkExists, foreignNetwork, foreignVolume         bool
 	writeStarted                                         chan struct{}
 }
@@ -148,7 +152,24 @@ func (f *coordinatedDockerFixture) serve(w http.ResponseWriter, r *http.Request)
 		if f.implicitVolumes {
 			volumes["/implicit-private"] = struct{}{}
 		}
-		json.NewEncoder(w).Encode(map[string]any{"Id": "sha256:" + strings.Repeat("c", 64), "Config": map[string]any{"Volumes": volumes}})
+		id := "sha256:" + strings.Repeat("c", 64)
+		var imageConfig any = map[string]any{"Volumes": volumes}
+		if f.liveImageID != "" && strings.TrimSuffix(strings.TrimPrefix(path, "/images/"), "/json") == f.liveImageID {
+			id = f.liveImageID
+			switch f.liveImageStatus {
+			case "volumes":
+				volumes["/data"] = struct{}{}
+			case "missing":
+				w.WriteHeader(404)
+				io.WriteString(w, `{"message":"missing private old image"}`)
+				return
+			case "malformed":
+				imageConfig = nil
+			case "mismatch":
+				id = "sha256:" + strings.Repeat("c", 64)
+			}
+		}
+		json.NewEncoder(w).Encode(map[string]any{"Id": id, "Config": imageConfig})
 	case strings.HasPrefix(path, "/containers/") && strings.HasSuffix(path, "/json"):
 		if !f.exists {
 			w.WriteHeader(404)
@@ -163,7 +184,26 @@ func (f *coordinatedDockerFixture) serve(w http.ResponseWriter, r *http.Request)
 			}
 			settings["Networks"] = networks
 		}
-		json.NewEncoder(w).Encode(map[string]any{"Id": strings.Repeat("a", 64), "Image": "sha256:" + strings.Repeat("c", 64), "Config": map[string]any{"Image": f.image, "Labels": f.labels}, "HostConfig": map[string]any{"NetworkMode": "bridge"}, "NetworkSettings": settings, "State": map[string]any{"Running": f.running}, "Mounts": []any{}})
+		host := map[string]any{"NetworkMode": "bridge"}
+		for key, value := range f.liveHost {
+			host[key] = value
+		}
+		imageID := f.liveImageID
+		if imageID == "" {
+			imageID = "sha256:" + strings.Repeat("c", 64)
+		}
+		mounts := []any{}
+		if f.liveImageStatus == "volumes" {
+			mounts = append(mounts, map[string]any{"Type": "volume", "Name": "app_data", "Source": "/private/engine/path", "Destination": "/data", "RW": true})
+		}
+		if f.liveMountType != "" {
+			mounts = append(mounts, map[string]any{"Type": f.liveMountType, "Destination": "/private/scratch", "RW": true})
+		}
+		var hostConfig any = host
+		if f.unknownLiveHost {
+			hostConfig = nil
+		}
+		json.NewEncoder(w).Encode(map[string]any{"Id": strings.Repeat("a", 64), "Image": imageID, "Config": map[string]any{"Image": f.image, "Labels": f.labels}, "HostConfig": hostConfig, "NetworkSettings": settings, "State": map[string]any{"Running": f.running}, "Mounts": mounts})
 	case path == "/networks":
 		list := []map[string]string{}
 		if f.networkExists {
@@ -199,6 +239,9 @@ func (f *coordinatedDockerFixture) serve(w http.ResponseWriter, r *http.Request)
 		json.NewDecoder(r.Body).Decode(&request)
 		f.labels = request.Labels
 		f.image = request.Image
+		f.liveImageID = request.Image
+		f.liveImageStatus = ""
+		f.liveHost = nil
 		f.exists = true
 		f.running = false
 		w.WriteHeader(201)
@@ -430,6 +473,87 @@ func TestQualifiedForeignResourcesFailBeforeAnyHTTPWrite(t *testing.T) {
 				t.Fatalf("foreign %s caused earlier mutation: %+v code=%d HTTP writes=%d", kind, result, code, writes)
 			}
 		})
+	}
+}
+
+func TestQualifiedCensusRejectsActualUnsupportedLegacyWorkload(t *testing.T) {
+	for _, name := range qualifiedOperations {
+		for _, kind := range []string{"cap-add", "devices", "privileged", "tmpfs", "tmpfs-mount", "userns-host", "pid-host", "ipc-host", "uts-host", "cgroup-host", "unknown-host", "image-volumes", "image-missing", "image-malformed", "image-mismatch", "safe-old-image", "safe-private-namespaces"} {
+			t.Run(name+"/"+kind, func(t *testing.T) {
+				fixture := newCoordinatedDocker(t, true)
+				fixture.mu.Lock()
+				fixture.running = name != "start" && name != "rm"
+				fixture.liveImageID = "sha256:" + strings.Repeat("b", 64)
+				switch kind {
+				case "cap-add":
+					fixture.liveHost = map[string]any{"CapAdd": []string{"SYS_ADMIN"}}
+				case "devices":
+					fixture.liveHost = map[string]any{"Devices": []map[string]string{{"PathOnHost": "/dev/PRIVATE_DEVICE", "PathInContainer": "/dev/PRIVATE_DEVICE", "CgroupPermissions": "rwm"}}}
+				case "tmpfs-mount":
+					fixture.liveMountType = "tmpfs"
+				case "tmpfs":
+					fixture.liveHost = map[string]any{"Tmpfs": map[string]string{"/private/scratch": ""}}
+				case "privileged":
+					fixture.liveHost = map[string]any{"Privileged": true}
+				case "userns-host":
+					fixture.liveHost = map[string]any{"UsernsMode": "host"}
+				case "pid-host":
+					fixture.liveHost = map[string]any{"PidMode": "host"}
+				case "ipc-host":
+					fixture.liveHost = map[string]any{"IpcMode": "host"}
+				case "uts-host":
+					fixture.liveHost = map[string]any{"UTSMode": "host"}
+				case "cgroup-host":
+					fixture.liveHost = map[string]any{"CgroupnsMode": "host"}
+				case "unknown-host":
+					fixture.unknownLiveHost = true
+				case "safe-private-namespaces":
+					fixture.liveHost = map[string]any{"IpcMode": "private", "CgroupnsMode": "private"}
+				case "image-volumes":
+					fixture.liveImageStatus = "volumes"
+				case "image-missing":
+					fixture.liveImageStatus = "missing"
+				case "image-malformed":
+					fixture.liveImageStatus = "malformed"
+				case "image-mismatch":
+					fixture.liveImageStatus = "mismatch"
+				}
+				fixture.mu.Unlock()
+				cfg := syntheticConfig()
+				cfg.Services["web"].Image = "synthetic:new-safe-desired"
+				if kind == "image-volumes" {
+					cfg.Services["web"].Volumes = []json.RawMessage{json.RawMessage(`"data:/data"`)}
+				}
+				useSyntheticConfig(t, cfg)
+				args := fixture.args(name)
+				if name == "rm" {
+					args = append(args, "--yes")
+				}
+				// Targeted down is a real success path without changing the full
+				// down network-retention error contract covered by the other test.
+				if name == "down" && (kind == "safe-old-image" || kind == "safe-private-namespaces") {
+					args = append(args, "web")
+				}
+				result, code, _ := captureOperation(t, "", args)
+				fixture.mu.Lock()
+				writes := fixture.writes
+				fixture.mu.Unlock()
+				if kind == "safe-old-image" || kind == "safe-private-namespaces" {
+					if code != 0 || result.Outcome != "succeeded" || result.Effects != "complete" || writes == 0 || name == "start" && writes != 1 || name == "restart" && writes != 2 {
+						t.Fatalf("safe old image needs no provenance/equality gate: %+v code=%d writes=%d", result, code, writes)
+					}
+					return
+				}
+				if code == 0 || result.Effects != "none" || writes != 0 {
+					t.Fatalf("actual unsupported legacy workload mutated despite safe desired config: %+v code=%d writes=%d", result, code, writes)
+				}
+				for _, failure := range result.Errors {
+					if strings.Contains(failure.Message, "PRIVATE_") {
+						t.Fatal("raw host/image metadata leaked")
+					}
+				}
+			})
+		}
 	}
 }
 
