@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -466,6 +467,64 @@ func TestQualifiedLiveOrImageBoundaryFailsBeforeMutation(t *testing.T) {
 		})
 	}
 }
+func TestQualifiedCloseFailuresKeepReceiptAndJournalCoherent(t *testing.T) {
+	for _, phase := range []string{"transport", "post-commit-lock"} {
+		t.Run(phase, func(t *testing.T) {
+			fixture := newCoordinatedDocker(t, true)
+			useSyntheticConfig(t, syntheticConfig())
+			oldTarget, oldSession := closeCoordinatedTarget, closeCoordinatedSession
+			defer func() { closeCoordinatedTarget = oldTarget; closeCoordinatedSession = oldSession }()
+			if phase == "transport" {
+				closeCoordinatedTarget = func(target *coordination.Target) error {
+					_ = target.Close()
+					return errors.New("PRIVATE_CLOSE_DIAGNOSTIC")
+				}
+			} else {
+				closeCoordinatedSession = func(session *coordination.Session) error {
+					_ = session.Close()
+					return errors.New("PRIVATE_RELEASE_DIAGNOSTIC")
+				}
+			}
+			result, code, _ := captureOperation(t, "", fixture.args("stop"))
+			closeCoordinatedTarget, closeCoordinatedSession = oldTarget, oldSession
+			ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+			defer cancel()
+			state, err := coordination.Open(ctx, fixture.stateDir)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer state.Close()
+			target, _ := coordination.DockerIdentity(syntheticDaemon)
+			record, err := state.Inspect(ctx, target, "app")
+			if err != nil || record == nil || code != 1 || record.OperationID != result.OperationID || record.Outcome != result.Outcome || record.Effects != result.Effects {
+				t.Fatalf("close failure diverged: receipt=%+v journal=%+v code=%d err=%v", result, record, code, err)
+			}
+			for _, failure := range result.Errors {
+				if strings.Contains(failure.Message, "PRIVATE_") {
+					t.Fatal("close diagnostic leaked")
+				}
+			}
+			if phase == "transport" {
+				if result.Outcome != "unknown" || result.Effects != "unknown" {
+					t.Fatal("transport uncertainty was not persisted", result)
+				}
+				fixture.mu.Lock()
+				writes := fixture.writes
+				fixture.mu.Unlock()
+				retry, code, _ := captureOperation(t, "", fixture.args("stop"))
+				fixture.mu.Lock()
+				later := fixture.writes
+				fixture.mu.Unlock()
+				if code != 1 || retry.Effects != "none" || later != writes {
+					t.Fatal("unknown close outcome was replayed", retry)
+				}
+			} else if result.Outcome != "succeeded" || result.Effects != "complete" {
+				t.Fatal("post-commit cleanup erased known effects", result)
+			}
+		})
+	}
+}
+
 func TestQualifiedFailedStartKeepsDurableOperationID(t *testing.T) {
 	fixture := newCoordinatedDocker(t, true)
 	useSyntheticConfig(t, syntheticConfig())

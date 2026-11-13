@@ -41,9 +41,12 @@ state = Open(ctxWithDeadline, existingPrivateDirectory)
 session = state.Begin(ctxWithDeadline, target, exactResolvedStack,
                       "cli" or "brine", completeResourceInventory)
 // only now may the already-qualified engine mutate
+// close SDK + target while session locks remain held; classify close failures
+// into the final axes BEFORE committing (unknown if effects are uncertain)
+engine.Close()
+target.Close()
 session.Finish(actualOutcome, actualEffects)
 session.Close()
-target.Close()
 state.Close()
 ```
 
@@ -57,7 +60,10 @@ Read-only preflight snapshots may need rebuilding after locks are acquired.
 
 Do not publish the terminal operation result until `Finish` succeeds. On its
 failure report unknown effects and require inspection, never success or replay.
-The result operation ID is `session.OperationID()`. Unknown/partial/cancelled
+The result operation ID is `session.OperationID()`. A `StartError` also carries
+that same ID if a failed Begin installed any partial state but returned no
+session. Post-commit local lock/directory cleanup errors cannot change the
+already-known engine axes in only stdout. Unknown/partial/cancelled
 outcomes can have effects; cancellation does not imply rollback.
 
 ## Durable protocol and recovery

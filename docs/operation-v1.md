@@ -219,7 +219,11 @@ approval. Final wire resources still carry their existing truncation flag.
 Explicit opt-in coordination qualifies and retains the same connected engine
 for this entire handler scope, begins durable intent before any delegate
 mutation, uses the same operation ID (including failed-start records), and
-finishes durably **before** emitting the final result. A durable finish failure must not yield a succeeded receipt. The selector
+finishes durably **before** emitting the final result. A durable finish failure must not yield a succeeded receipt. SDK/transport
+close is classified while locks remain held BEFORE durable finish. Post-commit
+local lock/directory cleanup failure preserves the recorded engine outcome and
+effects, emits fixed `COORDINATION_RELEASE_FAILED`, and returns exit 1; it does
+not rewrite stdout-only unknown axes after recording success. The selector
 digest cannot stand in for daemon attestation. Guardrails should forward explicit
 supported flags to existing handlers rather than introduce a second lifecycle
 implementation.

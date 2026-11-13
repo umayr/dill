@@ -94,7 +94,11 @@ func runOperation(ctx context.Context, args []string) error {
 	state := &operationState{recorder: &operation.Recorder{}}
 	defer state.release()
 	emit := func(code int, errorCode, message string) error {
-		if state.releaseEngine() != nil {
+		closeErr := state.releaseEngine()
+		if state.coordination != nil {
+			closeErr = errors.Join(closeErr, state.coordination.closeTransport())
+		}
+		if closeErr != nil {
 			result.Outcome = "unknown"
 			code = 1
 			errorCode = "ENGINE_CLOSE_FAILED"
@@ -118,9 +122,11 @@ func runOperation(ctx context.Context, args []string) error {
 			}
 		}
 		if state.release() != nil {
-			result.Outcome, result.Effects = "unknown", "unknown"
+			// Effects/outcome were already durably finalized. A local lock/fd
+			// cleanup error is not new uncertainty about engine mutations; do
+			// not manufacture stdout-only unknown axes after a known commit.
 			code = 1
-			result.Errors = append(result.Errors, operation.Error{Code: "COORDINATION_RELEASE_FAILED", Message: "Coordination release failed. Inspect state before retrying."})
+			result.Errors = append(result.Errors, operation.Error{Code: "COORDINATION_RELEASE_FAILED", Message: "Engine outcome was recorded; local coordination cleanup failed."})
 		}
 		if json.NewEncoder(os.Stdout).Encode(result) != nil {
 			return protocolExit{1}

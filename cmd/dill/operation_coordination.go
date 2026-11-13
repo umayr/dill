@@ -54,12 +54,13 @@ func (c coordinationOptions) validate(name string, opts commandOptions) error {
 }
 
 type operationCoordination struct {
-	options     coordinationOptions
-	target      *coordination.Target
-	state       *coordination.State
-	session     *coordination.Session
-	guard       *coordinatedEngine
-	operationID string
+	options         coordinationOptions
+	target          *coordination.Target
+	state           *coordination.State
+	session         *coordination.Session
+	guard           *coordinatedEngine
+	operationID     string
+	transportClosed bool
 }
 
 // prepare validates the complete DECLARED inventory before engine/state access.
@@ -225,14 +226,22 @@ func (c *operationCoordination) finish(result *operation.Result) error {
 	result.OperationID = c.session.OperationID()
 	return c.session.Finish(result.Outcome, result.Effects)
 }
-func (c *operationCoordination) close() error {
-	var err error
-	if c.target != nil {
-		err = errors.Join(err, c.target.Close())
-		c.target = nil
+
+var closeCoordinatedTarget = func(target *coordination.Target) error { return target.Close() }
+var closeCoordinatedSession = func(session *coordination.Session) error { return session.Close() }
+
+func (c *operationCoordination) closeTransport() error {
+	if c.target == nil || c.transportClosed {
+		return nil
 	}
+	c.transportClosed = true
+	return closeCoordinatedTarget(c.target)
+}
+func (c *operationCoordination) close() error {
+	err := c.closeTransport()
+	c.target = nil
 	if c.session != nil {
-		err = errors.Join(err, c.session.Close())
+		err = errors.Join(err, closeCoordinatedSession(c.session))
 		c.session = nil
 	}
 	if c.state != nil {

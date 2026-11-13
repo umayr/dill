@@ -142,6 +142,13 @@ continue to reject hard links. Persistent terminal sync failure leaves the
 original head unresolved even if terminal bytes happen to be visible. A failed
 `Finish` becomes an unknown receipt, not success, and blocks later mutations.
 
+The SDK and qualified transport close while stack/resource locks remain held,
+BEFORE finalizing axes and publishing a terminal result. A transport-close error
+therefore becomes the SAME durable unknown outcome shown in the receipt and
+blocks subsequent mutation. A later lock/directory cleanup error cannot invent
+stdout-only unknown effects after a known commit: it preserves recorded axes,
+adds fixed `COORDINATION_RELEASE_FAILED`, and exits 1 for local cleanup failure.
+
 The publication link itself is intentionally not separately dir-synced. If lost
 after crash, independently durable result bytes remain but recovery treats the
 operation as unknown: conservative inspection, never invented success. This
