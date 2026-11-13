@@ -86,8 +86,12 @@ the same daemon converge. A daemon clone/proxy that falsely reuses the qualified
 identity is outside the independently provisioned uniqueness assumption.
 
 The operation result's existing `target.endpointDigest` remains only a requested
-selector digest, NOT canonical daemon identity. The journal `target` is the
-actual daemon fingerprint. The same random `op_<32 hex>` operation ID appears in
+selector digest, NOT canonical daemon identity. After successful same-connection
+qualification only, optional `target.qualifiedIdentityDigest` is emitted as
+`sha256:` plus the journal's actual-daemon target fingerprint. It is absent on
+unqualified/early-rejected paths; consumers negotiate this additive field using
+`optInQualifiedLocalCoordination` discovery. Discovery additionally lists the
+qualified operations, engines (`docker`) and layout (`native-local-docker-v1`). The same random `op_<32 hex>` operation ID appears in
 journal and result once a session exists. Requests rejected before acquiring a
 session retain their independent receipt ID and no mutation journal entry.
 
@@ -156,8 +160,9 @@ dill coordination acknowledge --state-dir /absolute/private/alpha-state \
 ```
 
 `--daemon-id` derives the SAME fingerprint offline; alternatively supply the
-recorded fingerprint with `--target-id` (never both). No receipt schema field is
-repurposed to provide canonical identity. For cross-stack resource reservations,
+emitted `target.qualifiedIdentityDigest` directly with `--target-id` (never both).
+Both `sha256:<64 hex>` and the raw recorded hex token are accepted. The optional
+attested field does not repurpose the requested endpoint selector digest. For cross-stack resource reservations,
 replace `--stack` with `--resource-kind container --resource-name EXACT_NAME`;
 volume/network/image namespaces are likewise bounded by the library inventory.
 

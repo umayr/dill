@@ -84,7 +84,7 @@ func TestOfflineRecoveryRootRoutingAndExactAcknowledgement(t *testing.T) {
 	}
 	id := session.OperationID()
 	session.Close()
-	args := []string{"coordination", "inspect", "--state-dir", fixture.stateDir, "--daemon-id", syntheticDaemon, "--stack", "protocol"}
+	args := []string{"coordination", "inspect", "--state-dir", fixture.stateDir, "--target-id", "sha256:" + target.Identity(), "--stack", "protocol"}
 	if isProtocolInvocation(args) {
 		t.Fatal("offline namespace misrouted to metadata protocol")
 	}

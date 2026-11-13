@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"reflect"
 	"regexp"
 	"strings"
 	"sync"
@@ -17,6 +18,7 @@ import (
 
 	"github.com/umayr/dill/internal/config"
 	"github.com/umayr/dill/internal/coordination"
+	"github.com/umayr/dill/internal/operation"
 	"github.com/umayr/dill/internal/orchestrator"
 )
 
@@ -28,6 +30,7 @@ type coordinatedDockerFixture struct {
 	socket, stateDir                                     string
 	exists, running, orphan, implicitVolumes, dropWrites bool
 	labels                                               map[string]string
+	image                                                string
 	writes, connections                                  int
 	uncoordinatedWrite, failTerminal                     bool
 	redirectList, blockReads                             bool
@@ -44,7 +47,7 @@ func newCoordinatedDocker(t *testing.T, exists bool) *coordinatedDockerFixture {
 	if err = os.Mkdir(state, 0700); err != nil {
 		t.Fatal(err)
 	}
-	f := &coordinatedDockerFixture{socket: filepath.Join(dir, "docker.sock"), stateDir: state, exists: exists, labels: map[string]string{"dill.managed": "true", "dill.stack": "app", "dill.service": "web"}}
+	f := &coordinatedDockerFixture{socket: filepath.Join(dir, "docker.sock"), stateDir: state, exists: exists, image: "synthetic:v1", labels: map[string]string{"dill.managed": "true", "dill.stack": "app", "dill.service": "web"}}
 	listener, err := net.Listen("unix", f.socket)
 	if err != nil {
 		t.Fatal(err)
@@ -134,16 +137,20 @@ func (f *coordinatedDockerFixture) serve(w http.ResponseWriter, r *http.Request)
 			io.WriteString(w, `{"message":"not found"}`)
 			return
 		}
-		json.NewEncoder(w).Encode(map[string]any{"Id": strings.Repeat("a", 64), "Image": "sha256:" + strings.Repeat("c", 64), "Config": map[string]any{"Image": "synthetic:v1", "Labels": f.labels}, "HostConfig": map[string]any{"NetworkMode": "app"}, "NetworkSettings": map[string]any{}, "State": map[string]any{"Running": f.running}, "Mounts": []any{}})
+		json.NewEncoder(w).Encode(map[string]any{"Id": strings.Repeat("a", 64), "Image": "sha256:" + strings.Repeat("c", 64), "Config": map[string]any{"Image": f.image, "Labels": f.labels}, "HostConfig": map[string]any{"NetworkMode": "app"}, "NetworkSettings": map[string]any{}, "State": map[string]any{"Running": f.running}, "Mounts": []any{}})
 	case path == "/networks":
 		json.NewEncoder(w).Encode([]map[string]string{{"Name": "app", "Id": strings.Repeat("e", 64)}})
 	case path == "/networks/app":
 		w.WriteHeader(404)
 		io.WriteString(w, `{"message":"not found"}`)
 	case path == "/containers/create":
-		var request struct{ Labels map[string]string }
+		var request struct {
+			Labels map[string]string
+			Image  string
+		}
 		json.NewDecoder(r.Body).Decode(&request)
 		f.labels = request.Labels
+		f.image = request.Image
 		f.exists = true
 		f.running = false
 		w.WriteHeader(201)
@@ -189,6 +196,10 @@ func TestQualifiedOperationAllSupportedHandlersUseDockerSDK(t *testing.T) {
 			if code != 0 || result.Outcome != "succeeded" || stderr != "" {
 				t.Fatalf("operation: %+v code=%d stderr=%s", result, code, stderr)
 			}
+			identity, _ := coordination.DockerIdentity(syntheticDaemon)
+			if result.Target == nil || result.Target.QualifiedIdentityDigest != "sha256:"+identity {
+				t.Fatalf("missing qualified identity: %+v", result.Target)
+			}
 			fixture.mu.Lock()
 			connections, writes, uncoordinated := fixture.connections, fixture.writes, fixture.uncoordinatedWrite
 			fixture.mu.Unlock()
@@ -210,6 +221,54 @@ func TestQualifiedOperationAllSupportedHandlersUseDockerSDK(t *testing.T) {
 		})
 	}
 }
+func TestRepeatedQualifiedUpDoesNotRecreatePinnedImage(t *testing.T) {
+	fixture := newCoordinatedDocker(t, false)
+	useSyntheticConfig(t, syntheticConfig())
+	for attempt := 0; attempt < 2; attempt++ {
+		result, code, _ := captureOperation(t, "", fixture.args("up"))
+		if code != 0 || result.Outcome != "succeeded" {
+			t.Fatalf("qualified up %d failed: %+v code=%d", attempt, result, code)
+		}
+		if attempt == 1 {
+			for _, resource := range result.Resources {
+				if resource.Action == "remove" || resource.Action == "create" || resource.Action == "recreate" || resource.Action == "stop" {
+					t.Fatalf("unchanged pinned image forced recreation: %+v", result)
+				}
+			}
+		}
+	}
+	fixture.mu.Lock()
+	image := fixture.image
+	fixture.mu.Unlock()
+	if image != "sha256:"+strings.Repeat("c", 64) {
+		t.Fatalf("creation did not use immutable prepared image: %s", image)
+	}
+}
+
+func TestQualifiedSharedResultFixture(t *testing.T) {
+	fixture := newCoordinatedDocker(t, true)
+	useSyntheticConfig(t, syntheticConfig())
+	data, err := os.ReadFile("../../internal/operation/testdata/qualified-success.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var expected struct {
+		ExpectedExit int              `json:"expectedExit"`
+		Expected     operation.Result `json:"expected"`
+	}
+	if err = json.Unmarshal(data, &expected); err != nil {
+		t.Fatal(err)
+	}
+	result, code, _ := captureOperation(t, "", fixture.args("stop"))
+	result.OperationID = "op_" + strings.Repeat("0", 32)
+	// Real temporary endpoint spelling is intentionally unrelated to attested
+	// identity; only selector spelling is normalized for shared fixture compare.
+	result.Target.EndpointDigest = operation.Digest("unix:///synthetic/qualified.sock")
+	if code != expected.ExpectedExit || !reflect.DeepEqual(result, expected.Expected) {
+		t.Fatalf("qualified shared fixture mismatch: got=%+v expected=%+v", result, expected.Expected)
+	}
+}
+
 func TestQualifiedUnsupportedInvocationsHaveNoEngineAccess(t *testing.T) {
 	old := configLoader
 	defer func() { configLoader = old }()
@@ -251,7 +310,7 @@ func TestQualifiedInvalidConfigNoSocketOrStateAccess(t *testing.T) {
 			fixture.mu.Lock()
 			connections, writes := fixture.connections, fixture.writes
 			fixture.mu.Unlock()
-			if code != 2 || result.Effects != "none" || connections != 0 || writes != 0 {
+			if code != 2 || result.Effects != "none" || connections != 0 || writes != 0 || (result.Target != nil && result.Target.QualifiedIdentityDigest != "") {
 				t.Fatalf("unsupported config accessed engine: %+v code=%d connections=%d writes=%d", result, code, connections, writes)
 			}
 		})

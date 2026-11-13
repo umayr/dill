@@ -17,6 +17,8 @@ import (
 )
 
 var qualifiedOperations = []string{"up", "down", "stop", "start", "restart", "rm"}
+var qualifiedEngines = []string{"docker"}
+var qualifiedLayouts = []string{coordination.NativeDockerLayout}
 
 func coordinationInspection(err error) bool {
 	var unresolved *coordination.InspectionRequired
@@ -189,6 +191,9 @@ var beginCoordinatedOperation = func(ctx context.Context, state *coordination.St
 }
 
 func (c *operationCoordination) finish(result *operation.Result) error {
+	if c.target != nil && result.Target != nil {
+		result.Target.QualifiedIdentityDigest = "sha256:" + c.target.Identity()
+	}
 	if c.operationID != "" {
 		result.OperationID = c.operationID
 	}
@@ -328,15 +333,13 @@ func (e *coordinatedEngine) RemoveVolume(context.Context, string, string, bool) 
 func (e *coordinatedEngine) CLIEndpoint() string { return "" } // no subprocess escape into an unqualified transport
 func (e *coordinatedEngine) EngineName() string  { return "docker" }
 func (e *coordinatedEngine) DisposableImage(ctx context.Context, image string) (string, []string, error) {
-	if inspector, ok := e.Engine.(interface {
-		DisposableImage(context.Context, string) (string, []string, error)
-	}); ok {
+	if inspector, ok := e.Engine.(orchestrator.DisposableImageInspector); ok {
 		return inspector.DisposableImage(ctx, image)
 	}
 	return "", nil, errors.New("prepared image qualification unavailable")
 }
 func (e *coordinatedEngine) EnforceDisposableVolumes() error {
-	if v, ok := e.Engine.(interface{ EnforceDisposableVolumes() error }); ok {
+	if v, ok := e.Engine.(orchestrator.DisposableVolumeEnforcer); ok {
 		return v.EnforceDisposableVolumes()
 	}
 	return errors.New("disposable volume enforcement unavailable")

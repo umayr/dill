@@ -1,0 +1,36 @@
+{
+  "runtime": "qualified-synthetic-docker-sdk",
+  "args": [
+    "stop", "--contract", "dill.operation/1",
+    "--engine", "docker", "--engine-socket", "/synthetic/qualified.sock", "-p", "app",
+    "--coordination-state-dir", "/synthetic/private/state",
+    "--coordination-layout", "native-local-docker-v1",
+    "--coordination-daemon-id", "synthetic-docker-host-1234",
+    "--coordination-source", "cli"
+  ],
+  "expectedExit": 0,
+  "expected": {
+    "version": "dill.operation/1",
+    "operationId": "op_00000000000000000000000000000000",
+    "operation": "stop",
+    "target": {
+      "engine": "docker",
+      "endpointDigest": "sha256:e6c7829e0beca8e4fa5e558bf275790ebc95594cf77282348b19af6f09d76e4a",
+      "qualifiedIdentityDigest": "sha256:e8602058ec84f05ce8c9db6c09ab4163243537579c950a40d0e82d724d784a80"
+    },
+    "stack": "app",
+    "outcome": "succeeded",
+    "effects": "complete",
+    "changesDetected": false,
+    "resources": [
+      {
+        "kind": "container",
+        "identityDigest": "sha256:a9f7b7384d171400d7ba41259eb439c07559fa1cd8b9e5363e9ff2542869ab6c",
+        "action": "stop",
+        "effect": "complete"
+      }
+    ],
+    "resourcesTruncated": false,
+    "errors": []
+  }
+}

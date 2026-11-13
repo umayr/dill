@@ -1,10 +1,25 @@
 package operation
 
 import (
+	"encoding/json"
 	"errors"
+	"strings"
 	"sync"
 	"testing"
 )
+
+func TestQualifiedTargetIdentityIsOptionalAndDistinct(t *testing.T) {
+	selector := Target{Engine: "docker", EndpointDigest: Digest("unix:///synthetic/socket")}
+	plain, err := json.Marshal(selector)
+	if err != nil || strings.Contains(string(plain), "qualifiedIdentityDigest") {
+		t.Fatal("unqualified selector advertised canonical identity", string(plain), err)
+	}
+	selector.QualifiedIdentityDigest = "sha256:" + strings.Repeat("a", 64)
+	qualified, err := json.Marshal(selector)
+	if err != nil || !strings.Contains(string(qualified), `"qualifiedIdentityDigest":"sha256:`) || selector.EndpointDigest != Digest("unix:///synthetic/socket") {
+		t.Fatal("qualified field changed selector semantics", string(qualified), err)
+	}
+}
 
 func TestRecorderEffectsAreConservative(t *testing.T) {
 	for _, tc := range []struct {

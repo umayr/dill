@@ -6,6 +6,7 @@ import (
 	"flag"
 	"io"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/umayr/dill/internal/coordination"
@@ -53,6 +54,7 @@ func runCoordination(ctx context.Context, args []string) error {
 		}
 		*target = fingerprint
 	}
+	*target = strings.TrimPrefix(*target, "sha256:")
 	ctx, cancel := context.WithTimeout(ctx, *timeout)
 	defer cancel()
 	state, err := coordination.Open(ctx, *dir)

@@ -72,7 +72,9 @@ func runOperationCapabilities(args []string) error {
 		Engines                         []string `json:"engines"`
 		Features                        []string `json:"features"`
 		QualifiedCoordinationOperations []string `json:"qualifiedCoordinationOperations"`
-	}{operation.Version, operation.Operations, []string{"docker", "podman"}, []string{"explicitLocalSelector", "attended", "redactedSummary", "conservativeEffects", "optInQualifiedLocalCoordination"}, qualifiedOperations})
+		QualifiedCoordinationEngines    []string `json:"qualifiedCoordinationEngines"`
+		QualifiedCoordinationLayouts    []string `json:"qualifiedCoordinationLayouts"`
+	}{operation.Version, operation.Operations, []string{"docker", "podman"}, []string{"explicitLocalSelector", "attended", "redactedSummary", "conservativeEffects", "optInQualifiedLocalCoordination"}, qualifiedOperations, qualifiedEngines, qualifiedLayouts})
 	if err != nil {
 		return protocolExit{1}
 	}
