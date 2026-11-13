@@ -1,0 +1,71 @@
+{
+  "exitCode": 0,
+  "stdout": {
+    "version": "dill.preflight/1",
+    "operationId": "op_00000000000000000000000000000005",
+    "operation": "down",
+    "target": {
+      "engine": "docker",
+      "endpointDigest": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+      "qualifiedIdentityDigest": "sha256:2222222222222222222222222222222222222222222222222222222222222222"
+    },
+    "stack": "synthetic",
+    "outcome": "succeeded",
+    "engineEffects": "none",
+    "coordinationEffects": "written",
+    "inputDigest": "sha256:6666666666666666666666666666666666666666666666666666666666666666",
+    "selectionDigest": "sha256:7777777777777777777777777777777777777777777777777777777777777777",
+    "coverage": {
+      "containers": {
+        "scope": "declared-stack",
+        "count": 1,
+        "presentCount": 0,
+        "complete": true
+      },
+      "network": {
+        "scope": "stack-network",
+        "count": 1,
+        "presentCount": 0,
+        "complete": true
+      },
+      "volumes": {
+        "scope": "declared-attached-named",
+        "count": 1,
+        "presentCount": 0,
+        "complete": true
+      }
+    },
+    "resources": [
+      {
+        "kind": "container",
+        "name": "synthetic_web",
+        "identity": "synthetic_web",
+        "identityKind": "planned-name",
+        "presence": "absent",
+        "action": "none",
+        "retention": "not-applicable"
+      },
+      {
+        "kind": "network",
+        "name": "synthetic",
+        "identity": "synthetic",
+        "identityKind": "planned-name",
+        "presence": "absent",
+        "action": "retain",
+        "retention": "preserve"
+      },
+      {
+        "kind": "volume",
+        "name": "synthetic_data",
+        "identity": "synthetic_data",
+        "identityKind": "planned-name",
+        "presence": "absent",
+        "action": "retain",
+        "retention": "preserve"
+      }
+    ],
+    "resourcesTruncated": false,
+    "errors": []
+  },
+  "runtime": "synthetic-design-not-executed"
+}

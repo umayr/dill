@@ -1,0 +1,48 @@
+{
+  "exitCode": 1,
+  "stdout": {
+    "version": "dill.preflight/1",
+    "operationId": "op_00000000000000000000000000000006",
+    "operation": "up",
+    "target": {
+      "engine": "docker",
+      "endpointDigest": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+      "qualifiedIdentityDigest": "sha256:2222222222222222222222222222222222222222222222222222222222222222"
+    },
+    "stack": "synthetic",
+    "outcome": "failed",
+    "engineEffects": "none",
+    "coordinationEffects": "written",
+    "inputDigest": null,
+    "selectionDigest": null,
+    "coverage": {
+      "containers": {
+        "scope": "declared-stack",
+        "count": 0,
+        "presentCount": 0,
+        "complete": false
+      },
+      "network": {
+        "scope": "stack-network",
+        "count": 0,
+        "presentCount": 0,
+        "complete": false
+      },
+      "volumes": {
+        "scope": "declared-attached-named",
+        "count": 0,
+        "presentCount": 0,
+        "complete": false
+      }
+    },
+    "resources": [],
+    "resourcesTruncated": true,
+    "errors": [
+      {
+        "code": "PREFLIGHT_LIMIT_EXCEEDED",
+        "message": "Preflight response exceeds supported limits."
+      }
+    ]
+  },
+  "runtime": "synthetic-design-not-executed"
+}

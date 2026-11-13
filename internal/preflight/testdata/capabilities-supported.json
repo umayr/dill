@@ -1,0 +1,28 @@
+{
+  "exitCode": 0,
+  "stdout": {
+    "version": "dill.preflight-capabilities/1",
+    "supported": true,
+    "contract": "dill.preflight/1",
+    "applyContract": "dill.operation/1",
+    "operations": [
+      "up",
+      "start",
+      "restart",
+      "stop",
+      "down"
+    ],
+    "engines": [
+      "docker"
+    ],
+    "layouts": [
+      "native-local-docker-v1"
+    ],
+    "limits": {
+      "maxResources": 256,
+      "maxNameBytes": 255,
+      "maxOutputBytes": 262144
+    }
+  },
+  "runtime": "synthetic-design-not-executed"
+}

@@ -691,6 +691,7 @@ func (p *PodmanEngine) InspectConfig(ctx context.Context, name string) (*LiveCon
 		UserNSMode: userNS, UIDMap: uidMap, GIDMap: gidMap,
 		MountsKnown:   data.Config != nil && data.HostConfig != nil,
 		ID:            data.ID,
+		InspectedName: strings.TrimPrefix(data.Name, "/"),
 		Image:         data.ImageName,
 		ImageID:       data.Image,
 		Env:           env,
@@ -890,6 +891,7 @@ func (p *PodmanEngine) PreviewResources(ctx context.Context, stack string, names
 	fact := PreviewResource{Kind: "network", Name: stack, Exists: err == nil}
 	if err == nil {
 		fact.ID = n.ID
+		fact.ActualName = n.Name
 		// The inspect report also contains runtime container/IP/MAC attachments.
 		// Bind the complete network configuration, not that endpoint census.
 		settings := n.Network
@@ -907,6 +909,7 @@ func (p *PodmanEngine) PreviewResources(ctx context.Context, stack string, names
 		}
 		f := PreviewResource{Kind: "volume", Name: name, Exists: err == nil}
 		if err == nil {
+			f.ActualName = v.Name
 			f.Settings, err = json.Marshal(struct {
 				Name, Driver, CreatedAt, Mountpoint string
 				Options, Labels                     map[string]string

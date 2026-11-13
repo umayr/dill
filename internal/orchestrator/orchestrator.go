@@ -54,6 +54,10 @@ type LiveConfig struct {
 	Init           bool
 	Cpuset         string
 	Resources      config.ResourceLimits
+
+	// InspectedName is authoritative SDK evidence, never the requested lookup.
+	// Keep legacy serialized preview/hash representations unchanged.
+	InspectedName string `json:"-"`
 }
 
 // ContainerStatus holds runtime information about a running or stopped container.

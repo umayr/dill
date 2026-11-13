@@ -586,6 +586,7 @@ func (d *DockerEngine) InspectConfig(ctx context.Context, name string) (*LiveCon
 		MountsKnown:   true,
 		UserNSMode:    string(info.HostConfig.UsernsMode),
 		ID:            info.ID,
+		InspectedName: strings.TrimPrefix(info.Name, "/"),
 		Image:         info.Config.Image,
 		ImageID:       info.Image,
 		Env:           env,
@@ -869,6 +870,7 @@ func (d *DockerEngine) PreviewResources(ctx context.Context, stack string, names
 	}
 	fact := PreviewResource{Kind: "network", Name: stack, Exists: err == nil, ID: n.ID}
 	if err == nil {
+		fact.ActualName = n.Name
 		fact.Settings, err = json.Marshal(struct {
 			Driver, Scope                       string
 			Internal, IPv6, Attachable, Ingress bool
@@ -887,6 +889,7 @@ func (d *DockerEngine) PreviewResources(ctx context.Context, stack string, names
 		}
 		f := PreviewResource{Kind: "volume", Name: name, Exists: err == nil}
 		if err == nil {
+			f.ActualName = v.Name
 			f.Settings, err = json.Marshal(struct {
 				Name, Driver, Scope, CreatedAt, Mountpoint string
 				Options, Labels                            map[string]string

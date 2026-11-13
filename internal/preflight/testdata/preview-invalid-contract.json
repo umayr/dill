@@ -1,0 +1,44 @@
+{
+  "exitCode": 2,
+  "stdout": {
+    "version": "dill.preflight/1",
+    "operationId": "op_00000000000000000000000000000008",
+    "operation": "",
+    "target": null,
+    "stack": "",
+    "outcome": "invalid_input",
+    "engineEffects": "none",
+    "coordinationEffects": "none",
+    "inputDigest": null,
+    "selectionDigest": null,
+    "coverage": {
+      "containers": {
+        "scope": "declared-stack",
+        "count": 0,
+        "presentCount": 0,
+        "complete": false
+      },
+      "network": {
+        "scope": "stack-network",
+        "count": 0,
+        "presentCount": 0,
+        "complete": false
+      },
+      "volumes": {
+        "scope": "declared-attached-named",
+        "count": 0,
+        "presentCount": 0,
+        "complete": false
+      }
+    },
+    "resources": [],
+    "resourcesTruncated": false,
+    "errors": [
+      {
+        "code": "UNSUPPORTED_CONTRACT",
+        "message": "Unsupported preflight contract."
+      }
+    ]
+  },
+  "runtime": "synthetic-design-not-executed"
+}

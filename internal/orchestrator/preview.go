@@ -12,6 +12,10 @@ type PreviewResource struct {
 	Kind, Name, ID string
 	Exists         bool
 	Settings       json.RawMessage
+
+	// ActualName comes from inspected metadata, not the lookup selector. It is
+	// deliberately absent from legacy serialized private-preview fingerprints.
+	ActualName string `json:"-"`
 }
 
 type PreviewResourceInspector interface {

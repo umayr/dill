@@ -1,0 +1,26 @@
+{
+  "exitCode": 1,
+  "stdout": {
+    "version": "dill.operation/1",
+    "operationId": "op_00000000000000000000000000000009",
+    "operation": "up",
+    "target": {
+      "engine": "docker",
+      "endpointDigest": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+      "qualifiedIdentityDigest": "sha256:2222222222222222222222222222222222222222222222222222222222222222"
+    },
+    "stack": "synthetic",
+    "outcome": "failed",
+    "effects": "none",
+    "changesDetected": false,
+    "resources": [],
+    "resourcesTruncated": false,
+    "errors": [
+      {
+        "code": "PREFLIGHT_MISMATCH",
+        "message": "Reviewed resource selection changed. Review again before retrying."
+      }
+    ]
+  },
+  "runtime": "synthetic-design-not-executed"
+}
