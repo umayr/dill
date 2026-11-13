@@ -298,26 +298,35 @@ func TestRepeatedQualifiedUpDoesNotRecreatePinnedImage(t *testing.T) {
 }
 
 func TestQualifiedSharedResultFixture(t *testing.T) {
-	fixture := newCoordinatedDocker(t, true)
-	useSyntheticConfig(t, syntheticConfig())
-	data, err := os.ReadFile("../../internal/operation/testdata/qualified-success.json")
-	if err != nil {
-		t.Fatal(err)
-	}
-	var expected struct {
-		ExpectedExit int              `json:"expectedExit"`
-		Expected     operation.Result `json:"expected"`
-	}
-	if err = json.Unmarshal(data, &expected); err != nil {
-		t.Fatal(err)
-	}
-	result, code, _ := captureOperation(t, "", fixture.args("stop"))
-	result.OperationID = "op_" + strings.Repeat("0", 32)
-	// Real temporary endpoint spelling is intentionally unrelated to attested
-	// identity; only selector spelling is normalized for shared fixture compare.
-	result.Target.EndpointDigest = operation.Digest("unix:///synthetic/qualified.sock")
-	if code != expected.ExpectedExit || !reflect.DeepEqual(result, expected.Expected) {
-		t.Fatalf("qualified shared fixture mismatch: got=%+v expected=%+v", result, expected.Expected)
+	for _, file := range []string{"qualified-success.json", "qualified-cleanup-failure.json"} {
+		t.Run(file, func(t *testing.T) {
+			fixture := newCoordinatedDocker(t, true)
+			if file == "qualified-cleanup-failure.json" {
+				old := closeCoordinatedSession
+				closeCoordinatedSession = func(session *coordination.Session) error { _ = session.Close(); return errors.New("PRIVATE_CLEANUP") }
+				defer func() { closeCoordinatedSession = old }()
+			}
+			useSyntheticConfig(t, syntheticConfig())
+			data, err := os.ReadFile("../../internal/operation/testdata/" + file)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var expected struct {
+				ExpectedExit int              `json:"expectedExit"`
+				Expected     operation.Result `json:"expected"`
+			}
+			if err = json.Unmarshal(data, &expected); err != nil {
+				t.Fatal(err)
+			}
+			result, code, _ := captureOperation(t, "", fixture.args("stop"))
+			result.OperationID = "op_" + strings.Repeat("0", 32)
+			// Real temporary endpoint spelling is intentionally unrelated to attested
+			// identity; only selector spelling is normalized for shared fixture compare.
+			result.Target.EndpointDigest = operation.Digest("unix:///synthetic/qualified.sock")
+			if code != expected.ExpectedExit || !reflect.DeepEqual(result, expected.Expected) {
+				t.Fatalf("qualified shared fixture mismatch: got=%+v expected=%+v", result, expected.Expected)
+			}
+		})
 	}
 }
 
@@ -518,8 +527,16 @@ func TestQualifiedCloseFailuresKeepReceiptAndJournalCoherent(t *testing.T) {
 				if code != 1 || retry.Effects != "none" || later != writes {
 					t.Fatal("unknown close outcome was replayed", retry)
 				}
-			} else if result.Outcome != "succeeded" || result.Effects != "complete" {
-				t.Fatal("post-commit cleanup erased known effects", result)
+			} else {
+				if result.Outcome != "succeeded" || result.Effects != "complete" || len(result.Errors) != 1 || result.Errors[0].Code != "COORDINATION_RELEASE_FAILED" {
+					t.Fatal("post-commit cleanup erased known effects or diagnostic", result)
+				}
+				// Known completed engine effects do not require acknowledgement;
+				// cleanup failure must not manufacture a stale unknown blocker.
+				next, code, _ := captureOperation(t, "", fixture.args("stop"))
+				if code != 0 || next.Outcome != "succeeded" || next.OperationID == result.OperationID {
+					t.Fatalf("known committed outcome blocked or reused on next operation: %+v code=%d", next, code)
+				}
 			}
 		})
 	}

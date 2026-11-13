@@ -223,7 +223,11 @@ finishes durably **before** emitting the final result. A durable finish failure 
 close is classified while locks remain held BEFORE durable finish. Post-commit
 local lock/directory cleanup failure preserves the recorded engine outcome and
 effects, emits fixed `COORDINATION_RELEASE_FAILED`, and returns exit 1; it does
-not rewrite stdout-only unknown axes after recording success. The selector
+not rewrite stdout-only unknown axes after recording success. Consumers MUST
+honor process exit status and fixed errors, not treat `outcome = "succeeded"`
+alone as overall invocation success. The shared
+`qualified-cleanup-failure.json` fixture captures exit 1 with known
+`succeeded/complete` engine axes and `COORDINATION_RELEASE_FAILED`. The selector
 digest cannot stand in for daemon attestation. Guardrails should forward explicit
 supported flags to existing handlers rather than introduce a second lifecycle
 implementation.

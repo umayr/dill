@@ -148,6 +148,8 @@ therefore becomes the SAME durable unknown outcome shown in the receipt and
 blocks subsequent mutation. A later lock/directory cleanup error cannot invent
 stdout-only unknown effects after a known commit: it preserves recorded axes,
 adds fixed `COORDINATION_RELEASE_FAILED`, and exits 1 for local cleanup failure.
+Consumers must honor process exit/errors, not interpret a succeeded engine axis
+alone as overall invocation success.
 
 The publication link itself is intentionally not separately dir-synced. If lost
 after crash, independently durable result bytes remain but recovery treats the
