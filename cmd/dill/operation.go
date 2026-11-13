@@ -66,6 +66,12 @@ func runOperationCapabilities(args []string) error {
 	if fs.Parse(args) != nil || *format != "json" || fs.NArg() != 0 {
 		return protocolExit{2}
 	}
+	features := []string{"explicitLocalSelector", "attended", "redactedSummary", "conservativeEffects"}
+	qOperations, qEngines, qLayouts := []string{}, []string{}, []string{}
+	if qualifiedNativeHost() {
+		features = append(features, "optInQualifiedLocalCoordination")
+		qOperations, qEngines, qLayouts = qualifiedOperations, qualifiedEngines, qualifiedLayouts
+	}
 	err := json.NewEncoder(os.Stdout).Encode(struct {
 		Version                         string   `json:"version"`
 		Operations                      []string `json:"operations"`
@@ -74,7 +80,7 @@ func runOperationCapabilities(args []string) error {
 		QualifiedCoordinationOperations []string `json:"qualifiedCoordinationOperations"`
 		QualifiedCoordinationEngines    []string `json:"qualifiedCoordinationEngines"`
 		QualifiedCoordinationLayouts    []string `json:"qualifiedCoordinationLayouts"`
-	}{operation.Version, operation.Operations, []string{"docker", "podman"}, []string{"explicitLocalSelector", "attended", "redactedSummary", "conservativeEffects", "optInQualifiedLocalCoordination"}, qualifiedOperations, qualifiedEngines, qualifiedLayouts})
+	}{operation.Version, operation.Operations, []string{"docker", "podman"}, features, qOperations, qEngines, qLayouts})
 	if err != nil {
 		return protocolExit{1}
 	}

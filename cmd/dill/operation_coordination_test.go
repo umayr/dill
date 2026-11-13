@@ -226,6 +226,9 @@ func syntheticConfig() *config.DillConfig {
 }
 func useSyntheticConfig(t *testing.T, cfg *config.DillConfig) {
 	t.Helper()
+	oldHost := qualifiedNativeHost
+	qualifiedNativeHost = func() bool { return true }
+	t.Cleanup(func() { qualifiedNativeHost = oldHost })
 	oldLoader, oldFactory := configLoader, engineFactory
 	configLoader = func(context.Context, string) (*config.DillConfig, error) { return cfg, nil }
 	// Qualified mode MUST NOT create a separately connected ambient factory engine.

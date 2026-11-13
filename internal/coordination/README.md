@@ -8,13 +8,20 @@ review, disposable engine/Brine qualification and bypass-path workflow gates.
 
 ## Qualified boundary
 
-- Native CLI and Brine on one disposable Docker host, one dedicated operator
+- Native CLI and Brine on one disposable **Linux Docker host**, one dedicated operator
   account, one shared pre-existing absolute operator-owned mode-0700 directory.
 - The operator must independently qualify this layout, filesystem flock/fsync/
   atomic local link semantics, account isolation, daemon identity uniqueness,
   and endpoint access. `native-local-docker-v1` is an explicit attestation, not
   automatic detection or authorization. Container/namespace/distributed/NFS
   layouts are unsupported; passing a false native attestation is not supported.
+  The production CLI rejects non-Linux qualified requests before config/socket/
+  state access and omits qualification from discovery there. macOS Desktop,
+  Colima and VM/proxy layouts are excluded. Linux is necessary, NOT automatic
+  host/namespace evidence; provisioning trust remains. Library/fake-SDK tests on
+  Darwin simulate a supported host using test-only injection, not a production
+  environment/flag bypass. The primitive library alone does not establish host
+  placement; its caller must enforce the qualified boundary before any effects.
 - Explicit existing local Unix socket and independently provisioned expected
   Docker `/info` ID. Remote targets, other engines and guessed identities fail.
 - Trusted state must not be deleted, substituted, copied or independently

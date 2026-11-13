@@ -10,13 +10,21 @@ or claim global serialization. There is no distributed locking guarantee.
 ## Supported invocation and trust boundary
 
 The initial layout is native CLI and native Brine co-located on one disposable
-Docker host, under one dedicated operator account, sharing one pre-existing
+**Linux Docker host**, under one dedicated operator account, sharing one pre-existing
 absolute mode-0700 operator-owned state directory. The filesystem's cross-process
 flock, file/directory sync and atomic local link behavior must be independently
 qualified. `--coordination-layout native-local-docker-v1` explicitly attests those
 facts; a pathname, owner/mode check or layout string alone does not prove them.
 Unqualified namespaces, containers, separate state mounts, remote transports,
-Podman and ambiguous filesystem semantics are unsupported. No production use.
+Podman and ambiguous filesystem semantics are unsupported. macOS Docker Desktop,
+Colima, VM/proxy sockets and containerized Brine are not native Docker-host
+layouts. Production qualified requests on non-Linux OS reject BEFORE config,
+socket or state access; qualification is not advertised there. Legacy operations
+and metadata discovery remain available. There is NO production environment or
+flag bypass. Linux is necessary, NOT proof of co-location or a shared namespace:
+trusted explicit operator provisioning is still required. Darwin library and
+fake-SDK tests explicitly simulate a supported host; they are not deployment
+qualification. No production use.
 
 Use only prepared local images and disposable/synthetic data. An operator must
 independently establish the expected Docker daemon ID during provisioning; this

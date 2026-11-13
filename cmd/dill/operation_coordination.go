@@ -6,6 +6,7 @@ import (
 	"flag"
 	"io"
 	"path/filepath"
+	"runtime"
 	"sort"
 	"strings"
 	"sync"
@@ -15,6 +16,11 @@ import (
 	"github.com/umayr/dill/internal/operation"
 	"github.com/umayr/dill/internal/orchestrator"
 )
+
+// No production environment/flag override: native Docker HOST qualification
+// is Linux-only. Package tests may replace this predicate to simulate the
+// qualified host while exercising SDK transport on Darwin.
+var qualifiedNativeHost = func() bool { return runtime.GOOS == "linux" }
 
 var qualifiedOperations = []string{"up", "down", "stop", "start", "restart", "rm"}
 var qualifiedEngines = []string{"docker"}
@@ -47,7 +53,7 @@ func (c coordinationOptions) validate(name string, opts commandOptions) error {
 			supported = true
 		}
 	}
-	if !supported || opts.Engine != "docker" || !filepath.IsAbs(c.directory) || c.layout != coordination.NativeDockerLayout || c.daemonID == "" || (c.source != "cli" && c.source != "brine") {
+	if !qualifiedNativeHost() || !supported || opts.Engine != "docker" || !filepath.IsAbs(c.directory) || c.layout != coordination.NativeDockerLayout || c.daemonID == "" || (c.source != "cli" && c.source != "brine") {
 		return usageError{"unsupported qualified coordination invocation"}
 	}
 	return nil

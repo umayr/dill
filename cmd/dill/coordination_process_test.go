@@ -31,6 +31,12 @@ func TestCoordinationMainHelper(t *testing.T) {
 			break
 		}
 	}
+	if mode == "operation" {
+		qualifiedNativeHost = func() bool { return true }
+	}
+	if mode == "unsupported-host" {
+		qualifiedNativeHost = func() bool { return false }
+	}
 	configLoader = func(context.Context, string) (*config.DillConfig, error) {
 		if mode != "operation" {
 			panic("offline coordination evaluated configuration")
@@ -64,6 +70,47 @@ func runCoordinationProcess(t *testing.T, mode string, args ...string) (string, 
 	}
 	return out.String(), stderr.String(), code
 }
+func TestQualifiedLinuxHostDiscovery(t *testing.T) {
+	out, stderr, code := runCoordinationProcess(t, "operation", "operation-capabilities")
+	var discovery struct{ Features, QualifiedCoordinationOperations, QualifiedCoordinationEngines, QualifiedCoordinationLayouts []string }
+	if json.Unmarshal([]byte(out), &discovery) != nil || code != 0 || stderr != "" || strings.Join(discovery.QualifiedCoordinationOperations, ",") != strings.Join(qualifiedOperations, ",") || strings.Join(discovery.QualifiedCoordinationEngines, ",") != "docker" || strings.Join(discovery.QualifiedCoordinationLayouts, ",") != coordination.NativeDockerLayout {
+		t.Fatalf("supported Linux host qualification not advertised truthfully: %s %s %d", out, stderr, code)
+	}
+	found := false
+	for _, feature := range discovery.Features {
+		found = found || feature == "optInQualifiedLocalCoordination"
+	}
+	if !found {
+		t.Fatal("supported Linux host qualification feature missing")
+	}
+}
+
+func TestQualifiedUnsupportedHostRejectsBeforeSocketStateAndDiscovery(t *testing.T) {
+	fixture := newCoordinatedDocker(t, false)
+	out, stderr, code := runCoordinationProcess(t, "unsupported-host", append([]string{"operation"}, fixture.args("up")...)...)
+	var result operation.Result
+	if json.Unmarshal([]byte(out), &result) != nil || code != 2 || stderr != "" || result.Outcome != "invalid_input" || result.Effects != "none" || result.Target != nil {
+		t.Fatalf("unsupported host was not rejected before access: %s %s %d", out, stderr, code)
+	}
+	out, stderr, code = runCoordinationProcess(t, "unsupported-host", "operation-capabilities")
+	var discovery struct{ Operations, Features, QualifiedCoordinationOperations, QualifiedCoordinationEngines, QualifiedCoordinationLayouts []string }
+	if json.Unmarshal([]byte(out), &discovery) != nil || code != 0 || stderr != "" || len(discovery.Operations) == 0 || len(discovery.QualifiedCoordinationOperations) != 0 || len(discovery.QualifiedCoordinationEngines) != 0 || len(discovery.QualifiedCoordinationLayouts) != 0 {
+		t.Fatalf("unsupported host advertised qualification: %s %s %d", out, stderr, code)
+	}
+	for _, feature := range discovery.Features {
+		if feature == "optInQualifiedLocalCoordination" {
+			t.Fatal("unsupported host advertised qualification feature")
+		}
+	}
+	fixture.mu.Lock()
+	connections, writes := fixture.connections, fixture.writes
+	fixture.mu.Unlock()
+	entries, err := os.ReadDir(fixture.stateDir)
+	if err != nil || connections != 0 || writes != 0 || len(entries) != 0 {
+		t.Fatalf("unsupported host accessed target/state: connections=%d writes=%d entries=%d err=%v", connections, writes, len(entries), err)
+	}
+}
+
 func TestOfflineRecoveryRootRoutingAndExactAcknowledgement(t *testing.T) {
 	fixture := newCoordinatedDocker(t, false)
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
