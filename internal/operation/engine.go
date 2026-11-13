@@ -92,6 +92,15 @@ func (e *Engine) RemoveImage(ctx context.Context, id string, force bool) error {
 	return err
 }
 
+// EnforceDisposableVolumes preserves an explicit optional capability through
+// this decorator. Lack of support is an error, never a silent opt-out.
+func (e *Engine) EnforceDisposableVolumes() error {
+	if enforcer, ok := e.Engine.(interface{ EnforceDisposableVolumes() error }); ok {
+		return enforcer.EnforceDisposableVolumes()
+	}
+	return errors.New("disposable volume enforcement unavailable")
+}
+
 func (e *Engine) PreviewResources(ctx context.Context, stack string, names []string) ([]orchestrator.PreviewResource, error) {
 	inspector, ok := e.Engine.(orchestrator.PreviewResourceInspector)
 	if !ok {

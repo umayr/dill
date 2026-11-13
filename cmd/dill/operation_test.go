@@ -131,6 +131,54 @@ func TestOperationForeignCollisionNoPullOrWrite(t *testing.T) {
 	}
 }
 
+func TestOperationStopCensusRejectsForeignLaterTarget(t *testing.T) {
+	for _, engine := range []string{"docker", "podman"} {
+		f := &ownershipEngine{fakeEngine: newFakeEngine(), live: map[string]*orchestrator.LiveConfig{
+			"app_web":   {ID: "owned-first", SystemLabels: map[string]string{"dill.managed": "true", "dill.stack": "app", "dill.service": "web"}},
+			"app_other": {ID: "FOREIGN_SENTINEL"},
+		}}
+		cfg := testConfig()
+		cfg.Services["other"] = &config.Service{Image: "busybox"}
+		withTestRuntime(t, f, cfg, func() {
+			result, code, _ := captureOperation(t, "", operationArgs("stop", engine, "web", "other"))
+			if code != 1 || result.Effects != "none" || len(f.mutations) != 0 {
+				t.Fatalf("mutated before complete census: %+v, %v", result, f.mutations)
+			}
+		})
+	}
+}
+
+type operationStopRaceEngine struct {
+	*ownershipEngine
+	inspected []string
+}
+
+func (e *operationStopRaceEngine) InspectConfig(ctx context.Context, name string) (*orchestrator.LiveConfig, error) {
+	e.inspected = append(e.inspected, name)
+	return e.ownershipEngine.InspectConfig(ctx, name)
+}
+func (e *operationStopRaceEngine) StopService(_ context.Context, id string) error {
+	e.mutations = append(e.mutations, "stop:"+id)
+	e.live["app_other"].ID = "replacement-id"
+	return nil
+}
+func TestOperationStopUsesCapturedImmutableIDs(t *testing.T) {
+	for _, engine := range []string{"docker", "podman"} {
+		f := &operationStopRaceEngine{ownershipEngine: &ownershipEngine{fakeEngine: newFakeEngine(), live: map[string]*orchestrator.LiveConfig{
+			"app_web":   {ID: "first-id", SystemLabels: map[string]string{"dill.managed": "true", "dill.stack": "app", "dill.service": "web"}},
+			"app_other": {ID: "second-id", SystemLabels: map[string]string{"dill.managed": "true", "dill.stack": "app", "dill.service": "other"}},
+		}}}
+		cfg := testConfig()
+		cfg.Services["other"] = &config.Service{Image: "busybox"}
+		withTestRuntime(t, f, cfg, func() {
+			result, code, _ := captureOperation(t, "", operationArgs("stop", engine, "web", "other"))
+			if code != 0 || result.Effects != "complete" || !reflect.DeepEqual(f.mutations, []string{"stop:first-id", "stop:second-id"}) || !reflect.DeepEqual(f.inspected, []string{"app_web", "app_other"}) {
+				t.Fatalf("census was not immutable: %+v, mutations=%v inspected=%v", result, f.mutations, f.inspected)
+			}
+		})
+	}
+}
+
 func TestOperationFailuresCancellationAndDeclinedPrompt(t *testing.T) {
 	for _, engine := range []string{"docker", "podman"} {
 		f := &failingLifecycleEngine{fakeEngine: newFakeEngine(), failure: errors.New("SDK_SENTINEL")}
@@ -241,6 +289,39 @@ func TestOperationSharedFixtures(t *testing.T) {
 }
 
 type operationPreviewEngine struct{ *endpointFake }
+
+type operationDisposableEngine struct {
+	*operationPreviewEngine
+	enforcementError error
+	enabled          bool
+}
+
+func (e *operationDisposableEngine) EnforceDisposableVolumes() error {
+	e.enabled = true
+	return e.enforcementError
+}
+
+func TestOperationDecoratorRequiresDisposableCapability(t *testing.T) {
+	plain := &operationPreviewEngine{&endpointFake{fakeEngine: newFakeEngine()}}
+	wrapped := &operation.Engine{Engine: plain, Recorder: &operation.Recorder{}, Adapter: "docker"}
+	if wrapped.EnforceDisposableVolumes() == nil {
+		t.Fatal("missing capability silently accepted")
+	}
+	failure := errors.New("synthetic enforcement failure")
+	inner := &operationDisposableEngine{operationPreviewEngine: plain, enforcementError: failure}
+	wrapped.Engine = inner
+	if wrapped.EnforceDisposableVolumes() != failure || !inner.enabled {
+		t.Fatal("enforcement error/intent not forwarded")
+	}
+	inner.enforcementError = nil
+	if wrapped.EnforceDisposableVolumes() != nil {
+		t.Fatal("supported enforcement rejected")
+	}
+	binary, _ := engineCommand(wrapped, "inspect", "id")
+	if binary != "docker" {
+		t.Fatal(binary)
+	}
+}
 
 func (e *operationPreviewEngine) PreviewResources(context.Context, string, []string) ([]orchestrator.PreviewResource, error) {
 	return []orchestrator.PreviewResource{{}}, nil
