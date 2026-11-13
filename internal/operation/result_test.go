@@ -44,6 +44,54 @@ func TestRecorderEffectsAreConservative(t *testing.T) {
 	}
 }
 
+func TestIntentSummaryDeterministicReplaceableAndBounded(t *testing.T) {
+	var a, b Recorder
+	a.Intent("container", "one", "removeStoppedCandidate")
+	a.Intent("volume", "two", "retain")
+	b.Intent("volume", "two", "retain")
+	b.Intent("container", "one", "removeStoppedCandidate")
+	count, digest, complete := a.IntentSummary()
+	otherCount, otherDigest, otherComplete := b.IntentSummary()
+	if count != 2 || !complete || count != otherCount || digest != otherDigest || complete != otherComplete {
+		t.Fatal("intent digest is not deterministic")
+	}
+	result := Result{Outcome: "cancelled"}
+	a.Finish(&result)
+	if result.Effects != "none" || result.ChangesDetected || len(result.Resources) != 2 {
+		t.Fatalf("intent was counted as performed: %+v", result)
+	}
+	if a.ReplaceIntents([]Intent{{"network", "retained", "retain"}}) != nil {
+		t.Fatal("replace failed")
+	}
+	a.Finish(&result)
+	if len(result.Resources) != 1 || result.Resources[0].Action != "intent.retain" {
+		t.Fatalf("stale provisional intent: %+v", result)
+	}
+	for i := 0; i < 4200; i++ {
+		a.Intent("container", "id", "remove")
+	}
+	count, _, complete = a.IntentSummary()
+	if count != 4201 || complete {
+		t.Fatal("truncated approval reported complete")
+	}
+	a.Finish(&result)
+	if !result.ResourcesTruncated {
+		t.Fatal("truncation missing")
+	}
+	if a.ReplaceIntents(nil) != nil {
+		t.Fatal("clear failed")
+	}
+	a.Finish(&result)
+	if result.ResourcesTruncated || len(result.Resources) != 0 {
+		t.Fatal("old intent truncation survived replacement")
+	}
+	done := a.Begin("container", "one", "stop")
+	done("", nil)
+	if a.ReplaceIntents(nil) == nil {
+		t.Fatal("intent rewritten after mutation")
+	}
+}
+
 func TestRecorderConcurrentAndBounded(t *testing.T) {
 	var r Recorder
 	var wg sync.WaitGroup

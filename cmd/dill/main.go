@@ -87,10 +87,10 @@ func exitCodeFor(err error) int {
 func run(args []string) (retErr error) {
 	// The executable operation namespace has its own fixed diagnostics and
 	// negotiation. Keep it outside legacy secret/protocol result rewriting.
-	if len(args) > 0 && args[0] == "operation" {
+	if len(args) > 0 && args[0] == cmdOperation {
 		return runOperation(context.Background(), args[1:])
 	}
-	if len(args) > 0 && args[0] == "operation-capabilities" {
+	if len(args) > 0 && args[0] == cmdOperationCapabilities {
 		return runOperationCapabilities(args[1:])
 	}
 	safe := secretInvocation(args)

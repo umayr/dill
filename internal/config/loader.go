@@ -27,7 +27,9 @@ func (e *EvaluatorError) Unwrap() error { return e.Err }
 // Load evaluates a .pkl config file and returns the parsed DillConfig.
 // The pkl binary is located automatically (see internal/pklbin).
 func Load(ctx context.Context, path string) (result *DillConfig, retErr error) {
-	private, _ := ctx.Value(privateEvaluationKey{}).(bool)
+	secretPrivate, _ := ctx.Value(privateEvaluationKey{}).(bool)
+	machine, _ := ctx.Value(machineEvaluationKey{}).(bool)
+	private := secretPrivate || machine
 	if private {
 		var cancel context.CancelFunc
 		ctx, cancel = context.WithTimeout(ctx, 10*time.Second)
@@ -35,7 +37,7 @@ func Load(ctx context.Context, path string) (result *DillConfig, retErr error) {
 	}
 	var cfg DillConfig
 	defer func() {
-		if private && retErr != nil {
+		if secretPrivate && retErr != nil {
 			retErr = ErrSecretUnavailable
 			return
 		}
@@ -43,6 +45,24 @@ func Load(ctx context.Context, path string) (result *DillConfig, retErr error) {
 			if svc != nil && len(svc.Secrets) > 0 && retErr != nil {
 				retErr = ErrSecretUnavailable
 				return
+			}
+		}
+		if machine && retErr != nil {
+			// Replace, do not wrap: no parser/evaluator/path diagnostics or raw
+			// causes remain reachable via Error, Unwrap, errors.As or logs.
+			var invalid *InvalidError
+			var evaluator *EvaluatorError
+			switch {
+			case errors.Is(retErr, context.Canceled):
+				retErr = context.Canceled
+			case errors.Is(retErr, context.DeadlineExceeded):
+				retErr = context.DeadlineExceeded
+			case errors.As(retErr, &invalid):
+				retErr = &InvalidError{Err: errors.New("Invalid configuration.")}
+			case errors.As(retErr, &evaluator):
+				retErr = &EvaluatorError{Err: errors.New("Configuration evaluator failed.")}
+			default:
+				retErr = errors.New("Configuration evaluation unavailable.")
 			}
 		}
 	}()
@@ -56,6 +76,12 @@ func Load(ctx context.Context, path string) (result *DillConfig, retErr error) {
 	if private {
 		out, err = privatePklOutput(ctx, pkl, path)
 		if err != nil {
+			if machine && !secretPrivate {
+				if ctx.Err() != nil {
+					return nil, ctx.Err()
+				}
+				return nil, &EvaluatorError{Err: errors.New("Configuration evaluator failed.")}
+			}
 			return nil, ErrSecretUnavailable
 		}
 	} else {

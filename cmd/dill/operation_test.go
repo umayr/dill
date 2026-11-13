@@ -262,6 +262,50 @@ func TestOperationFailuresCancellationAndDeclinedPrompt(t *testing.T) {
 	}
 }
 
+func TestOperationDestructiveIntentDryAndDeclined(t *testing.T) {
+	for _, adapter := range []string{"docker", "podman"} {
+		for _, name := range []string{"down", "rm", "teardown"} {
+			for _, dry := range []bool{false, true} {
+				if !dry && name == "down" {
+					continue
+				} // Legacy down has no prompt; do not add one.
+				f := &failingLifecycleEngine{fakeEngine: newFakeEngine(), failure: errors.New("MUTATION_SENTINEL")}
+				f.statuses["app_web"] = &orchestrator.ContainerStatus{Name: "app_web", State: "exited"}
+				withTestRuntime(t, f, testConfig(), func() {
+					extra := []string{}
+					if dry {
+						extra = append(extra, "--dry-run")
+					}
+					result, code, stderr := captureOperation(t, "n\n", operationArgs(name, adapter, extra...))
+					want := "cancelled"
+					if dry {
+						want = "succeeded"
+					}
+					if code != 0 || result.Outcome != want || result.Effects != "none" || len(result.Resources) == 0 || len(f.calls) > 0 || len(f.removed) > 0 {
+						t.Fatalf("%s dry=%v %+v calls=%v", name, dry, result, f.calls)
+					}
+					for _, resource := range result.Resources {
+						if !strings.HasPrefix(resource.Action, "intent.") || resource.Effect != "none" {
+							t.Fatalf("intent claimed performed effect: %+v", resource)
+						}
+					}
+					if !dry && (!strings.Contains(stderr, "resource intents") || !strings.Contains(stderr, "sha256:") || !strings.Contains(stderr, "inventoryComplete=true") || !strings.Contains(stderr, "not saved-plan authorization")) {
+						t.Fatalf("prompt missing bounded intent: %q", stderr)
+					}
+				})
+			}
+		}
+	}
+	state := &operationState{recorder: &operation.Recorder{}}
+	for i := 0; i < 4097; i++ {
+		state.recorder.Intent("container", "id", "remove")
+	}
+	confirmed, err := confirmDestructive("untrusted", commandOptions{operation: state, Yes: true})
+	if err == nil || confirmed {
+		t.Fatal("incomplete intent accepted even with --yes")
+	}
+}
+
 func TestOperationRejectsSecrets(t *testing.T) {
 	f := newFakeEngine()
 	withTestRuntime(t, f, testConfig(), func() {
@@ -357,6 +401,34 @@ type operationDisposableEngine struct {
 func (e *operationDisposableEngine) EnforceDisposableVolumes() error {
 	e.enabled = true
 	return e.enforcementError
+}
+
+type operationImageInspectorEngine struct {
+	*operationPreviewEngine
+	failure error
+}
+
+func (e *operationImageInspectorEngine) DisposableImageVolumes(context.Context, string) ([]string, error) {
+	return []string{"/image-volume"}, e.failure
+}
+
+func TestOperationDecoratorPreservesPreparedImageInspection(t *testing.T) {
+	plain := &operationPreviewEngine{&endpointFake{fakeEngine: newFakeEngine()}}
+	wrapped := &operation.Engine{Engine: plain, Recorder: &operation.Recorder{}, Adapter: "docker"}
+	if _, err := wrapped.DisposableImageVolumes(context.Background(), "image"); err == nil {
+		t.Fatal("missing image inventory accepted")
+	}
+	failure := errors.New("metadata unavailable")
+	inner := &operationImageInspectorEngine{operationPreviewEngine: plain, failure: failure}
+	wrapped.Engine = inner
+	if _, err := wrapped.DisposableImageVolumes(context.Background(), "image"); err != failure {
+		t.Fatal("metadata error not forwarded")
+	}
+	inner.failure = nil
+	volumes, err := wrapped.DisposableImageVolumes(context.Background(), "image")
+	if err != nil || !reflect.DeepEqual(volumes, []string{"/image-volume"}) || len(plain.pulled) != 0 {
+		t.Fatalf("inspection not read-only: %v %v", volumes, err)
+	}
 }
 
 func TestOperationDecoratorRequiresDisposableCapability(t *testing.T) {
