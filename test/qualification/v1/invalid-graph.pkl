@@ -1,0 +1,12 @@
+amends "../../../dill.pkl"
+
+config {
+  name = "dill-alpha-offline-invalid-v1"
+  engine = "docker"
+  services {
+    ["app"] {
+      image = "docker.io/library/busybox:1.36"
+      dependsOn = List("missing")
+    }
+  }
+}

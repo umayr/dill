@@ -1,0 +1,16 @@
+amends "../../../dill.pkl"
+
+config {
+  name = "dill-alpha-offline-v1"
+  engine = "docker"
+  services {
+    ["app"] {
+      image = "docker.io/library/busybox:1.36"
+      pullPolicy = "missing"
+      environment {
+        ["PUBLIC"] = "synthetic-alpha-v1"
+      }
+      command = List("sh", "-c", "trap 'exit 0' TERM; while true; do sleep 1; done")
+    }
+  }
+}

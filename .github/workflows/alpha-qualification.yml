@@ -1,0 +1,171 @@
+name: Disposable Alpha qualification
+
+on:
+  pull_request:
+  workflow_dispatch:
+    inputs:
+      candidate_sha:
+        description: Full 40-character candidate commit SHA (not a branch or tag)
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  disposable-baseline:
+    # Every engine and resource exists only on this fresh hosted job VM.
+    # Docker must satisfy the complete bounded qualification; Podman supplies
+    # an explicit unqualified baseline, never a qualified-positive claim.
+    name: Disposable baseline / ${{ matrix.engine }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    env:
+      PYTHONDONTWRITEBYTECODE: "1"
+    strategy:
+      fail-fast: false
+      matrix:
+        engine: [docker, podman]
+    steps:
+      - name: Validate exact candidate selector
+        env:
+          CANDIDATE_SHA: ${{ inputs.candidate_sha || github.event.pull_request.head.sha }}
+        run: '[[ "$CANDIDATE_SHA" =~ ^[0-9a-f]{40}$ ]]'
+      - name: Independently provision trusted native Docker identity before candidate execution
+        if: matrix.engine == 'docker'
+        run: |
+          # This literal trusted-host step precedes checkout, source scripts,
+          # builds, binary version probes, and all candidate/test execution.
+          set -euo pipefail
+          test "${RUNNER_ENVIRONMENT:-}" = github-hosted
+          test "$(uname -s)" = Linux
+          test ! -e /.dockerenv
+          test ! -e /run/.containerenv
+          test -x /usr/bin/docker
+          sudo systemctl is-active --quiet docker
+          daemon_pid=$(sudo systemctl show docker --property MainPID --value)
+          [[ "$daemon_pid" =~ ^[1-9][0-9]*$ ]]
+          test "$daemon_pid" -gt 1
+          test "$(sudo stat -c %u "/proc/$daemon_pid")" = 0
+          IFS= read -r daemon_comm < "/proc/$daemon_pid/comm"
+          test "$daemon_comm" = dockerd
+          test -S /var/run/docker.sock
+          test "$(stat -c %u /var/run/docker.sock)" = 0
+          # Native in the SAME guest and namespaces, not Docker Desktop,
+          # a different VM, a namespace-separated client, or a proxy layout.
+          for namespace in user pid mnt net; do
+            caller_ns=$(readlink "/proc/$$/ns/$namespace")
+            daemon_ns=$(sudo readlink "/proc/$daemon_pid/ns/$namespace")
+            test -n "$caller_ns"
+            test "$caller_ns" = "$daemon_ns"
+          done
+          umask 077
+          trusted_home=$(mktemp -d "$RUNNER_TEMP/dill-alpha-trusted.XXXXXXXX")
+          mkdir -m 700 "$trusted_home/docker"
+          printf '%s\n' '{"auths":{}}' > "$trusted_home/docker/config.json"
+          # No ambient context, proxy, auth helpers, TLS selector or endpoint.
+          daemon_id=$(/usr/bin/env -i PATH=/usr/bin:/bin HOME="$trusted_home" \
+            DOCKER_CONFIG="$trusted_home/docker" /usr/bin/docker \
+            --config "$trusted_home/docker" --host unix:///var/run/docker.sock \
+            info --format '{{.ID}}')
+          [[ "$daemon_id" =~ ^[A-Za-z0-9][A-Za-z0-9:-]{7,127}$ ]]
+          state_root=$(mktemp -d "$RUNNER_TEMP/dill-alpha-state.XXXXXXXX")
+          chmod 700 "$state_root"
+          test "$(stat -c %a "$state_root")" = 700
+          test "$(stat -c %u "$state_root")" = "$(id -u)"
+          printf '::add-mask::%s\n' "$daemon_id"
+          printf 'DILL_ALPHA_EXPECTED_DAEMON_ID=%s\n' "$daemon_id" >> "$GITHUB_ENV"
+          printf 'DILL_ALPHA_STATE_ROOT=%s\n' "$state_root" >> "$GITHUB_ENV"
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.candidate_sha || github.event.pull_request.head.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Verify checkout
+        env:
+          CANDIDATE_SHA: ${{ inputs.candidate_sha || github.event.pull_request.head.sha }}
+        run: test "$(git rev-parse HEAD)" = "$CANDIDATE_SHA"
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - name: Install checksum-verified pinned Pkl
+        run: |
+          python3 scripts/install-pkl.py "$RUNNER_TEMP/pkl"
+          echo "$RUNNER_TEMP" >> "$GITHUB_PATH"
+      - name: Provision protected synthetic secret fixtures
+        # Match common CI: Linux secretfile tests must remain outside the
+        # untrusted checkout/runner temporary ancestry. Never relax that policy.
+        run: sudo install -d -m 0700 -o "$(id -u)" -g "$(id -g)" /srv/dill-secretfile-tests
+      - name: Build and baseline checks on exact candidate
+        env:
+          DILL_TEST_SECRET_DIR: /srv/dill-secretfile-tests
+          PKL: ${{ runner.temp }}/pkl
+          DILL_PKL_PATH: ${{ runner.temp }}/pkl
+          DB_USER: test
+          DB_PASSWORD: test
+        run: |
+          make build VERSION="$(git rev-parse HEAD)"
+          make test
+          make vet
+          make validate
+          "$PKL" eval examples/overrides/my-server.pkl > /dev/null
+          git diff --check
+          test -z "$(git status --porcelain --untracked-files=all)"
+      - name: Provision rootless Podman on disposable hosted runner
+        if: matrix.engine == 'podman'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y podman
+          # This service/storage is native only to this disposable job VM.
+          podman system service --time=0 "unix://$RUNNER_TEMP/alpha-podman.sock" > "$RUNNER_TEMP/podman-service.log" 2>&1 &
+          for i in $(seq 1 30); do
+            [ -S "$RUNNER_TEMP/alpha-podman.sock" ] && exit 0
+            sleep 1
+          done
+          exit 1
+      - name: Run exact disposable qualification or explicit unsupported-engine baseline
+        env:
+          ENGINE: ${{ matrix.engine }}
+          CANDIDATE_SHA: ${{ inputs.candidate_sha || github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+          if [ "$ENGINE" = docker ]; then
+            socket=/var/run/docker.sock
+            qualification=(--qualified --require-complete
+              --coordination-daemon-id "$DILL_ALPHA_EXPECTED_DAEMON_ID"
+              --coordination-state-root "$DILL_ALPHA_STATE_ROOT"
+              --native-layout-provisioned
+              --provisioning-source trusted-gha-native-linux-host)
+          else
+            socket="$RUNNER_TEMP/alpha-podman.sock"
+            qualification=()
+          fi
+          python3 scripts/qualify-alpha.py \
+            --expected-commit "$CANDIDATE_SHA" \
+            --binary "$PWD/bin/dill" \
+            --binary-sha256 "$(sha256sum bin/dill | cut -d ' ' -f 1)" \
+            --pkl "$RUNNER_TEMP/pkl" \
+            --output "$PWD/bin/alpha-evidence-$ENGINE" \
+            --engine "$ENGINE" --socket "$socket" --disposable \
+            --operations --profiles "${qualification[@]}"
+      - name: Publish only exact public candidate supply and bounded evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: alpha-baseline-${{ inputs.candidate_sha || github.event.pull_request.head.sha }}-${{ matrix.engine }}
+          if-no-files-found: error
+          retention-days: 14
+          # Explicit public allowlist. NEVER publish output/home, the trusted
+          # provisioning home, private coordination state, or service logs.
+          path: |
+            bin/dill
+            bin/alpha-evidence-*/evidence.json
+            bin/alpha-evidence-*/handoff.tar.gz
+            dill.pkl
+            internal/loader/pkl-toolchain.json
+            internal/operation/testdata
+            test/qualification/v1
+            test/integration
+            docs/alpha-candidate-handoff.md
+            scripts/qualify-alpha.py
+            scripts/test_qualify_alpha.py

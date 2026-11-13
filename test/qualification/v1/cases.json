@@ -1,0 +1,42 @@
+{
+  "version": "dill.alpha-qualification/1",
+  "scope": "Dill-side disposable single-host internal Alpha; not full conformance, Brine application E2E or release qualification",
+  "qualifiedProfile": {
+    "engine": "docker",
+    "layout": "native-local-docker-v1",
+    "limitations": [
+      "docker-only", "native-linux-only", "prepared-local-images-only", "effective-pull-never", "all-image-volumes-denied",
+      "dedicated-named-volumes-only", "no-binds", "no-secrets", "no-host-namespace",
+      "no-devices-or-capabilities", "no-orphans-or-uninventoried-mounts", "qualified-teardown-unsupported"
+    ]
+  },
+  "preparedProfiles": [
+    {"id": "prepared-docker-guardrails", "mode": "profile-engine", "test": "TestAlphaDisposableProfileDocker"}
+  ],
+  "cases": [
+    {"id": "offline-valid", "mode": "offline", "fixture": "valid.pkl", "exit": 0},
+    {"id": "offline-invalid-graph", "mode": "offline", "fixture": "invalid-graph.pkl", "exit": 2},
+    {"id": "success-repeat-config-change", "mode": "engine", "test": "TestDillRealEngineLifecycle"},
+    {"id": "changed-image", "mode": "engine", "test": "TestDillImageUpdateRecreates"},
+    {"id": "invalid-config-preserves-live", "mode": "engine", "test": "TestConformanceInvalidPartialSelectionPreservesStack"},
+    {"id": "foreign-container-collision", "mode": "engine", "test": "TestDillForeignContainerOwnership"},
+    {"id": "retained-volume", "mode": "engine", "test": "TestDillRealEngineTeardown"},
+    {"id": "cancellation", "mode": "engine", "test": "TestDillCancelledUpRollsBack"},
+    {"id": "failed-start-cleanup", "mode": "engine", "test": "TestDillRealEngineFailedStartCleanup"},
+    {"id": "operation-contract-baseline", "mode": "operation-engine", "test": "TestAlphaOperationEnvelopeConformance", "requires": [77], "reason": "Explicit operations opt-in and discovered dill.operation/1 required."},
+    {"id": "operation-outcomes", "mode": "qualified-engine", "test": "TestAlphaQualifiedHandlers", "requires": [77, 78, 79], "reason": "Explicit trusted native qualified execution required.", "scope": "up/stop/start/restart/rm/down handlers; attended decline; retained-network failed/none and failed/partial axes; exact inspected partial acknowledgement; unsupported teardown"},
+    {"id": "no-prune", "mode": "engine", "test": "TestAlphaNoPruneBothEngines", "requires": [79], "reason": "Approved isolated CLI successful up --no-prune preserves omitted owned ID/running state, without coordination/profile flags; qualified orphan rejection cannot substitute."},
+    {"id": "bounded-storage-preflight", "mode": "qualified-engine", "test": "TestAlphaQualifiedStandalonePreflight", "additionalTests": ["TestAlphaQualifiedOrphanRejection", "TestAlphaQualifiedActualLivePreflight"], "requires": [78, 79], "reason": "All three actual qualified selectors must pass, never prepared-profile promotion.", "scope": "qualified-alone desired-policy, live actual host/caps/devices/namespaces/tmpfs/immutable old-image metadata census across all six mutations, and no-orphan rejection including no-prune"},
+    {"id": "same-stack-concurrency", "mode": "qualified-engine", "test": "TestAlphaQualifiedSameStackConcurrency", "requires": [77, 78], "reason": "Requires actual shared-state CLI/Brine process contention.", "scope": "held attended-rm lock, cancelled/none contender, holder remains held, decline, later progress"},
+    {"id": "crash-unknown-recovery", "mode": "qualified-engine", "test": "TestAlphaQualifiedCrashUnknownRecovery", "requires": [77, 78], "reason": "Requires actual observed mutation, SIGKILL and durable unknown inspection.", "scope": "health-barrier crash after actual creation, absent valid terminal, durable unknown, same-stack blocking and different-stack independence"},
+    {"id": "foreign-resource-inventory", "mode": "qualified-engine", "test": "TestAlphaQualifiedForeignOwnership", "requires": [78, 79], "reason": "Requires actual qualified ownership rejection and whole inventory/data preservation.", "scope": "foreign container/network/volume collisions and separate synthetic foreign IDs/data retained through failure and scoped cleanup"},
+    {"id": "brine-candidate-handoff", "mode": "qualified-engine", "test": "TestAlphaQualifiedCandidateHandoff", "requires": [77, 78, 79], "reason": "Requires byte-identical copied candidate/schema/fixtures and actual copied qualified caller.", "scope": "copied Dill and pinned Pkl execute unchanged copied fixture with pull never/source brine; qualified receipt and durable source match; external Brine application/browser E2E separately NOT RUN"},
+    {"id": "qualified-docker-profile", "mode": "qualified-engine", "test": "TestAlphaQualifiedDockerProfile", "requires": [78, 79], "reason": "Requires actual native-local-docker-v1 operations without alpha-disposable.", "scope": "immutable prepared creation, unchanged repeat-up same running ID/no events/no-op plan, retained named data after failed/partial down and inspected exact acknowledgement"},
+    {"id": "qualified-podman-rejected", "mode": "qualified-engine", "test": "TestAlphaQualifiedPodmanRejected", "requires": [78, 79], "reason": "Qualified Podman is unsupported; ordinary Podman parity is a separate job.", "scope": "unsupported Podman selector against audited disposable Docker-host socket rejects before qualification/state initialization/pulls/writes; NOT positive qualified Podman runtime"},
+    {"id": "different-stack-concurrency", "mode": "qualified-engine", "test": "TestAlphaQualifiedDifferentStackConcurrency", "requires": [78], "reason": "Requires simultaneous callers on one daemon/shared store.", "scope": "real other-stack start completes while first stack remains held at attended prompt"},
+    {"id": "alias-concurrency", "mode": "qualified-engine", "test": "TestAlphaQualifiedAliasConcurrency", "requires": [78], "reason": "Requires actual socket/config/state symlink aliases and shared attested identity.", "scope": "CLI/Brine aliases contend on same daemon and stack, without global lock substitution"},
+    {"id": "corrupt-journal-rejection", "mode": "qualified-engine", "test": "TestAlphaQualifiedCorruptJournal", "requires": [78], "reason": "Requires actual malformed/private-state rejection before writes.", "scope": "truncated head, missing key and unsafe 0755 state reject; failed offline inspection and unchanged bytes/modes; no auto-repair"},
+    {"id": "inspected-exact-operation-recovery", "mode": "qualified-engine", "test": "TestAlphaQualifiedCrashUnknownRecovery", "requires": [78], "reason": "Shares the actual crash/recovery scenario, not a mock helper.", "scope": "wrong/uninspected acknowledgement rejected, actual live read-only inspection, exact-ID inspected acknowledgement has zero replay/events, fresh brine reconciliation gets new IDs"},
+    {"id": "qualified-image-volume-rejected", "mode": "qualified-engine", "test": "TestAlphaQualifiedStandalonePreflight", "requires": [78, 79], "reason": "Requires actual standalone qualified policy without alpha-disposable.", "scope": "all declared/covered image VOLUME denied and moved desired tag re-inspected on next request; actual immutable old covered-VOLUME census additionally bound to bounded-storage-preflight"}
+  ]
+}
