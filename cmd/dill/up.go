@@ -77,6 +77,20 @@ func runUpConfig(ctx context.Context, opts commandOptions, cfg *config.DillConfi
 	if err := config.ValidateRuntime(cfg); err != nil {
 		return err
 	}
+	capture, captureErr := opts.checkedCapture("up", resolveStackNameWithOptions(cfg, opts))
+	if captureErr != nil {
+		return captureErr
+	}
+	if capture != nil {
+		if len(names) != 0 || noDeps || opts.DryRun || capture.upPlan == nil || capture.serviceIDs == nil {
+			return errNamedCaptureUnavailable
+		}
+		for _, change := range capture.upPlan.Changes {
+			if change.Kind == plan.KindRemove {
+				return errNamedCaptureUnavailable
+			}
+		}
+	}
 
 	if opts.AlphaDisposable {
 		if err := validateDisposableTarget(opts, cfg); err != nil {
@@ -106,6 +120,13 @@ func runUpConfig(ctx context.Context, opts commandOptions, cfg *config.DillConfi
 	if pullPolicy != "" {
 		for _, svc := range selected {
 			svc.PullPolicy = pullPolicy
+		}
+	}
+	if capture != nil {
+		for _, svc := range selected {
+			if svc.PullPolicy != "never" {
+				return errNamedCaptureUnavailable
+			}
 		}
 	}
 
@@ -174,12 +195,19 @@ func runUpConfig(ctx context.Context, opts commandOptions, cfg *config.DillConfi
 		}
 		return plan.Compute(ctx, cfg, engine, sn)
 	}
-	p, err := compute()
-	if err != nil {
-		return fmt.Errorf("computing plan: %w", err)
+	var p *plan.Plan
+	if capture != nil {
+		p = cloneNamedPlan(capture.upPlan)
+	} else {
+		p, err = compute()
+		if err != nil {
+			return fmt.Errorf("computing plan: %w", err)
+		}
 	}
 	orphanIntent := &orchestrator.RemovalIntent{Stack: sn}
-	if !subset && !opts.NoPrune {
+	// Checked Up consumes even an EMPTY compared orphan set. Never relist or
+	// add newly discovered targets after the resource comparison.
+	if capture == nil && !subset && !opts.NoPrune {
 		orphanIntent, err = preflightOrphans(ctx, engine, p, sn)
 		if err != nil {
 			return err
@@ -204,8 +232,9 @@ func runUpConfig(ctx context.Context, opts commandOptions, cfg *config.DillConfi
 	// removal remains a full-stack operation.
 	p = filterPlan(p, selected, !subset && !opts.NoPrune)
 
-	// --force-recreate upgrades unchanged containers to recreate.
-	if opts.ForceRecreate {
+	// Checked capture already includes the force-recreate decision. Do not
+	// alter reviewed actions independently after the digest comparison.
+	if opts.ForceRecreate && capture == nil {
 		for i := range p.Changes {
 			if p.Changes[i].Kind == plan.KindNoop {
 				p.Changes[i].Kind = plan.KindRecreate
@@ -249,6 +278,9 @@ func runUpConfig(ctx context.Context, opts commandOptions, cfg *config.DillConfi
 		}
 	}
 
+	if capture != nil {
+		return g.RunCaptured(ctx, engine, sn, opts.Timeout, actions, opts.progress(), mkSink, capture.serviceIDs)
+	}
 	return g.Run(ctx, engine, sn, opts.Timeout, actions, opts.progress(), mkSink)
 }
 

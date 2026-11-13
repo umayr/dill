@@ -29,6 +29,7 @@ type operationState struct {
 	endpoint     string
 	coordination *operationCoordination
 	census       map[string]string
+	named        *namedCapture
 	listed       []string
 	ctx          context.Context
 }

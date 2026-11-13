@@ -25,6 +25,15 @@ type labelStack struct {
 // stack name there is no way to identify the stack, so the load error is
 // returned with a hint.
 func resolveLabelStack(ctx context.Context, opts commandOptions) (*labelStack, error) {
+	// A checked named selection is configuration-bound. Never fall back to
+	// legacy label-only cleanup or re-evaluate a different source after compare.
+	if opts.operation != nil && opts.operation.named != nil {
+		cfg := opts.operation.config
+		if cfg == nil {
+			return nil, errNamedCaptureUnavailable
+		}
+		return &labelStack{Config: cfg, Name: resolveStackNameWithOptions(cfg, opts), Engine: cfg.Engine}, nil
+	}
 	// A launcher may intentionally provide an invocation-private nonexistent
 	// absolute recipe for label-only cleanup. Never invoke Pkl for this narrow
 	// fully explicit identity. Existing entries (including dangling symlinks)
