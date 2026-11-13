@@ -1,12 +1,38 @@
-# Required combined Alpha runtime cases (unbound design)
+# Required combined Alpha runtime cases (wire bound; runtime pending)
 
-This is an execution design for #80, **not executed evidence**. Binding is blocked
-until the supervisor supplies stable #77/#78/#79 composition commits and approves
-the negotiated attested-target schema. The executable consumer remains strict:
-recognize only explicitly documented, negotiated fields, distinguish ordinary
-selector digests from qualified daemon identity, and never broadly ignore unknown
-properties. Operation IDs retain the `op_` shape. Existing baseline engine parity
-and Alpha secret CI remain independent mandatory checks.
+This is an execution design for #80, **not executed evidence**. The supervisor's
+approved #78 composition `86e9d07a2bebe515aeeec48729e29c5ecb0a4d8f`
+now binds the wire fields below; #79 correction
+`0283cb3d0f8ff7cc48e395a3f1efc1c0d0d8f04c` is incorporated too.
+The executable consumer recognizes only the specific reviewed additions and
+continues rejecting unknown fields. Operation IDs retain the `op_` shape.
+Existing baseline engine parity and Alpha secret CI remain mandatory.
+
+## Bound negotiated interface
+
+- Discovery retains `version`, `operations`, `engines`, `features`. The reviewed
+  feature is `optInQualifiedLocalCoordination`; its optional arrays are
+  `qualifiedCoordinationOperations` (up/down/stop/start/restart/rm),
+  `qualifiedCoordinationEngines` (`docker`) and `qualifiedCoordinationLayouts`
+  (`native-local-docker-v1`). Final #78 is native **Linux-only**; other hosts
+  must advertise no feature and **omit** the optional keys. Any key presence
+  requires the feature plus all three complete supported lists. Empty/null,
+  partial or unknown additions fail closed; producer bugs are not a fallback.
+- `target.endpointDigest` remains the requested selector digest, **not daemon
+  attestation**. Optional `target.qualifiedIdentityDigest` is `sha256:` plus the
+  actual attested identity hex. It is absent for unqualified/early-rejected
+  targets. The external decoder consumes the producer's actual
+  `internal/operation/testdata/qualified-success.json` fixture; malformed, null,
+  empty and non-prefixed identities and unknown fields remain rejected.
+- Exact qualified flags: `--coordination-state-dir`, `--coordination-layout`,
+  `--coordination-daemon-id`, **`--coordination-source cli|brine`**. No proposed
+  `--operation-source` flag is used. These are a caller assertion, not proof a
+  real Brine process consumed the candidate.
+- Offline `dill coordination inspect|acknowledge` uses `--state-dir`, either
+  `--daemon-id` or `--target-id`, `--stack` (or resource kind/name), and for
+  acknowledgement exact `--operation-id` plus `--inspected`. `--target-id`
+  accepts the emitted prefixed digest and normalizes it to raw hex. No engine,
+  config evaluation, replay or automatic rollback is part of recovery.
 
 ## Fixture boundary
 
@@ -14,8 +40,9 @@ and Alpha secret CI remain independent mandatory checks.
   registry-free credentials/config, one fixed candidate SHA/binary/schema/Pkl and
   versioned fixture bundle. Do not reuse an operator desktop/production engine.
 - Explicit `native-local-docker-v1` qualification, expected daemon ID, trusted
-  state directory and `cli`/`brine` source. Exact flags follow the approved stable
-  composition; the current proposals are not advertised as available commands.
+  state directory and `cli`/`brine` source using the exact bound flags above.
+  Expected daemon identity must be independently established during disposable
+  provisioning, not self-attested from an untrusted selected socket.
 - Prepare local busybox/alpine images before qualified execution. Positive images
   have **no image-declared VOLUME entries**. Qualified config uses effective pull
   **never**; assert no pull occurs. Both adapters inspect and pin the immutable
@@ -57,12 +84,17 @@ not optional capability flags. None is implemented by this document.
 | `no-prune` | Omit a live owned service, then repeat operation including retained volume and foreign same-name/name-reuse cases. | Explicit no-prune preserves omitted ID/state/data; preflight rejects foreign ownership before any pull/write; removal revalidates immutable intended IDs after prompts. |
 | `bounded-storage-preflight` | Mount/capability/namespace/secret/image-policy violations; live resource census changes after prompt. | Bounded profile rejects before mutation; no orphan or uninventoried mount slips through; denied requests leave all snapshots unchanged. |
 | `foreign-resource-inventory` | Check the dedicated inventory around **every** above scenario and cleanup, not only collision. | Foreign container/network/volume identity, state and data remain unchanged. Cleanup is not database rollback. |
-| `brine-candidate-handoff` | Transfer exact binary+schema+fixtures and verify checksums, then invoke paired Brine consumer on the disposable target. | Same pinned candidate and negotiated subset, source brine contends with CLI, no released-old-binary substitution or claimed bundled support. |
+| `brine-candidate-handoff` | Supply immutable exact binary+schema+versioned fixtures, verify copied checksums, exercise copied qualified CLI caller contract with source brine when checking usability. | Dill-side artifact supply and pinned caller contract only; no released-old-binary substitution. Actual Brine app/browser E2E is downstream #69, separately NOT RUN/unproven, not a prerequisite for #80 supply. |
 
 ## Evidence and completion gate
 
-The current manifest leaves these rows blocked. Once implemented, each gets its
-own actual selected test and real qualified-engine evidence, bound to this run's
+The current manifest leaves the final combined rows blocked. Narrower #79
+`--profiles` runs populate only the separate `preparedProfiles` observations;
+those results cannot satisfy any required combined row. In particular, qualified
+unsupported/foreign preflight must run **without** the separate
+`--alpha-disposable` flag, so that flag cannot hide a coordinator preflight gap.
+Once implemented, each combined row gets its own actual selected test and real
+qualified-engine evidence, bound to this run's
 candidate commit, binary digest and explicit target. The runner must supply the
 approved qualified target/state interface rather than accepting a forged
 `passed` fixture or optional evidence file. No manual waiver switches.
@@ -71,7 +103,10 @@ approved qualified target/state interface rather than accepting a forged
 checks pass. The gate requires the exact required-case set (missing/duplicate/
 extra IDs fail), every status passed, actual runtime provenance for each runtime
 case, clean exact source/build identity, final integrity verification and stated
-Docker-only profile limits. Qualified rows specifically require qualified-runtime
+native-Linux Docker-only profile limits. Expected mode and evidence kind are
+fixed **per required ID independently of the manifest**. Only `offline-valid`
+and `offline-invalid-graph` may ever be offline; changing any runtime row to
+`offline` (even with matching offline evidence) or an unknown mode fails. Qualified rows specifically require qualified-runtime
 evidence; an ordinary engine test with a similar name cannot satisfy them.
 Current blocked rows and unbound qualified modes cannot produce completion.
 
@@ -79,5 +114,8 @@ Unit tests exercise this predicate with synthetic input, including one complete
 input to show it is not permanently hardcoded incomplete. Such unit input is
 never published as runtime evidence. Final completion still requires independent
 review, exact-head baseline/Alpha-secret checks and observed hosted disposable
-runs on the combined candidate. SIGKILL cannot run Python cleanup; preserve
+runs on the combined candidate. `downstreamBrineAcceptance.status` remains
+explicitly `not-run`: successful Dill-side supply is never presented as actual
+Brine application/browser acceptance. No external Brine implementation is in
+this lane's scope. SIGKILL cannot run Python cleanup; preserve
 unknown state and inspect it instead of promising automatic resource restoration.

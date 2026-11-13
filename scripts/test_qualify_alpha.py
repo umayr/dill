@@ -24,19 +24,12 @@ class QualificationTests(unittest.TestCase):
         endpoint, digest = "unix:///synthetic/disposable.sock", "b" * 64
         results = []
         for case in manifest["cases"]:
-            if case["id"] in q.QUALIFIED_CASES:
-                case["mode"], kind = "qualified-engine", "real-qualified-engine"
-            elif case["id"] in q.PROFILE_CASES:
-                case["mode"], kind = "profile-engine", "real-profile-engine"
-            elif case["mode"] == "offline":
-                kind = "offline"
-            else:
-                kind = "real-engine"
+            case["mode"], kind = q.REQUIRED_CASE_EVIDENCE[case["id"]]
             results.append({"id": case["id"], "status": "passed", "evidenceKind": kind,
                             "candidateCommit": COMMIT, "binarySha256": digest, "target": endpoint})
         evidence = {"fixtureVersion": manifest["version"], "cases": results,
                     "source": {"commit": COMMIT, "dirty": False},
-                    "binary": {"buildRevision": COMMIT, "buildModified": "false", "sha256": digest},
+                    "binary": {"buildRevision": COMMIT, "buildModified": "false", "sha256": digest, "goOS": "linux"},
                     "schema": {"sha256": "c" * 64}, "pkl": {"sha256": "d" * 64},
                     "checksumsAfter": {"binary": digest, "schema": "c" * 64, "pkl": "d" * 64},
                     "integrityVerified": True, "engine": "docker", "disposableAttested": True,
@@ -66,8 +59,11 @@ class QualificationTests(unittest.TestCase):
             lambda e, m: e["cases"][-1].update(binarySha256="e" * 64),
             lambda e, m: e["cases"][-1].update(target="unix:///other.sock"),
             lambda e, m: m["cases"][-1].update(mode="blocked"),
+            lambda e, m: m["cases"][-1].update(mode="profile-engine"),
+            lambda e, m: e["cases"][-1].update(evidenceKind="real-profile-engine"),
             lambda e, m: e["source"].update(dirty=True),
             lambda e, m: e["binary"].update(buildModified="true"),
+            lambda e, m: e["binary"].update(goOS="darwin"),
             lambda e, m: e.update(engine="podman"),
             lambda e, m: e.update(disposableAttested=False),
             lambda e, m: e.pop("engineVersion"),
@@ -83,6 +79,28 @@ class QualificationTests(unittest.TestCase):
                 evidence, manifest = self.synthetic_complete_gate_inputs()
                 mutate(evidence, manifest)
                 self.assertFalse(q.final_acceptance(evidence, manifest)["complete"])
+
+    def test_each_runtime_case_rejects_offline_downgrade_and_unknown_mode(self):
+        offline = {case for case, (mode, _) in q.REQUIRED_CASE_EVIDENCE.items() if mode == "offline"}
+        self.assertEqual(offline, {"offline-valid", "offline-invalid-graph"})
+        for case_id in q.FINAL_REQUIRED_CASES - offline:
+            for mode, kind in (("offline", "offline"), ("unrecognized-mode", "real-engine")):
+                with self.subTest(case=case_id, mode=mode):
+                    evidence, manifest = self.synthetic_complete_gate_inputs()
+                    next(case for case in manifest["cases"] if case["id"] == case_id)["mode"] = mode
+                    next(case for case in evidence["cases"] if case["id"] == case_id)["evidenceKind"] = kind
+                    result = q.final_acceptance(evidence, manifest)
+                    self.assertFalse(result["complete"])
+                    self.assertIn("required-case-not-implemented", result["reasons"])
+                    if mode == "offline":
+                        self.assertIn("required-case-runtime-evidence-missing", result["reasons"])
+
+    def test_prepared_profile_observation_cannot_clear_required_combined_case(self):
+        evidence, manifest = self.synthetic_complete_gate_inputs()
+        observed = dict(evidence["cases"][-1])
+        evidence["cases"][-1].update(status="blocked")
+        evidence["preparedProfiles"] = [observed]
+        self.assertFalse(q.final_acceptance(evidence, manifest)["complete"])
 
     def test_require_complete_rejects_green_incomplete_baseline(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -419,15 +437,16 @@ print('private-empty-auth-only')
                 args.socket = str(root / "engine.sock")
                 path = root / "test/qualification/v1/cases.json"
                 manifest = json.loads(path.read_text())
-                manifest["cases"].extend([
+                manifest["preparedProfiles"] = [
                     {"id": "guardrail", "mode": "guardrail-engine", "test": "TestGuardrail"},
-                    {"id": "profile", "mode": "profile-engine", "test": "TestDockerProfile"}])
+                    {"id": "profile", "mode": "profile-engine", "test": "TestDockerProfile"}]
                 path.write_text(json.dumps(manifest))
                 outer = self
                 class FakeProfile(self.fake_recorder()):
                     def run(self, argv, timeout=120, expected=0, env=None):
                         if "operation-capabilities" in argv:
                             return json.dumps({"version": "dill.operation/1", "engines": [engine],
+                                "features": ["explicitLocalSelector", "attended", "redactedSummary", "conservativeEffects"],
                                 "operations": ["validate", "plan", "diff", "up", "down", "stop", "start", "restart", "rm", "teardown"]}).encode(), True
                         if str(argv[0]) == engine:
                             return b'{"Server":{"Version":"synthetic"}}', True
@@ -442,13 +461,48 @@ print('private-empty-auth-only')
                     with patch.object(q, "ROOT", root), patch.object(q, "FIXTURES", root / "test/qualification/v1"), patch.object(q, "Recorder", FakeProfile):
                         self.assertEqual(q.collect(args), 0)
                 evidence = json.loads((Path(args.output) / "evidence.json").read_text())
-                results = {case["id"]: case for case in evidence["cases"]}
+                results = {case["id"]: case for case in evidence["preparedProfiles"]}
+                self.assertFalse({"guardrail", "profile"} & {case["id"] for case in evidence["cases"]})
                 self.assertEqual(results["guardrail"]["evidenceKind"], "real-engine")
                 if engine == "docker":
                     self.assertEqual(results["profile"]["evidenceKind"], "real-profile-engine")
                 else:
                     self.assertEqual(results["profile"]["status"], "not-run")
                 self.assertEqual(evidence["qualification"], "incomplete")
+
+    def test_negotiated_qualified_discovery_is_closed_and_optional(self):
+        baseline = {"version": "dill.operation/1", "engines": ["docker", "podman"],
+                    "features": ["explicitLocalSelector", "attended", "redactedSummary", "conservativeEffects"],
+                    "operations": ["validate", "plan", "diff", "up", "down", "stop", "start", "restart", "rm", "teardown"]}
+        qualified = json.loads(json.dumps(baseline))
+        qualified["features"].append("optInQualifiedLocalCoordination")
+        qualified.update(qualifiedCoordinationOperations=["up", "down", "stop", "start", "restart", "rm"],
+                         qualifiedCoordinationEngines=["docker"], qualifiedCoordinationLayouts=["native-local-docker-v1"])
+        unsupported_host = dict(baseline, qualifiedCoordinationOperations=[], qualifiedCoordinationEngines=[], qualifiedCoordinationLayouts=[])
+        with self.assertRaises(ValueError):
+            q.operation_capabilities(unsupported_host, "docker")
+        for document in (baseline, qualified):
+            for engine in ("docker", "podman"):
+                self.assertEqual(q.operation_capabilities(document, engine), document)
+        mutations = [
+            lambda doc: doc.update(unnegotiatedFutureField=True),
+            lambda doc: doc.update(features=baseline["features"]),
+            lambda doc: doc.update(qualifiedCoordinationOperations=["teardown"]),
+            lambda doc: doc.update(qualifiedCoordinationEngines=["podman"]),
+            lambda doc: doc.update(qualifiedCoordinationLayouts=["containerized"]),
+        ]
+        for field in qualified:
+            mutations.extend([lambda doc, field=field: doc.pop(field),
+                              lambda doc, field=field: doc.update({field: None})])
+        for field in ("operations", "engines", "features", "qualifiedCoordinationOperations", "qualifiedCoordinationEngines", "qualifiedCoordinationLayouts"):
+            mutations.extend([lambda doc, field=field: doc[field].append(doc[field][0]),
+                              lambda doc, field=field: doc[field].append(42)])
+        for index, mutate in enumerate(mutations):
+            with self.subTest(mutation=index):
+                document = json.loads(json.dumps(qualified))
+                mutate(document)
+                with self.assertRaises(ValueError):
+                    q.operation_capabilities(document, "docker")
 
     def test_operation_discovery_rejection_precedes_engine_or_make(self):
         for document in ([], {}, {"version": "dill.operation/999"},
@@ -494,7 +548,7 @@ print('private-empty-auth-only')
         ids = [c["id"] for c in manifest["cases"]]
         self.assertEqual(len(ids), len(set(ids)))
         source = "\n".join(p.read_text() for p in (q.ROOT / "test/integration").glob("*_test.go"))
-        for case in manifest["cases"]:
+        for case in manifest["cases"] + manifest.get("preparedProfiles", []):
             if case["mode"] in {"engine", "operation-engine", "guardrail-engine", "profile-engine"}:
                 self.assertRegex(case["test"], r"^Test[A-Za-z0-9]+$")
                 self.assertIn("func " + case["test"] + "(", source)

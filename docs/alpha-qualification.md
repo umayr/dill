@@ -66,7 +66,9 @@ successfully so parser failure cannot masquerade as policy enforcement.
 
 These are **prepared profile assertions, not executed local engine evidence**.
 The profile is not the #78 daemon-attested coordinator: profile runtime evidence
-is labeled separately from qualified runtime evidence. Known pinned-image/no-op
+is stored only in the separate `preparedProfiles` observations and **cannot clear
+any of the 24 required combined case IDs**, including no-prune, bounded storage
+and qualified image-volume rejection. Known pinned-image/no-op
 reconciliation corrections must pass the strict repeat expectation, not relax it.
 The workflow enables these cases for a candidate containing the stable disposable
 implementation; missing/skipped selected tests still fail. Full qualified mode

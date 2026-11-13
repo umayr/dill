@@ -5,11 +5,15 @@
     "engine": "docker",
     "layout": "native-local-docker-v1",
     "limitations": [
-      "docker-only", "prepared-local-images-only", "effective-pull-never", "all-image-volumes-denied",
+      "docker-only", "native-linux-only", "prepared-local-images-only", "effective-pull-never", "all-image-volumes-denied",
       "dedicated-named-volumes-only", "no-binds", "no-secrets", "no-host-namespace",
       "no-devices-or-capabilities", "no-orphans-or-uninventoried-mounts", "qualified-teardown-unsupported"
     ]
   },
+  "preparedProfiles": [
+    {"id": "prepared-no-prune", "mode": "guardrail-engine", "test": "TestAlphaNoPruneBothEngines"},
+    {"id": "prepared-docker-guardrails", "mode": "profile-engine", "test": "TestAlphaDisposableProfileDocker"}
+  ],
   "cases": [
     {"id": "offline-valid", "mode": "offline", "fixture": "valid.pkl", "exit": 0},
     {"id": "offline-invalid-graph", "mode": "offline", "fixture": "invalid-graph.pkl", "exit": 2},
@@ -22,18 +26,18 @@
     {"id": "failed-start-cleanup", "mode": "engine", "test": "TestDillRealEngineFailedStartCleanup"},
     {"id": "operation-contract-baseline", "mode": "operation-engine", "test": "TestAlphaOperationEnvelopeConformance", "requires": [77], "reason": "Requires explicit --operations opt-in, discovered dill.operation/1 and actual disposable-engine execution; not qualified by compilation."},
     {"id": "operation-outcomes", "mode": "blocked", "requires": [77, 78, 79], "reason": "Prepared executable consumer covers the bounded operation contract; final combined guardrail/coordinator outcomes remain unqualified."},
-    {"id": "no-prune", "mode": "guardrail-engine", "test": "TestAlphaNoPruneBothEngines", "requires": [79], "reason": "Requires actual --profiles execution on the pinned disposable engine; ordinary no-prune parity is separate from qualified coordination."},
-    {"id": "bounded-storage-preflight", "mode": "profile-engine", "test": "TestAlphaDisposableProfileDocker", "requires": [79], "reason": "Requires Docker prepared-image profile runtime, inventory/state/data preservation and no-event rejection assertions; not coordinator qualification."},
+    {"id": "no-prune", "mode": "blocked", "requires": [78, 79], "reason": "Prepared ordinary parity is recorded separately; final combined qualified preservation and immutable intent revalidation still require runtime evidence."},
+    {"id": "bounded-storage-preflight", "mode": "blocked", "requires": [78, 79], "reason": "Prepared alpha-disposable observations cannot satisfy standalone qualified-mode policy/foreign ownership preflight; both paths must actually run."},
     {"id": "same-stack-concurrency", "mode": "blocked", "requires": [77, 78], "reason": "CLI and Brine must contend while different stacks remain independent; final integrated hooks required."},
     {"id": "crash-unknown-recovery", "mode": "blocked", "requires": [77, 78], "reason": "SIGKILL and durable unknown outcome/recovery inspection require final trusted-state interface."},
     {"id": "foreign-resource-inventory", "mode": "blocked", "requires": [78, 79], "reason": "Combined suite must compare foreign container/network/volume identities and state before/after every failure and cleanup."},
-    {"id": "brine-candidate-handoff", "mode": "blocked", "requires": [77, 78, 79], "reason": "Brine must consume this exact candidate checksum, schema and fixture version on combined final heads."},
+    {"id": "brine-candidate-handoff", "mode": "blocked", "requires": [77, 78, 79], "reason": "Supply immutable exact candidate/schema/versioned fixtures, verify checksums and usable copied qualified caller contract with source brine; downstream Brine application E2E stays separately not-run, not an issue80 supply prerequisite."},
     {"id": "qualified-docker-profile", "mode": "blocked", "requires": [78, 79], "reason": "Requires actual native-local-docker-v1 qualified operations with prepared immutable images and effective pull never."},
     {"id": "qualified-podman-rejected", "mode": "blocked", "requires": [78, 79], "reason": "Qualified Podman is unsupported and must reject before any pull/write; legacy parity remains independently required."},
     {"id": "different-stack-concurrency", "mode": "blocked", "requires": [78], "reason": "Independent stacks must progress concurrently on one attested daemon without accidental global locking."},
     {"id": "alias-concurrency", "mode": "blocked", "requires": [78], "reason": "Path/URI/symlink socket aliases and CLI/Brine sources must contend on one daemon+stack identity."},
     {"id": "corrupt-journal-rejection", "mode": "blocked", "requires": [78], "reason": "Malformed, stale or mismatched trusted state must fail closed before engine mutation."},
     {"id": "inspected-exact-operation-recovery", "mode": "blocked", "requires": [78], "reason": "Unknown state stays blocked until manual live inspection and exact-ID acknowledgement with explicit inspected intent."},
-    {"id": "qualified-image-volume-rejected", "mode": "profile-engine", "test": "TestAlphaDisposableProfileDocker", "requires": [79], "reason": "All image-declared VOLUME entries are denied, even named-mount-covered; actual prepared negative-image execution required, not compilation."}
+    {"id": "qualified-image-volume-rejected", "mode": "blocked", "requires": [78, 79], "reason": "Prepared all-VOLUME/covered-VOLUME denials are separate observations, not qualified mode, unknown-metadata or inspect/create retarget runtime proof."}
   ]
 }

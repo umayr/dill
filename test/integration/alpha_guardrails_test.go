@@ -6,6 +6,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -15,6 +16,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/umayr/dill/internal/config"
 )
 
 const alphaPreparedImage = "docker.io/library/busybox:1.36"
@@ -31,7 +34,7 @@ func alphaGuardrailEnvironment(t *testing.T) testEnv {
 	return env
 }
 
-func writeAlphaPreparedConfig(t *testing.T, cfg, root, engine, stack, image, extra string, other bool) {
+func writeAlphaPreparedConfig(t *testing.T, cfg, root, engine, stack, image, extra string, other bool, declarations ...string) {
 	t.Helper()
 	omitted := ""
 	if other {
@@ -41,6 +44,7 @@ func writeAlphaPreparedConfig(t *testing.T, cfg, root, engine, stack, image, ext
 config {
   name = %q
   engine = %q
+  %s
   services {
     ["app"] {
       image = %q
@@ -51,7 +55,7 @@ config {
     %s
   }
 }
-`, filepath.ToSlash(filepath.Join(root, "dill.pkl")), stack, engine, image, extra, omitted)
+`, filepath.ToSlash(filepath.Join(root, "dill.pkl")), stack, engine, strings.Join(declarations, "\n"), image, extra, omitted)
 	if err := os.WriteFile(cfg, []byte(body), 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -65,8 +69,22 @@ func evaluateAlphaFixture(t *testing.T, cfg string) {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
-	if _, err := exec.CommandContext(ctx, pkl, "eval", cfg).Output(); err != nil {
+	data, err := exec.CommandContext(ctx, pkl, "eval", cfg).Output()
+	if err != nil {
 		t.Fatal("synthetic profile fixture failed Pkl evaluation; policy rejection was not exercised")
+	}
+	var document struct {
+		Config *config.DillConfig `json:"config"`
+	}
+	if json.Unmarshal(data, &document) != nil || config.ValidateRuntime(document.Config) != nil {
+		t.Fatal("synthetic profile fixture failed ordinary runtime validation; policy rejection was not exercised")
+	}
+}
+
+func assertAlphaSecretBoundary(t *testing.T, result alphaOperationResult) {
+	t.Helper()
+	if result.Outcome != "failed" || result.Effects != "none" || len(result.Errors) != 1 || result.Errors[0].Code != "SECRET_UNAVAILABLE" || result.Errors[0].Message != "Secret configuration or source unavailable." {
+		t.Fatal("valid synthetic secret request did not reach the deliberate secret-unavailable boundary")
 	}
 }
 
@@ -80,9 +98,34 @@ func TestAlphaGuardrailFixtureEvaluation(t *testing.T) {
 		`volumes = List(new Mount { source = "data"; target = "/data"; name = "synthetic-explicit" })`,
 		`secrets { new { name = "synthetic"; target = "/run/secrets/synthetic" } }`,
 	} {
-		writeAlphaPreparedConfig(t, cfg, root, "docker", "synthetic-offline", alphaPreparedImage, extra, false)
+		declarations := ""
+		if strings.HasPrefix(extra, "secrets {") {
+			declarations = `secrets { new { name = "synthetic" } }`
+		}
+		writeAlphaPreparedConfig(t, cfg, root, "docker", "synthetic-offline", alphaPreparedImage, extra, false, declarations)
 		evaluateAlphaFixture(t, cfg)
 	}
+	// Independently author a valid secret request, not an evaluator failure.
+	writeAlphaPreparedConfig(t, cfg, root, "docker", "synthetic-offline", alphaPreparedImage, `secrets { new { name = "synthetic"; target = "/run/secrets/synthetic" } }`, false, `secrets { new { name = "synthetic" } }`)
+	evaluateAlphaFixture(t, cfg)
+	// A regular file is deliberately NOT an engine socket: no live engine needed.
+	socket := filepath.Join(t.TempDir(), "not-a-socket")
+	if err := os.WriteFile(socket, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, dillBinary(t, root), "operation", "up", "--contract", "dill.operation/1", "--engine", "docker", "--engine-socket", "unix://"+filepath.ToSlash(socket), "-p", "synthetic-offline", "-f", cfg, "--alpha-disposable")
+	data, err := cmd.Output()
+	var exited *exec.ExitError
+	if !errors.As(err, &exited) || exited.ExitCode() != 1 {
+		t.Fatal("synthetic secret boundary returned wrong process outcome")
+	}
+	result, err := decodeAlphaOperation(data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertAlphaSecretBoundary(t, result)
 }
 
 // Selected stable inspect fields avoid moving healthcheck timestamps. All raw
@@ -195,7 +238,10 @@ func TestAlphaDisposableProfileDocker(t *testing.T) {
 	}
 	runProfile(t, 0)
 	if image := runEngine(t, env.engine, "inspect", "--format", "{{.Image}}", stack+"_app"); image != metadata[0].ID {
-		t.Fatal("profile did not create from inspected immutable image ID")
+		t.Fatal("profile create content differs from inspected immutable image ID")
+	}
+	if reference := runEngine(t, env.engine, "inspect", "--format", "{{.Config.Image}}", stack+"_app"); reference != metadata[0].ID {
+		t.Fatal("profile create reference was not pinned to inspected immutable image ID")
 	}
 	appBefore := runEngine(t, env.engine, "inspect", "--format", "{{.Id}}", stack+"_app")
 	repeatSince := time.Now().UTC().Format(time.RFC3339Nano)
@@ -266,10 +312,17 @@ func TestAlphaDisposableProfileDocker(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			before := alphaResourceSnapshot(t, env.engine)
-			writeAlphaPreparedConfig(t, cfg, root, env.engine, stack, tc.image, tc.extra, false)
+			declarations := ""
+			if tc.name == "secret-grant" {
+				declarations = `secrets { new { name = "synthetic" } }`
+			}
+			writeAlphaPreparedConfig(t, cfg, root, env.engine, stack, tc.image, tc.extra, false, declarations)
 			evaluateAlphaFixture(t, cfg)
 			since := time.Now().UTC().Format(time.RFC3339Nano)
-			runProfile(t, 1, tc.options...)
+			result := runProfile(t, 1, tc.options...)
+			if tc.name == "secret-grant" {
+				assertAlphaSecretBoundary(t, result)
+			}
 			until := time.Now().UTC().Format(time.RFC3339Nano)
 			if events := runEngine(t, env.engine, "events", "--since", since, "--until", until, "--format", "{{json .}}"); events != "" {
 				t.Fatal("rejected profile produced engine events; zero-write assertion failed")

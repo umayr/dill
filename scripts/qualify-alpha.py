@@ -27,23 +27,37 @@ SELECTORS = {
 }
 
 
-FINAL_REQUIRED_CASES = frozenset({
-    "offline-valid", "offline-invalid-graph", "success-repeat-config-change", "changed-image",
-    "invalid-config-preserves-live", "foreign-container-collision", "retained-volume",
-    "cancellation", "failed-start-cleanup", "operation-contract-baseline", "operation-outcomes",
-    "no-prune", "bounded-storage-preflight", "same-stack-concurrency", "crash-unknown-recovery",
-    "foreign-resource-inventory", "brine-candidate-handoff", "qualified-docker-profile",
-    "qualified-podman-rejected", "different-stack-concurrency", "alias-concurrency",
-    "corrupt-journal-rejection", "inspected-exact-operation-recovery", "qualified-image-volume-rejected",
-})
-PROFILE_CASES = frozenset({"bounded-storage-preflight", "qualified-image-volume-rejected"})
-QUALIFIED_CASES = FINAL_REQUIRED_CASES - PROFILE_CASES - {"no-prune"} - {
-    "offline-valid", "offline-invalid-graph", "success-repeat-config-change", "changed-image",
-    "invalid-config-preserves-live", "foreign-container-collision", "retained-volume",
-    "cancellation", "failed-start-cleanup", "operation-contract-baseline",
+# Independent review policy, never inferred from editable manifest modes.
+REQUIRED_CASE_EVIDENCE = {
+    "offline-valid": ("offline", "offline"),
+    "offline-invalid-graph": ("offline", "offline"),
+    "success-repeat-config-change": ("engine", "real-engine"),
+    "changed-image": ("engine", "real-engine"),
+    "invalid-config-preserves-live": ("engine", "real-engine"),
+    "foreign-container-collision": ("engine", "real-engine"),
+    "retained-volume": ("engine", "real-engine"),
+    "cancellation": ("engine", "real-engine"),
+    "failed-start-cleanup": ("engine", "real-engine"),
+    "operation-contract-baseline": ("operation-engine", "real-engine"),
+    "operation-outcomes": ("qualified-engine", "real-qualified-engine"),
+    "no-prune": ("qualified-engine", "real-qualified-engine"),
+    "bounded-storage-preflight": ("qualified-engine", "real-qualified-engine"),
+    "same-stack-concurrency": ("qualified-engine", "real-qualified-engine"),
+    "crash-unknown-recovery": ("qualified-engine", "real-qualified-engine"),
+    "foreign-resource-inventory": ("qualified-engine", "real-qualified-engine"),
+    "brine-candidate-handoff": ("qualified-engine", "real-qualified-engine"),
+    "qualified-docker-profile": ("qualified-engine", "real-qualified-engine"),
+    "qualified-podman-rejected": ("qualified-engine", "real-qualified-engine"),
+    "different-stack-concurrency": ("qualified-engine", "real-qualified-engine"),
+    "alias-concurrency": ("qualified-engine", "real-qualified-engine"),
+    "corrupt-journal-rejection": ("qualified-engine", "real-qualified-engine"),
+    "inspected-exact-operation-recovery": ("qualified-engine", "real-qualified-engine"),
+    "qualified-image-volume-rejected": ("qualified-engine", "real-qualified-engine"),
 }
+FINAL_REQUIRED_CASES = frozenset(REQUIRED_CASE_EVIDENCE)
+QUALIFIED_CASES = frozenset(case for case, (mode, _) in REQUIRED_CASE_EVIDENCE.items() if mode == "qualified-engine")
 PROFILE_LIMITATIONS = frozenset({
-    "docker-only", "prepared-local-images-only", "effective-pull-never", "all-image-volumes-denied",
+    "docker-only", "native-linux-only", "prepared-local-images-only", "effective-pull-never", "all-image-volumes-denied",
     "dedicated-named-volumes-only", "no-binds", "no-secrets", "no-host-namespace",
     "no-devices-or-capabilities", "no-orphans-or-uninventoried-mounts", "qualified-teardown-unsupported",
 })
@@ -70,7 +84,7 @@ def final_acceptance(evidence, manifest):
     if (not re.fullmatch(r"[0-9a-f]{40}", commit) or source.get("dirty") is not False
             or binary.get("buildRevision") != commit or binary.get("buildModified") != "false"):
         reasons.append("candidate-not-clean-and-pinned")
-    if (evidence.get("engine") != "docker" or evidence.get("disposableAttested") is not True
+    if (evidence.get("engine") != "docker" or binary.get("goOS") != "linux" or evidence.get("disposableAttested") is not True
             or not str(evidence.get("target", "")).startswith("unix:///")
             or not isinstance(evidence.get("engineVersion"), dict) or not evidence["engineVersion"]):
         reasons.append("disposable-docker-runtime-missing")
@@ -88,19 +102,12 @@ def final_acceptance(evidence, manifest):
         case_id = case.get("id")
         result = by_id.get(case_id, {})
         mode = case.get("mode")
-        if (mode not in {"offline", "engine", "operation-engine", "guardrail-engine", "profile-engine", "qualified-engine"}
-                or (case_id in QUALIFIED_CASES and mode != "qualified-engine")
-                or (case_id in PROFILE_CASES and mode != "profile-engine")
-                or (case_id in {"offline-valid", "offline-invalid-graph"} and mode != "offline")):
+        expected_mode, kind = REQUIRED_CASE_EVIDENCE.get(case_id, (None, None))
+        if expected_mode is None or mode != expected_mode:
             reasons.append("required-case-not-implemented")
         if result.get("status") != "passed" or mode == "blocked":
             reasons.append("required-case-not-passed")
             continue
-        kind = "offline" if case.get("mode") == "offline" else "real-engine"
-        if case_id in QUALIFIED_CASES:
-            kind = "real-qualified-engine"
-        elif case_id in PROFILE_CASES:
-            kind = "real-profile-engine"
         if result.get("evidenceKind") != kind:
             reasons.append("required-case-runtime-evidence-missing")
         if (result.get("candidateCommit") != commit or result.get("binarySha256") != binary.get("sha256")
@@ -196,6 +203,35 @@ def make_test_selector(names):
     return "DILL_TEST_RUN=" + shlex.quote(selector.replace("$", "$$"))
 
 
+def operation_capabilities(document, engine):
+    """Accept only reviewed dill.operation/1 discovery fields, not arbitrary extensions."""
+    base = {"version", "operations", "engines", "features"}
+    additions = {"qualifiedCoordinationOperations", "qualifiedCoordinationEngines", "qualifiedCoordinationLayouts"}
+    operations = {"validate", "plan", "diff", "up", "down", "stop", "start", "restart", "rm", "teardown"}
+    features = {"explicitLocalSelector", "attended", "redactedSummary", "conservativeEffects"}
+    qualified_feature = "optInQualifiedLocalCoordination"
+    if (not isinstance(document, dict) or not base.issubset(document)
+            or set(document) - base - additions or document.get("version") != "dill.operation/1"):
+        raise ValueError("unsupported operation discovery fields or contract")
+    for field in (base - {"version"}) | (set(document) & additions):
+        values = document[field]
+        if (not isinstance(values, list) or not all(isinstance(value, str) for value in values)
+                or len(values) != len(set(values))):
+            raise ValueError("invalid operation discovery array")
+    if (set(document["operations"]) != operations or not set(document["engines"]).issubset({"docker", "podman"})
+            or engine not in document["engines"] or not features.issubset(document["features"])
+            or set(document["features"]) - features - {qualified_feature}):
+        raise ValueError("unsupported operation capabilities")
+    advertised = qualified_feature in document["features"]
+    if advertised or set(document) & additions:
+        if (not advertised or not additions.issubset(document)
+                or set(document["qualifiedCoordinationOperations"]) != {"up", "down", "stop", "start", "restart", "rm"}
+                or document["qualifiedCoordinationEngines"] != ["docker"]
+                or document["qualifiedCoordinationLayouts"] != ["native-local-docker-v1"]):
+            raise ValueError("unsupported or unnegotiated qualified coordination capabilities")
+    return document
+
+
 def test_results(output, names):
     """Require every selected top-level test to pass with no skipped subtests."""
     lines = output.decode("utf-8", errors="replace").splitlines()
@@ -278,6 +314,7 @@ def collect(args):
                 "qualification": "incomplete", "engine": args.engine or "not-run",
                 "target": endpoint, "disposableAttested": args.disposable,
                 "operationContractRequested": args.operations,
+                "downstreamBrineAcceptance": {"status": "not-run", "scope": "Dill-side artifact supply is not Brine application E2E"},
                 "commands": recorder.commands, "cases": [], "gaps": []}
     ok = True
     manifest = {}
@@ -334,6 +371,12 @@ def collect(args):
             elif case["mode"] == "blocked" or (case["mode"] == "operation-engine" and not args.operations):
                 result.update(status="blocked", requires=case["requires"], reason=case["reason"])
             evidence["cases"].append(result)
+        # Deliberately separate narrower #79 observations from the 24 required
+        # combined cases: --alpha-disposable must not hide qualified-only gaps.
+        evidence["preparedProfiles"] = [{"id": case["id"], "status": "not-run"}
+                                        for case in manifest.get("preparedProfiles", [])]
+        runtime_cases = manifest["cases"] + manifest.get("preparedProfiles", [])
+        runtime_results = evidence["cases"] + evidence["preparedProfiles"]
         if not ok:
             raise ValueError("offline fixture baseline failed; engine execution withheld")
         if args.engine:
@@ -349,15 +392,7 @@ def collect(args):
                 capabilities, passed = recorder.run([binary, "operation-capabilities", "--format", "json"])
                 if not passed or len(capabilities) > 64 * 1024:
                     raise ValueError("operation discovery failed or exceeded its bound")
-                capabilities = json.loads(capabilities)
-                required = {"validate", "plan", "diff", "up", "down", "stop", "start", "restart", "rm", "teardown"}
-                if (not isinstance(capabilities, dict) or capabilities.get("version") != "dill.operation/1"
-                        or not isinstance(capabilities.get("operations"), list)
-                        or not all(isinstance(value, str) for value in capabilities["operations"])
-                        or not required.issubset(capabilities["operations"])
-                        or not isinstance(capabilities.get("engines"), list)
-                        or args.engine not in capabilities["engines"]):
-                    raise ValueError("operation discovery does not match the explicitly selected contract")
+                capabilities = operation_capabilities(json.loads(capabilities), args.engine)
                 evidence["operationCapabilities"] = capabilities
                 target_env["DILL_TEST_ALPHA_OPERATIONS"] = "1"
                 modes.add("operation-engine")
@@ -370,11 +405,11 @@ def collect(args):
             if len(engine_version) > 64 * 1024:
                 raise ValueError("unexpected engine version response size")
             evidence["engineVersion"] = json.loads(engine_version)
-            tests = list(dict.fromkeys(c["test"] for c in manifest["cases"] if c["mode"] in modes))
+            tests = list(dict.fromkeys(c["test"] for c in runtime_cases if c["mode"] in modes))
             data, passed = recorder.run(["make", "integration-test", make_test_selector(tests)],
                                         timeout=1800, env=target_env)
             states = test_results(data, tests)
-            for case, result in zip(manifest["cases"], evidence["cases"]):
+            for case, result in zip(runtime_cases, runtime_results):
                 if case["mode"] in modes:
                     kind = "real-profile-engine" if case["mode"] == "profile-engine" else "real-engine"
                     result.update(status=states[case["test"]], test=case["test"], evidenceKind=kind,

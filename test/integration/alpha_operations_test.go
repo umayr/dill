@@ -23,13 +23,15 @@ import (
 // This consumer deliberately does not import internal/operation: the executable
 // and the complete wire envelope, not an in-process recorder mock, are tested.
 // API origin: e1a5e2a99341aa7e235c2b3ab98ae2ad45b1c1cc docs/operation-v1.md.
+// Negotiated additive target field: approved #78 86e9d07a2bebe515aeeec48729e29c5ecb0a4d8f.
 type alphaOperationResult struct {
 	Version     string `json:"version"`
 	OperationID string `json:"operationId"`
 	Operation   string `json:"operation"`
 	Target      *struct {
-		Engine         string `json:"engine"`
-		EndpointDigest string `json:"endpointDigest"`
+		Engine                  string `json:"engine"`
+		EndpointDigest          string `json:"endpointDigest"`
+		QualifiedIdentityDigest string `json:"qualifiedIdentityDigest,omitempty"`
 	} `json:"target"`
 	Stack           string `json:"stack"`
 	Outcome         string `json:"outcome"`
@@ -85,6 +87,14 @@ func decodeAlphaOperation(data []byte) (alphaOperationResult, error) {
 		}
 		if err := alphaRequiredFields(targetFields, "engine", "endpointDigest"); err != nil {
 			return result, err
+		}
+		if _, present := targetFields["qualifiedIdentityDigest"]; present {
+			if err := alphaRequiredFields(targetFields, "qualifiedIdentityDigest"); err != nil {
+				return result, err
+			}
+			if result.Target.Engine != "docker" || !regexp.MustCompile(`^sha256:[0-9a-f]{64}$`).MatchString(result.Target.QualifiedIdentityDigest) {
+				return result, fmt.Errorf("invalid qualified target digest")
+			}
 		}
 	}
 	for name, required := range map[string][]string{
@@ -150,14 +160,20 @@ func TestAlphaOperationEnvelopeDecoderNullFields(t *testing.T) {
 		}
 	}
 	for field := range base {
-		t.Run("root/"+field, func(t *testing.T) {
-			value := make(map[string]any, len(base))
-			for key, item := range base {
-				value[key] = item
-			}
-			value[field] = nil
-			assertRejected(t, value)
-		})
+		for _, missing := range []bool{false, true} {
+			t.Run(fmt.Sprintf("root/%s/missing-%v", field, missing), func(t *testing.T) {
+				value := make(map[string]any, len(base))
+				for key, item := range base {
+					value[key] = item
+				}
+				if missing {
+					delete(value, field)
+				} else {
+					value[field] = nil
+				}
+				assertRejected(t, value)
+			})
+		}
 	}
 	for container, template := range map[string]map[string]any{
 		"target":    {"engine": "docker", "endpointDigest": alphaDigest("unix:///synthetic.sock")},
@@ -196,6 +212,72 @@ func TestAlphaOperationEnvelopeDecoderNullFields(t *testing.T) {
 		}
 		value[field] = []any{nil}
 		assertRejected(t, value)
+	}
+}
+
+func TestAlphaOperationEnvelopeDecoderQualifiedFixture(t *testing.T) {
+	// Consume the approved producer's actual fixture without importing its Go
+	// types. This is wire compatibility, never actual daemon qualification.
+	data, err := os.ReadFile(filepath.Join(repoRoot(t), "internal", "operation", "testdata", "qualified-success.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var fixture struct {
+		Expected json.RawMessage `json:"expected"`
+	}
+	if err := json.Unmarshal(data, &fixture); err != nil {
+		t.Fatal(err)
+	}
+	result, err := decodeAlphaOperation(fixture.Expected)
+	if err != nil {
+		t.Fatal(err)
+	}
+	const attested = "sha256:e8602058ec84f05ce8c9db6c09ab4163243537579c950a40d0e82d724d784a80"
+	if result.Target == nil || result.Target.QualifiedIdentityDigest != attested || result.Target.EndpointDigest == attested {
+		t.Fatal("fixture confused selector digest and attested daemon identity")
+	}
+	for _, value := range []any{nil, "", "sha256:", strings.TrimPrefix(attested, "sha256:"), strings.Replace(attested, "sha256:", "sha512:", 1), "sha256:" + strings.Repeat("G", 64), true, 42} {
+		var document map[string]any
+		if err := json.Unmarshal(fixture.Expected, &document); err != nil {
+			t.Fatal(err)
+		}
+		document["target"].(map[string]any)["qualifiedIdentityDigest"] = value
+		bad, err := json.Marshal(document)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := decodeAlphaOperation(bad); err == nil {
+			t.Fatal("accepted malformed/null attested target identity")
+		}
+	}
+	for _, location := range []string{"root", "target"} {
+		var document map[string]any
+		if err := json.Unmarshal(fixture.Expected, &document); err != nil {
+			t.Fatal(err)
+		}
+		fields := document
+		if location == "target" {
+			fields = document["target"].(map[string]any)
+		}
+		fields["unnegotiatedFutureField"] = true
+		bad, _ := json.Marshal(document)
+		if _, err := decodeAlphaOperation(bad); err == nil {
+			t.Fatal("qualified extension broadly admitted unknown fields")
+		}
+	}
+	// Absence is valid for an unqualified target; presence is not Podman support.
+	var unqualified map[string]any
+	if err := json.Unmarshal(fixture.Expected, &unqualified); err != nil {
+		t.Fatal(err)
+	}
+	delete(unqualified["target"].(map[string]any), "qualifiedIdentityDigest")
+	plain, _ := json.Marshal(unqualified)
+	if _, err := decodeAlphaOperation(plain); err != nil {
+		t.Fatal("optional attested identity became mandatory")
+	}
+	podman := strings.Replace(string(fixture.Expected), `"engine": "docker"`, `"engine": "podman"`, 1)
+	if _, err := decodeAlphaOperation([]byte(podman)); err == nil {
+		t.Fatal("attested digest advertised unsupported Podman qualification")
 	}
 }
 
@@ -246,7 +328,7 @@ func TestAlphaOperationEnvelopeConformance(t *testing.T) {
 		if code != wantExit || result.Outcome != outcome || result.Effects != effects {
 			t.Fatalf("%s: exit/outcome/effects=%d/%s/%s; want %d/%s/%s", operation, code, result.Outcome, result.Effects, wantExit, outcome, effects)
 		}
-		if result.Operation != operation || result.Stack != stack || result.Target == nil || result.Target.Engine != env.engine || result.Target.EndpointDigest != alphaDigest(socket) || seen[result.OperationID] {
+		if result.Operation != operation || result.Stack != stack || result.Target == nil || result.Target.Engine != env.engine || result.Target.EndpointDigest != alphaDigest(socket) || result.Target.QualifiedIdentityDigest != "" || seen[result.OperationID] {
 			t.Fatal("incorrect operation/target/stack correlation or reused operation ID")
 		}
 		seen[result.OperationID] = true
