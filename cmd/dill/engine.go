@@ -16,12 +16,20 @@ func newEngine(ctx context.Context, engineName string, opts commandOptions) (orc
 	if err != nil {
 		return nil, err
 	}
+	if opts.operation != nil && opts.operation.engine != nil {
+		if opts.operation.engine.Adapter != engineName || opts.operation.endpoint != endpoint {
+			return nil, usageError{"operation target changed"}
+		}
+		return opts.operation.engine, nil
+	}
 	engine, err := engineFactory(ctx, engineName, endpoint)
 	if err != nil {
 		return nil, err
 	}
 	if opts.operation != nil {
-		return &operation.Engine{Engine: engine, Recorder: opts.operation.recorder, Adapter: engineName}, nil
+		opts.operation.engine = &operation.Engine{Engine: engine, Recorder: opts.operation.recorder, Adapter: engineName, Borrowed: true}
+		opts.operation.endpoint = endpoint
+		return opts.operation.engine, nil
 	}
 	return engine, nil
 }

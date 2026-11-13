@@ -131,6 +131,61 @@ func TestOperationForeignCollisionNoPullOrWrite(t *testing.T) {
 	}
 }
 
+type operationCensusEngine struct {
+	*ownershipEngine
+	inspected []string
+	closed    int
+}
+
+func (e *operationCensusEngine) InspectConfig(ctx context.Context, name string) (*orchestrator.LiveConfig, error) {
+	e.inspected = append(e.inspected, name)
+	return e.ownershipEngine.InspectConfig(ctx, name)
+}
+func (e *operationCensusEngine) Close() error { e.closed++; return nil }
+func (e *operationCensusEngine) RemoveImage(context.Context, string, bool) error {
+	e.mutations = append(e.mutations, "image")
+	return nil
+}
+
+func TestOperationEveryLifecycleCensusBeforeFirstWrite(t *testing.T) {
+	for _, adapter := range []string{"docker", "podman"} {
+		for _, name := range []string{"up", "down", "stop", "start", "restart", "rm", "teardown"} {
+			for _, foreignOrphan := range []bool{false, true} {
+				f := &operationCensusEngine{ownershipEngine: &ownershipEngine{fakeEngine: newFakeEngine(), orphans: []string{"app_a", "app_z"}, live: map[string]*orchestrator.LiveConfig{
+					"app_a": {ID: "owned-first", SystemLabels: map[string]string{"dill.managed": "true", "dill.stack": "app", "dill.service": "a"}},
+					"app_z": {ID: "FOREIGN_SENTINEL"},
+				}}}
+				cfg := testConfig()
+				cfg.Services = map[string]*config.Service{"a": {Image: "busybox", PullPolicy: "always"}}
+				if !foreignOrphan {
+					cfg.Services["z"] = &config.Service{Image: "busybox"}
+				}
+				withTestRuntime(t, f, cfg, func() {
+					opens := 0
+					engineFactory = func(_ context.Context, engine, endpoint string) (orchestrator.Engine, error) {
+						opens++
+						if engine != adapter || endpoint != "unix:///synthetic/SOCKET_SENTINEL.sock" {
+							t.Fatal("target changed")
+						}
+						return f, nil
+					}
+					extra := []string{"--yes"}
+					if name != "teardown" {
+						extra = append(extra, "a")
+						if !foreignOrphan {
+							extra = append(extra, "z")
+						}
+					}
+					result, code, _ := captureOperation(t, "", operationArgs(name, adapter, extra...))
+					if code != 1 || result.Outcome != "failed" || result.Effects != "none" || len(f.mutations) > 0 || len(f.pulled) > 0 || opens != 1 || f.closed != 1 || !reflect.DeepEqual(f.inspected, []string{"app_a", "app_z"}) {
+						t.Fatalf("%s/%s orphan=%v: result=%+v mutations=%v pulls=%v opens=%d closed=%d census=%v", adapter, name, foreignOrphan, result, f.mutations, f.pulled, opens, f.closed, f.inspected)
+					}
+				})
+			}
+		}
+	}
+}
+
 func TestOperationStopCensusRejectsForeignLaterTarget(t *testing.T) {
 	for _, engine := range []string{"docker", "podman"} {
 		f := &ownershipEngine{fakeEngine: newFakeEngine(), live: map[string]*orchestrator.LiveConfig{
@@ -151,7 +206,10 @@ func TestOperationStopCensusRejectsForeignLaterTarget(t *testing.T) {
 type operationStopRaceEngine struct {
 	*ownershipEngine
 	inspected []string
+	closed    int
 }
+
+func (e *operationStopRaceEngine) Close() error { e.closed++; return nil }
 
 func (e *operationStopRaceEngine) InspectConfig(ctx context.Context, name string) (*orchestrator.LiveConfig, error) {
 	e.inspected = append(e.inspected, name)
@@ -172,7 +230,7 @@ func TestOperationStopUsesCapturedImmutableIDs(t *testing.T) {
 		cfg.Services["other"] = &config.Service{Image: "busybox"}
 		withTestRuntime(t, f, cfg, func() {
 			result, code, _ := captureOperation(t, "", operationArgs("stop", engine, "web", "other"))
-			if code != 0 || result.Effects != "complete" || !reflect.DeepEqual(f.mutations, []string{"stop:first-id", "stop:second-id"}) || !reflect.DeepEqual(f.inspected, []string{"app_web", "app_other"}) {
+			if code != 0 || result.Effects != "complete" || !reflect.DeepEqual(f.mutations, []string{"stop:first-id", "stop:second-id"}) || !reflect.DeepEqual(f.inspected, []string{"app_other", "app_web", "app_web", "app_other"}) || f.closed != 1 {
 				t.Fatalf("census was not immutable: %+v, mutations=%v inspected=%v", result, f.mutations, f.inspected)
 			}
 		})

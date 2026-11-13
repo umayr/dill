@@ -17,6 +17,14 @@ type Engine struct {
 	orchestrator.Engine
 	Recorder *Recorder
 	Adapter  string
+	Borrowed bool // invocation owner releases the underlying engine after all handlers
+}
+
+func (e *Engine) Close() error {
+	if e.Borrowed {
+		return nil
+	}
+	return e.Engine.Close()
 }
 
 func (e *Engine) CLIEndpoint() string {
