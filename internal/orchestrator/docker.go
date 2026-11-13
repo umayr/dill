@@ -524,6 +524,13 @@ func (d *DockerEngine) InspectConfig(ctx context.Context, name string) (*LiveCon
 		}
 	}
 
+	var networks []string
+	networksKnown := info.NetworkSettings.Networks != nil
+	for name := range info.NetworkSettings.Networks {
+		networks = append(networks, name)
+	}
+	sort.Strings(networks)
+
 	// Mounts → []config.VolumeMount.
 	// For named volumes Docker resolves Source to the host path
 	// (/var/lib/docker/volumes/<name>/_data). Use the Name field instead so
@@ -571,6 +578,11 @@ func (d *DockerEngine) InspectConfig(ctx context.Context, name string) (*LiveCon
 	}
 
 	return &LiveConfig{
+		HostConfigKnown: true,
+		Privileged:      info.HostConfig.Privileged,
+		HasTmpfs:        len(info.HostConfig.Tmpfs) > 0,
+		PIDMode:         string(info.HostConfig.PidMode), IPCMode: string(info.HostConfig.IpcMode), UTSMode: string(info.HostConfig.UTSMode), CgroupNSMode: string(info.HostConfig.CgroupnsMode),
+		HasDevices:    len(info.HostConfig.Devices) > 0 || len(info.HostConfig.DeviceRequests) > 0 || len(info.HostConfig.DeviceCgroupRules) > 0,
 		MountsKnown:   true,
 		UserNSMode:    string(info.HostConfig.UsernsMode),
 		ID:            info.ID,
@@ -583,6 +595,8 @@ func (d *DockerEngine) InspectConfig(ctx context.Context, name string) (*LiveCon
 		UserLabels:    userLabels,
 		SystemLabels:  systemLabels,
 		NetworkMode:   string(info.HostConfig.NetworkMode),
+		NetworksKnown: networksKnown,
+		Networks:      networks,
 		User:          info.Config.User,
 		HealthTest:    healthTest,
 		Command:       []string(info.Config.Cmd),

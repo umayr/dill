@@ -10,13 +10,21 @@ or claim global serialization. There is no distributed locking guarantee.
 ## Supported invocation and trust boundary
 
 The initial layout is native CLI and native Brine co-located on one disposable
-Docker host, under one dedicated operator account, sharing one pre-existing
+**Linux Docker host**, under one dedicated operator account, sharing one pre-existing
 absolute mode-0700 operator-owned state directory. The filesystem's cross-process
 flock, file/directory sync and atomic local link behavior must be independently
 qualified. `--coordination-layout native-local-docker-v1` explicitly attests those
 facts; a pathname, owner/mode check or layout string alone does not prove them.
 Unqualified namespaces, containers, separate state mounts, remote transports,
-Podman and ambiguous filesystem semantics are unsupported. No production use.
+Podman and ambiguous filesystem semantics are unsupported. macOS Docker Desktop,
+Colima, VM/proxy sockets and containerized Brine are not native Docker-host
+layouts. Production qualified requests on non-Linux OS reject BEFORE config,
+socket or state access; qualification is not advertised there. Legacy operations
+and metadata discovery remain available. There is NO production environment or
+flag bypass. Linux is necessary, NOT proof of co-location or a shared namespace:
+trusted explicit operator provisioning is still required. Darwin library and
+fake-SDK tests explicitly simulate a supported host; they are not deployment
+qualification. No production use.
 
 Use only prepared local images and disposable/synthetic data. An operator must
 independently establish the expected Docker daemon ID during provisioning; this
@@ -53,17 +61,41 @@ Additional conservative restrictions:
 - `up` requires effective `pullPolicy = "never"` for every service, or an explicit
   `--pull never`. The guard refuses every attempted pull even if a future handler
   accidentally reaches one. Local image metadata must be available before writes.
+- The complete locked census validates ACTUAL existing workloads, not just safe
+  desired config or labels: actual host config must be known, with no added
+  capabilities, privileged mode, device mappings/requests/grants, explicit tmpfs,
+  user-namespace modes/ID maps, or special PID/IPC/UTS/cgroup namespace modes.
+  Ordinary empty/private namespace defaults are allowed. Actual ordinary mount
+  evidence also rejects tmpfs; engine-internal `/dev/shm` is not invented as a
+  user mount. Both adapters expose native inspection evidence; enforcement stays
+  opt-in qualified only, with no legacy behavior or desired IR/schema change.
 - Image-declared `VOLUME` destinations are all unsupported initially. Otherwise
   Docker can create anonymous storage not present in the declared inventory.
   The shared disposable image preflight/strict adapter pins the inspected local
   immutable image ID at create time rather than trusting a mutable tag.
-- Bind mounts, external/anonymous volumes and special network modes are rejected.
-  Named volumes and explicit container names are inventoried and target-wide
-  locked. This is coordination, not a replacement for disposable storage policy,
-  ownership checks or destructive intent enforcement (#79).
+  This ALSO checks every existing container's ACTUAL immutable `live.ImageID`
+  through that same canonical read-only inspector before ANY handler write;
+  desired new image metadata does not attest an older workload. Missing, malformed
+  or ID-mismatched actual image evidence fails closed, and any VOLUME rejects even
+  if an owned declared mount covers its destination. This is bounded pilot
+  validation, not a new provenance/hash-equality system: safe older images remain
+  valid for direct lifecycle operations.
+- The canonical #79 disposable static boundary applies automatically, without
+  requiring a separate profile flag: bind/external/anonymous/explicit-engine-name
+  volumes, tmpfs, special network modes, devices and added capabilities reject
+  before socket access. Declared stack-scoped named volumes and explicit
+  container names are inventoried and target-wide locked. Whole-resource
+  read-only network/volume/image ownership preflight runs under those locks
+  BEFORE any handler write; shared strict guardrails revalidate before create.
+  The full inventory budget (at most 256 resource identities) is checked before
+  opening a target or creating state metadata.
+  Explicit `--alpha-disposable` may compose with this automatic qualified guard.
+  This does not replace destructive intent enforcement or actual host qualification.
 - The whole declared inventory is locked even for a subset operation. Live
   ownership/mount/network census runs while holding those same locks, before
-  every handler. Undeclared containers/orphans and uninventoried live storage
+  every handler. Actual attached-network metadata must be known and contain
+  exactly the declared stack network; Docker default `bridge`/`default` host
+  mode aliases are not themselves evidence of which networks are attached. Undeclared containers/orphans and uninventoried live storage
   fail closed, never get pruned. Existing ownership and immutable-ID checks in
   handlers still apply; a stale preflight is not a deletion authorization.
 
@@ -132,6 +164,15 @@ exact two-link result/commit inode pair and matching head metadata; other files
 continue to reject hard links. Persistent terminal sync failure leaves the
 original head unresolved even if terminal bytes happen to be visible. A failed
 `Finish` becomes an unknown receipt, not success, and blocks later mutations.
+
+The SDK and qualified transport close while stack/resource locks remain held,
+BEFORE finalizing axes and publishing a terminal result. A transport-close error
+therefore becomes the SAME durable unknown outcome shown in the receipt and
+blocks subsequent mutation. A later lock/directory cleanup error cannot invent
+stdout-only unknown effects after a known commit: it preserves recorded axes,
+adds fixed `COORDINATION_RELEASE_FAILED`, and exits 1 for local cleanup failure.
+Consumers must honor process exit/errors, not interpret a succeeded engine axis
+alone as overall invocation success.
 
 The publication link itself is intentionally not separately dir-synced. If lost
 after crash, independently durable result bytes remain but recovery treats the

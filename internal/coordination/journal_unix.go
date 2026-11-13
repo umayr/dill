@@ -20,6 +20,7 @@ import (
 
 const JournalVersion = "dill.coordination/1"
 const maxRecord = 128 * 1024
+const MaxResources = 256
 
 // ResourceInput is the COMPLETE pre-mutation inventory, not engine output.
 // Shared image deletion and unenumerated resources must be rejected by callers.
@@ -118,6 +119,22 @@ func resourceOK(r ResourceInput) bool {
 	}
 	return r.Action != "pull"
 }
+
+// ValidateInventory checks the full static resource budget before target/state
+// access. Begin repeats it defensively; callers must never qualify then discover
+// that their declared inventory was unsupported all along.
+func ValidateInventory(resources []ResourceInput) error {
+	if len(resources) > MaxResources {
+		return errors.New("unsupported resource inventory")
+	}
+	for _, resource := range resources {
+		if !resourceOK(resource) {
+			return errors.New("unsupported resource inventory")
+		}
+	}
+	return nil
+}
+
 func keysFor(s *State, r Record) [][32]byte {
 	keys := [][32]byte{s.stackKey(r.Target, r.Stack)}
 	for _, resource := range r.Resources {
@@ -161,7 +178,7 @@ func (s *State) Begin(ctx context.Context, target *Target, stack, source string,
 	if _, err := s.scope(target.Identity(), stack); err != nil {
 		return nil, err
 	}
-	if source != "cli" && source != "brine" || len(resources) > 256 {
+	if source != "cli" && source != "brine" || ValidateInventory(resources) != nil {
 		return nil, errors.New("unsupported operation metadata")
 	}
 	record := Record{Version: JournalVersion, Source: source, Target: target.Identity(), Stack: s.token("stack", stack), Resources: []Resource{}, State: "in_progress", Outcome: "unknown", Effects: "unknown"}
@@ -400,7 +417,7 @@ func (s *State) load(name, target, stack string) (*Record, error) {
 	return head, nil
 }
 func validRecord(r Record) bool {
-	if r.Version != JournalVersion || !strings.HasPrefix(r.OperationID, "op_") || !hexID(strings.TrimPrefix(r.OperationID, "op_"), 32) || !hexID(r.Target, 64) || !hexID(r.Stack, 64) || r.Resources == nil || len(r.Resources) > 256 || r.Source != "cli" && r.Source != "brine" {
+	if r.Version != JournalVersion || !strings.HasPrefix(r.OperationID, "op_") || !hexID(strings.TrimPrefix(r.OperationID, "op_"), 32) || !hexID(r.Target, 64) || !hexID(r.Stack, 64) || r.Resources == nil || len(r.Resources) > MaxResources || r.Source != "cli" && r.Source != "brine" {
 		return false
 	}
 	for _, v := range r.Resources {

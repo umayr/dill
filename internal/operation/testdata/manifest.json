@@ -8,6 +8,6 @@
     "unsupported-version.json",
     "unsupported-operation.json"
   ],
-  "qualifiedFixtures": ["qualified-success.json"],
+  "qualifiedFixtures": ["qualified-success.json", "qualified-cleanup-failure.json"],
   "scope": "CLI result summaries; synthetic test runtime and qualified Unix-socket Docker SDK fixture, not live engine conformance or Brine consumer evidence."
 }

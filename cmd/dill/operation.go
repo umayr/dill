@@ -66,15 +66,21 @@ func runOperationCapabilities(args []string) error {
 	if fs.Parse(args) != nil || *format != "json" || fs.NArg() != 0 {
 		return protocolExit{2}
 	}
+	features := []string{"explicitLocalSelector", "attended", "redactedSummary", "conservativeEffects"}
+	qOperations, qEngines, qLayouts := []string{}, []string{}, []string{}
+	if qualifiedNativeHost() {
+		features = append(features, "optInQualifiedLocalCoordination")
+		qOperations, qEngines, qLayouts = qualifiedOperations, qualifiedEngines, qualifiedLayouts
+	}
 	err := json.NewEncoder(os.Stdout).Encode(struct {
 		Version                         string   `json:"version"`
 		Operations                      []string `json:"operations"`
 		Engines                         []string `json:"engines"`
 		Features                        []string `json:"features"`
-		QualifiedCoordinationOperations []string `json:"qualifiedCoordinationOperations"`
-		QualifiedCoordinationEngines    []string `json:"qualifiedCoordinationEngines"`
-		QualifiedCoordinationLayouts    []string `json:"qualifiedCoordinationLayouts"`
-	}{operation.Version, operation.Operations, []string{"docker", "podman"}, []string{"explicitLocalSelector", "attended", "redactedSummary", "conservativeEffects", "optInQualifiedLocalCoordination"}, qualifiedOperations, qualifiedEngines, qualifiedLayouts})
+		QualifiedCoordinationOperations []string `json:"qualifiedCoordinationOperations,omitempty"`
+		QualifiedCoordinationEngines    []string `json:"qualifiedCoordinationEngines,omitempty"`
+		QualifiedCoordinationLayouts    []string `json:"qualifiedCoordinationLayouts,omitempty"`
+	}{operation.Version, operation.Operations, []string{"docker", "podman"}, features, qOperations, qEngines, qLayouts})
 	if err != nil {
 		return protocolExit{1}
 	}
@@ -94,7 +100,11 @@ func runOperation(ctx context.Context, args []string) error {
 	state := &operationState{recorder: &operation.Recorder{}}
 	defer state.release()
 	emit := func(code int, errorCode, message string) error {
-		if state.releaseEngine() != nil {
+		closeErr := state.releaseEngine()
+		if state.coordination != nil {
+			closeErr = errors.Join(closeErr, state.coordination.closeTransport())
+		}
+		if closeErr != nil {
 			result.Outcome = "unknown"
 			code = 1
 			errorCode = "ENGINE_CLOSE_FAILED"
@@ -118,9 +128,11 @@ func runOperation(ctx context.Context, args []string) error {
 			}
 		}
 		if state.release() != nil {
-			result.Outcome, result.Effects = "unknown", "unknown"
+			// Effects/outcome were already durably finalized. A local lock/fd
+			// cleanup error is not new uncertainty about engine mutations; do
+			// not manufacture stdout-only unknown axes after a known commit.
 			code = 1
-			result.Errors = append(result.Errors, operation.Error{Code: "COORDINATION_RELEASE_FAILED", Message: "Coordination release failed. Inspect state before retrying."})
+			result.Errors = append(result.Errors, operation.Error{Code: "COORDINATION_RELEASE_FAILED", Message: "Engine outcome was recorded; local coordination cleanup failed."})
 		}
 		if json.NewEncoder(os.Stdout).Encode(result) != nil {
 			return protocolExit{1}

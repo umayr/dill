@@ -6,6 +6,7 @@ import (
 	"flag"
 	"io"
 	"path/filepath"
+	"runtime"
 	"sort"
 	"strings"
 	"sync"
@@ -15,6 +16,11 @@ import (
 	"github.com/umayr/dill/internal/operation"
 	"github.com/umayr/dill/internal/orchestrator"
 )
+
+// No production environment/flag override: native Docker HOST qualification
+// is Linux-only. Package tests may replace this predicate to simulate the
+// qualified host while exercising SDK transport on Darwin.
+var qualifiedNativeHost = func() bool { return runtime.GOOS == "linux" }
 
 var qualifiedOperations = []string{"up", "down", "stop", "start", "restart", "rm"}
 var qualifiedEngines = []string{"docker"}
@@ -47,19 +53,20 @@ func (c coordinationOptions) validate(name string, opts commandOptions) error {
 			supported = true
 		}
 	}
-	if !supported || opts.Engine != "docker" || !filepath.IsAbs(c.directory) || c.layout != coordination.NativeDockerLayout || c.daemonID == "" || (c.source != "cli" && c.source != "brine") {
+	if !qualifiedNativeHost() || !supported || opts.Engine != "docker" || !filepath.IsAbs(c.directory) || c.layout != coordination.NativeDockerLayout || c.daemonID == "" || (c.source != "cli" && c.source != "brine") {
 		return usageError{"unsupported qualified coordination invocation"}
 	}
 	return nil
 }
 
 type operationCoordination struct {
-	options     coordinationOptions
-	target      *coordination.Target
-	state       *coordination.State
-	session     *coordination.Session
-	guard       *coordinatedEngine
-	operationID string
+	options         coordinationOptions
+	target          *coordination.Target
+	state           *coordination.State
+	session         *coordination.Session
+	guard           *coordinatedEngine
+	operationID     string
+	transportClosed bool
 }
 
 // prepare validates the complete DECLARED inventory before engine/state access.
@@ -67,6 +74,25 @@ type operationCoordination struct {
 // external/anonymous/bind storage, special networks and undeclared orphans.
 // Unsupported options never fall back to uncoordinated behavior.
 func (c *operationCoordination) prepare(ctx context.Context, opts commandOptions, cfg *config.DillConfig, name, pull string) error {
+	// Apply the canonical pilot's complete static boundary before opening a
+	// socket. Copy policy overrides; never mutate unselected desired config.
+	effective := *cfg
+	effective.Services = make(map[string]*config.Service, len(cfg.Services))
+	for service, svc := range cfg.Services {
+		if svc == nil {
+			return usageError{"unsupported qualified service layout"}
+		}
+		copy := *svc
+		if name != "up" {
+			copy.PullPolicy = "never"
+		} else if pull != "" {
+			copy.PullPolicy = pull
+		}
+		effective.Services[service] = &copy
+	}
+	if err := orchestrator.ValidateDisposableConfig(&effective); err != nil {
+		return usageError{"unsupported qualified disposable configuration"}
+	}
 	stack := resolveStackNameWithOptions(cfg, opts)
 	resources := []coordination.ResourceInput{{Kind: "network", Name: stack, Action: "reconcile"}}
 	containers, volumes := map[string]bool{}, map[string]bool{}
@@ -104,6 +130,9 @@ func (c *operationCoordination) prepare(ctx context.Context, opts commandOptions
 		}
 		return resources[i].Name < resources[j].Name
 	})
+	if err := coordination.ValidateInventory(resources); err != nil {
+		return usageError{"unsupported qualified resource inventory"}
+	}
 	// State changes are local metadata, separate from engine effects. Qualification
 	// is read-only; the expected ID is operator assertion, not authorization.
 	socket := strings.TrimPrefix(opts.EngineSocket, "unix://")
@@ -143,6 +172,10 @@ func (c *operationCoordination) prepare(ctx context.Context, opts commandOptions
 			return usageError{"qualified operations cannot prune undeclared containers"}
 		}
 	}
+	actualImages, ok := c.guard.Engine.(orchestrator.DisposableImageInspector)
+	if !ok {
+		return orchestrator.ErrDisposableUnavailable
+	}
 	for service, svc := range cfg.Services {
 		container := serviceContainerName(stack, service, svc)
 		live, err := engine.InspectConfig(ctx, container)
@@ -155,34 +188,54 @@ func (c *operationCoordination) prepare(ctx context.Context, opts commandOptions
 		if err = orchestrator.CheckOwnership(container, stack, service, live); err != nil {
 			return err
 		}
-		if live == nil || live.ID == "" || !live.MountsKnown || (live.NetworkMode != "" && live.NetworkMode != stack) {
+		modeOK := live != nil && (live.NetworkMode == "" || live.NetworkMode == "bridge" || live.NetworkMode == "default" || live.NetworkMode == stack)
+		if live == nil || live.ID == "" || !live.MountsKnown || !modeOK || !live.NetworksKnown || len(live.Networks) != 1 || live.Networks[0] != stack {
 			return usageError{"unsupported qualified live resource layout"}
 		}
-		for _, mount := range live.Volumes {
-			if mount.Type == "tmpfs" {
-				continue
+		// Ownership labels and safe desired config do not attest the existing
+		// workload. Census the actual host settings before any lifecycle write.
+		if !live.HostConfigKnown || live.Privileged || len(live.CapAdd) > 0 || live.HasDevices || live.HasTmpfs || live.UserNSMode != "" || len(live.UIDMap) > 0 || len(live.GIDMap) > 0 {
+			return usageError{"unsupported qualified live workload"}
+		}
+		for _, mode := range []string{live.PIDMode, live.IPCMode, live.UTSMode, live.CgroupNSMode} {
+			if mode != "" && mode != "private" {
+				return usageError{"unsupported qualified live namespace"}
 			}
+		}
+		// start/restart can execute an OLD immutable image despite a safe new
+		// desired reference. Apply the same no-VOLUME pilot boundary to the
+		// actual image, even when a declared owned mount covers its destination.
+		if live.ImageID == "" {
+			return orchestrator.ErrDisposableUnavailable
+		}
+		actualID, implicitVolumes, imageErr := actualImages.DisposableImage(ctx, live.ImageID)
+		if imageErr != nil || actualID != live.ImageID {
+			return orchestrator.ErrDisposableUnavailable
+		}
+		if len(implicitVolumes) > 0 {
+			return orchestrator.ErrDisposableUnsupported
+		}
+		for _, mount := range live.Volumes {
 			if mount.Type != "volume" || !volumes[mount.Source] {
 				return usageError{"live storage is outside qualified inventory"}
 			}
 		}
 		c.guard.ids[live.ID] = true
 	}
-	if name == "up" {
-		// Image-declared VOLUME creates anonymous resources inside ContainerCreate;
-		// reject these before ANY engine writes, even when config mounts are empty.
-		// #79 owns the shared metadata seam and strict adapter create path.
-		// Without both capabilities, qualified up remains unavailable.
-		if err = c.guard.EnforceDisposableVolumes(); err != nil {
-			return err
-		}
-		for _, svc := range cfg.Services {
-			id, targets, err := c.guard.DisposableImage(ctx, svc.Image)
-			if err != nil || id == "" || len(targets) != 0 {
-				return errors.New("prepared image qualification failed")
-			}
-		}
+	// Shared #79 whole-resource read-only preflight MUST precede every handler,
+	// not merely volume creation or a caller-selected --alpha-disposable flag.
+	// Its wrapper also revalidates before network/container creation and its
+	// strict adapter pins the just-inspected immutable image for actual create.
+	enforcer, ok := c.guard.Engine.(orchestrator.DisposableVolumeEnforcer)
+	if !ok {
+		return orchestrator.ErrDisposableUnavailable
 	}
+	c.guard.enforcer = enforcer
+	guarded, err := orchestrator.WithDisposableGuardrails(ctx, c.guard.Engine, &effective, stack)
+	if err != nil {
+		return err
+	}
+	c.guard.Engine = guarded
 	return nil
 }
 
@@ -203,14 +256,22 @@ func (c *operationCoordination) finish(result *operation.Result) error {
 	result.OperationID = c.session.OperationID()
 	return c.session.Finish(result.Outcome, result.Effects)
 }
-func (c *operationCoordination) close() error {
-	var err error
-	if c.target != nil {
-		err = errors.Join(err, c.target.Close())
-		c.target = nil
+
+var closeCoordinatedTarget = func(target *coordination.Target) error { return target.Close() }
+var closeCoordinatedSession = func(session *coordination.Session) error { return session.Close() }
+
+func (c *operationCoordination) closeTransport() error {
+	if c.target == nil || c.transportClosed {
+		return nil
 	}
+	c.transportClosed = true
+	return closeCoordinatedTarget(c.target)
+}
+func (c *operationCoordination) close() error {
+	err := c.closeTransport()
+	c.target = nil
 	if c.session != nil {
-		err = errors.Join(err, c.session.Close())
+		err = errors.Join(err, closeCoordinatedSession(c.session))
 		c.session = nil
 	}
 	if c.state != nil {
@@ -230,6 +291,7 @@ type coordinatedEngine struct {
 	containers, volumes map[string]bool
 	mu                  sync.Mutex
 	ids                 map[string]bool
+	enforcer            orchestrator.DisposableVolumeEnforcer
 }
 
 func (e *coordinatedEngine) active() error {
@@ -339,8 +401,10 @@ func (e *coordinatedEngine) DisposableImage(ctx context.Context, image string) (
 	return "", nil, errors.New("prepared image qualification unavailable")
 }
 func (e *coordinatedEngine) EnforceDisposableVolumes() error {
-	if v, ok := e.Engine.(orchestrator.DisposableVolumeEnforcer); ok {
-		return v.EnforceDisposableVolumes()
+	// Retain the explicit capability of the SAME raw qualified adapter even
+	// after installing #79's disposable wrapper (whose Engine field is narrow).
+	if e.enforcer != nil {
+		return e.enforcer.EnforceDisposableVolumes()
 	}
 	return errors.New("disposable volume enforcement unavailable")
 }

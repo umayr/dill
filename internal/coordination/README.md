@@ -8,13 +8,20 @@ review, disposable engine/Brine qualification and bypass-path workflow gates.
 
 ## Qualified boundary
 
-- Native CLI and Brine on one disposable Docker host, one dedicated operator
+- Native CLI and Brine on one disposable **Linux Docker host**, one dedicated operator
   account, one shared pre-existing absolute operator-owned mode-0700 directory.
 - The operator must independently qualify this layout, filesystem flock/fsync/
   atomic local link semantics, account isolation, daemon identity uniqueness,
   and endpoint access. `native-local-docker-v1` is an explicit attestation, not
   automatic detection or authorization. Container/namespace/distributed/NFS
   layouts are unsupported; passing a false native attestation is not supported.
+  The production CLI rejects non-Linux qualified requests before config/socket/
+  state access and omits qualification from discovery there. macOS Desktop,
+  Colima and VM/proxy layouts are excluded. Linux is necessary, NOT automatic
+  host/namespace evidence; provisioning trust remains. Library/fake-SDK tests on
+  Darwin simulate a supported host using test-only injection, not a production
+  environment/flag bypass. The primitive library alone does not establish host
+  placement; its caller must enforce the qualified boundary before any effects.
 - Explicit existing local Unix socket and independently provisioned expected
   Docker `/info` ID. Remote targets, other engines and guessed identities fail.
 - Trusted state must not be deleted, substituted, copied or independently
@@ -33,6 +40,15 @@ an established operation to a different daemon. Disconnects, daemon idle closes,
 streaming/hijack use and concurrent HTTP requests can reduce availability: there
 is deliberately no transparent reconnect. `Target.Close` is idempotent.
 
+The CLI's locked whole-inventory census separately requires known ACTUAL host
+settings and immutable image metadata for each existing container. It rejects
+added capabilities, privileged mode, devices, explicit tmpfs and special user/
+PID/IPC/UTS/cgroup namespaces, preserving ordinary empty/private defaults. The
+canonical DisposableImage inspector must resolve actual live.ImageID exactly
+and report no VOLUME, even if a safe new desired image or a covering named mount
+exists. This does not compare labels/hashes as provenance; safe older images are
+valid. Unqualified legacy behavior is unchanged.
+
 ## Integration API
 
 ```
@@ -41,9 +57,12 @@ state = Open(ctxWithDeadline, existingPrivateDirectory)
 session = state.Begin(ctxWithDeadline, target, exactResolvedStack,
                       "cli" or "brine", completeResourceInventory)
 // only now may the already-qualified engine mutate
+// close SDK + target while session locks remain held; classify close failures
+// into the final axes BEFORE committing (unknown if effects are uncertain)
+engine.Close()
+target.Close()
 session.Finish(actualOutcome, actualEffects)
 session.Close()
-target.Close()
 state.Close()
 ```
 
@@ -57,7 +76,10 @@ Read-only preflight snapshots may need rebuilding after locks are acquired.
 
 Do not publish the terminal operation result until `Finish` succeeds. On its
 failure report unknown effects and require inspection, never success or replay.
-The result operation ID is `session.OperationID()`. Unknown/partial/cancelled
+The result operation ID is `session.OperationID()`. A `StartError` also carries
+that same ID if a failed Begin installed any partial state but returned no
+session. Post-commit local lock/directory cleanup errors cannot change the
+already-known engine axes in only stdout. Unknown/partial/cancelled
 outcomes can have effects; cancellation does not imply rollback.
 
 ## Durable protocol and recovery
