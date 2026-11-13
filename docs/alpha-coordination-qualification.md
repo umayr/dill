@@ -81,7 +81,7 @@ not optional capability flags. None is implemented by this document.
 | `corrupt-journal-rejection` | Corrupt/truncate a copied synthetic journal; stale daemon identity/stack/layout/schema; unsafe state-directory permissions/layout. | Reject before pull/write; do not auto-delete/repair/reinterpret state. Disallowed filesystem layouts remain unsupported. |
 | `inspected-exact-operation-recovery` | Read-only inspect of the unknown record and actual live resources, then wrong-ID ack, omitted-inspected ack, exact-ID inspected ack. | Wrong/absent intent cannot clear uncertainty. Exact inspected acknowledgement only clears its record; it does not execute/replay/rollback. A fresh operation gets a new ID and reconciles observed state. |
 | `operation-outcomes` | Success, no-op, invalid config, deadline/SIGTERM, ambiguous mutation failure and durable-finish failure on combined handlers. | Exact fixed/redacted result; partial/unknown effects stay conservative; failed durable finish never emits succeeded; no raw config/source/engine error leakage. |
-| `no-prune` | Omit a live owned service, then repeat operation including retained volume and foreign same-name/name-reuse cases. | Explicit no-prune preserves omitted ID/state/data; preflight rejects foreign ownership before any pull/write; removal revalidates immutable intended IDs after prompts. |
+| `no-prune` | Isolated CLI `up --no-prune`, omit a running owned service, then successfully repeat with coordination/profile flags ABSENT. | Explicit positive preservation of omitted ID/running state on the pinned engine; approved `engine` / `real-engine` row. Qualified mode forbids orphans and separately must reject them zero-write, never counted as this positive result. |
 | `bounded-storage-preflight` | Mount/capability/namespace/secret/image-policy violations; live resource census changes after prompt. | Bounded profile rejects before mutation; no orphan or uninventoried mount slips through; denied requests leave all snapshots unchanged. |
 | `foreign-resource-inventory` | Check the dedicated inventory around **every** above scenario and cleanup, not only collision. | Foreign container/network/volume identity, state and data remain unchanged. Cleanup is not database rollback. |
 | `brine-candidate-handoff` | Supply immutable exact binary+schema+versioned fixtures, verify copied checksums, exercise copied qualified CLI caller contract with source brine when checking usability. | Dill-side artifact supply and pinned caller contract only; no released-old-binary substitution. Actual Brine app/browser E2E is downstream #69, separately NOT RUN/unproven, not a prerequisite for #80 supply. |
@@ -90,7 +90,10 @@ not optional capability flags. None is implemented by this document.
 
 The current manifest leaves the final combined rows blocked. Narrower #79
 `--profiles` runs populate only the separate `preparedProfiles` observations;
-those results cannot satisfy any required combined row. In particular, qualified
+those results cannot satisfy any required row. Required positive no-prune is
+instead explicitly bound to its actual isolated CLI test and ordinary engine
+evidence, as approved; it is not automatically promoted from prepared output.
+In particular, qualified
 unsupported/foreign preflight must run **without** the separate
 `--alpha-disposable` flag, so that flag cannot hide a coordinator preflight gap.
 Once implemented, each combined row gets its own actual selected test and real

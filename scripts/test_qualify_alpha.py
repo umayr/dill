@@ -95,6 +95,15 @@ class QualificationTests(unittest.TestCase):
                     if mode == "offline":
                         self.assertIn("required-case-runtime-evidence-missing", result["reasons"])
 
+    def test_no_prune_requires_positive_isolated_cli_not_qualified_rejection(self):
+        self.assertEqual(q.REQUIRED_CASE_EVIDENCE["no-prune"], ("engine", "real-engine"))
+        evidence, manifest = self.synthetic_complete_gate_inputs()
+        definition = next(case for case in manifest["cases"] if case["id"] == "no-prune")
+        self.assertEqual(definition["test"], "TestAlphaNoPruneBothEngines")
+        definition["mode"] = "qualified-engine"
+        next(case for case in evidence["cases"] if case["id"] == "no-prune")["evidenceKind"] = "real-qualified-engine"
+        self.assertFalse(q.final_acceptance(evidence, manifest)["complete"])
+
     def test_prepared_profile_observation_cannot_clear_required_combined_case(self):
         evidence, manifest = self.synthetic_complete_gate_inputs()
         observed = dict(evidence["cases"][-1])

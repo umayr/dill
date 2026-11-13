@@ -11,7 +11,6 @@
     ]
   },
   "preparedProfiles": [
-    {"id": "prepared-no-prune", "mode": "guardrail-engine", "test": "TestAlphaNoPruneBothEngines"},
     {"id": "prepared-docker-guardrails", "mode": "profile-engine", "test": "TestAlphaDisposableProfileDocker"}
   ],
   "cases": [
@@ -26,7 +25,7 @@
     {"id": "failed-start-cleanup", "mode": "engine", "test": "TestDillRealEngineFailedStartCleanup"},
     {"id": "operation-contract-baseline", "mode": "operation-engine", "test": "TestAlphaOperationEnvelopeConformance", "requires": [77], "reason": "Requires explicit --operations opt-in, discovered dill.operation/1 and actual disposable-engine execution; not qualified by compilation."},
     {"id": "operation-outcomes", "mode": "blocked", "requires": [77, 78, 79], "reason": "Prepared executable consumer covers the bounded operation contract; final combined guardrail/coordinator outcomes remain unqualified."},
-    {"id": "no-prune", "mode": "blocked", "requires": [78, 79], "reason": "Prepared ordinary parity is recorded separately; final combined qualified preservation and immutable intent revalidation still require runtime evidence."},
+    {"id": "no-prune", "mode": "engine", "test": "TestAlphaNoPruneBothEngines", "requires": [79], "reason": "Approved isolated CLI positive --no-prune: successful up preserves omitted owned service ID/running state, with coordination flags absent; never satisfied by qualified orphan rejection."},
     {"id": "bounded-storage-preflight", "mode": "blocked", "requires": [78, 79], "reason": "Prepared alpha-disposable observations cannot satisfy standalone qualified-mode policy/foreign ownership preflight; both paths must actually run."},
     {"id": "same-stack-concurrency", "mode": "blocked", "requires": [77, 78], "reason": "CLI and Brine must contend while different stacks remain independent; final integrated hooks required."},
     {"id": "crash-unknown-recovery", "mode": "blocked", "requires": [77, 78], "reason": "SIGKILL and durable unknown outcome/recovery inspection require final trusted-state interface."},

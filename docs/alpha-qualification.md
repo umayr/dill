@@ -52,9 +52,15 @@ truncated observations. These are **prepared runtime assertions**, not recorded
 runtime evidence until actually executed against the pinned candidate. They do
 not establish complete foreign-resource preservation or coordinated recovery.
 
+Every opted-in engine run selects required `TestAlphaNoPruneBothEngines`:
+actual successful isolated CLI `up --no-prune` must preserve the omitted owned
+service ID/running state, with coordination/profile flags deliberately ABSENT.
+This row is explicitly bound to `engine` / `real-engine`, not a qualified orphan
+rejection. The qualified profile separately forbids orphans and must reject them
+with zero writes; that negative cannot stand in for positive no-prune.
+
 With `--profiles` (which also requires `--operations` discovery), the runner
-selects `TestAlphaNoPruneBothEngines` on either adapter and
-`TestAlphaDisposableProfileDocker` only on Docker. The latter prepares verified
+additionally selects `TestAlphaDisposableProfileDocker` only on Docker. It prepares verified
 no-VOLUME images, asserts immutable-ID create and strict repeat/no-op identity,
 preserves omitted services even with `--no-prune=false`, tests retained data,
 foreign container/network/volume collisions, unsupported mounts/caps/secrets/
@@ -67,8 +73,9 @@ successfully so parser failure cannot masquerade as policy enforcement.
 These are **prepared profile assertions, not executed local engine evidence**.
 The profile is not the #78 daemon-attested coordinator: profile runtime evidence
 is stored only in the separate `preparedProfiles` observations and **cannot clear
-any of the 24 required combined case IDs**, including no-prune, bounded storage
-and qualified image-volume rejection. Known pinned-image/no-op
+any of the 24 required case IDs**, including bounded storage and qualified
+image-volume rejection. Required positive no-prune is separately selected and
+bound to its approved isolated CLI semantics, not promoted from observations. Known pinned-image/no-op
 reconciliation corrections must pass the strict repeat expectation, not relax it.
 The workflow enables these cases for a candidate containing the stable disposable
 implementation; missing/skipped selected tests still fail. Full qualified mode

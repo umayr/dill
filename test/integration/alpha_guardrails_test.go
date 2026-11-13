@@ -170,8 +170,14 @@ func TestAlphaNoPruneBothEngines(t *testing.T) {
 	runEngine(t, env.engine, "pull", alphaPreparedImage)
 	writeAlphaPreparedConfig(t, cfg, root, env.engine, stack, alphaPreparedImage, "", true)
 	cleanupStack(t, bin, cfg, stack)
+	// Deliberately isolated legacy CLI: NO coordination or alpha-disposable flags.
+	// Qualified mode forbids orphans; its rejection cannot stand in for this
+	// actual successful omitted-service preservation case.
 	runDill(t, true, bin, "--engine", env.engine, "--engine-socket", os.Getenv("DILL_ENGINE_SOCKET"), "-p", stack, "-f", cfg, "up", "--no-prune")
 	before := runEngine(t, env.engine, "inspect", "--format", "{{.Id}}|{{.State.Status}}", stack+"_other")
+	if !strings.HasSuffix(before, "|running") {
+		t.Fatal("no-prune preparation did not establish a running omitted service")
+	}
 	writeAlphaPreparedConfig(t, cfg, root, env.engine, stack, alphaPreparedImage, "", false)
 	runDill(t, true, bin, "--engine", env.engine, "--engine-socket", os.Getenv("DILL_ENGINE_SOCKET"), "-p", stack, "-f", cfg, "up", "--no-prune")
 	if after := runEngine(t, env.engine, "inspect", "--format", "{{.Id}}|{{.State.Status}}", stack+"_other"); after != before {

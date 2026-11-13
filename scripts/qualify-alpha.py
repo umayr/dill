@@ -40,7 +40,8 @@ REQUIRED_CASE_EVIDENCE = {
     "failed-start-cleanup": ("engine", "real-engine"),
     "operation-contract-baseline": ("operation-engine", "real-engine"),
     "operation-outcomes": ("qualified-engine", "real-qualified-engine"),
-    "no-prune": ("qualified-engine", "real-qualified-engine"),
+    # Explicit positive isolated CLI --no-prune, never qualified orphan rejection.
+    "no-prune": ("engine", "real-engine"),
     "bounded-storage-preflight": ("qualified-engine", "real-qualified-engine"),
     "same-stack-concurrency": ("qualified-engine", "real-qualified-engine"),
     "crash-unknown-recovery": ("qualified-engine", "real-qualified-engine"),
@@ -382,9 +383,11 @@ def collect(args):
         if args.engine:
             target_env = engine_env(env, args.engine, endpoint)
             target_env["DILL_BINARY"] = str(binary)
+            # Required isolated CLI no-prune parity is covered by this engine
+            # opt-in, independently of narrower optional profile observations.
+            target_env["DILL_TEST_ALPHA_GUARDRAILS"] = "1"
             modes = {"engine"}
             if args.profiles:
-                target_env["DILL_TEST_ALPHA_GUARDRAILS"] = "1"
                 modes.add("guardrail-engine")
                 if args.engine == "docker":
                     modes.add("profile-engine")
