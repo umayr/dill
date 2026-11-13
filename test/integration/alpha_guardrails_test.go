@@ -11,6 +11,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strings"
 	"sync"
@@ -63,6 +64,23 @@ config {
 	if err := os.WriteFile(cfg, []byte(body), 0o600); err != nil {
 		t.Fatal(err)
 	}
+}
+
+func alphaPrepareVolumeImage(t *testing.T, engine, baseImage, stack, image string) string {
+	t.Helper()
+	seed := stack + "-image-seed"
+	// Every intended unlabeled object has a known unique cleanup scope BEFORE
+	// its first write. LIFO removes the seed before the image, even on failure.
+	t.Cleanup(func() { alphaCleanupResource(t, engine, "image", image) })
+	t.Cleanup(func() { alphaCleanupResource(t, engine, "container", seed) })
+	runEngine(t, engine, "create", "--name", seed, baseImage, "true")
+	runEngine(t, engine, "commit", "--change", `VOLUME ["/hidden"]`, seed, image)
+	id := runEngine(t, engine, "image", "inspect", "--format", "{{.Id}}", image)
+	if !regexp.MustCompile(`^sha256:[0-9a-f]{64}$`).MatchString(id) {
+		t.Fatal("negative fixture did not produce a known immutable image identity")
+	}
+	runEngine(t, engine, "rm", seed)
+	return id
 }
 
 func evaluateAlphaFixture(t *testing.T, cfg string) {
@@ -285,23 +303,19 @@ func TestAlphaDisposableProfileDocker(t *testing.T) {
 	}
 
 	// Dedicated synthetic foreign resources prove more than just name collision.
-	foreignVolume, foreignNetwork := stack+"-foreign-data", stack+"-foreign-net"
-	runEngine(t, env.engine, "volume", "create", foreignVolume)
-	runEngine(t, env.engine, "network", "create", foreignNetwork)
-	foreign := runEngine(t, env.engine, "run", "-d", "--name", stack+"-foreign", "--network", foreignNetwork, "-v", foreignVolume+":/foreign", alphaPreparedImage, "sleep", "300")
-	runEngine(t, env.engine, "exec", foreign, "sh", "-c", "printf synthetic-foreign-v1 > /foreign/value")
+	foreignVolume, foreignNetwork, foreign := stack+"-foreign-data", stack+"-foreign-net", stack+"-foreign"
 	t.Cleanup(func() {
 		alphaCleanupResource(t, env.engine, "container", foreign)
 		alphaCleanupResource(t, env.engine, "network", foreignNetwork)
 		alphaCleanupResource(t, env.engine, "volume", foreignVolume)
 	})
+	runEngine(t, env.engine, "volume", "create", foreignVolume)
+	runEngine(t, env.engine, "network", "create", foreignNetwork)
+	foreign = runEngine(t, env.engine, "run", "-d", "--name", foreign, "--network", foreignNetwork, "-v", foreignVolume+":/foreign", alphaPreparedImage, "sleep", "300")
+	runEngine(t, env.engine, "exec", foreign, "sh", "-c", "printf synthetic-foreign-v1 > /foreign/value")
 	// Prepare a local metadata-only negative image; no image VOLUME workload runs.
-	seed := runEngine(t, env.engine, "create", alphaPreparedImage, "true")
-	t.Cleanup(func() { alphaCleanupResource(t, env.engine, "container", seed) })
 	volumeImage := "localhost/" + stack + ":declared-volume"
-	runEngine(t, env.engine, "commit", "--change", `VOLUME ["/hidden"]`, seed, volumeImage)
-	runEngine(t, env.engine, "rm", seed)
-	t.Cleanup(func() { alphaCleanupResource(t, env.engine, "image", volumeImage) })
+	alphaPrepareVolumeImage(t, env.engine, alphaPreparedImage, stack, volumeImage)
 
 	for _, tc := range []struct {
 		name, image, extra string
@@ -349,16 +363,21 @@ func TestAlphaDisposableProfileDocker(t *testing.T) {
 	for _, kind := range []string{"volume", "network", "container"} {
 		t.Run("foreign-"+kind+"-collision", func(t *testing.T) {
 			collision := stack + "-collision-" + kind
-			var identity string
-			switch kind {
-			case "volume":
-				identity = runEngine(t, env.engine, "volume", "create", collision+"_data")
-			case "network":
-				identity = runEngine(t, env.engine, "network", "create", collision)
-			case "container":
-				identity = runEngine(t, env.engine, "run", "-d", "--name", collision+"_app", alphaPreparedImage, "sleep", "300")
+			identity := collision
+			if kind == "volume" {
+				identity += "_data"
+			} else if kind == "container" {
+				identity += "_app"
 			}
 			t.Cleanup(func() { alphaCleanupResource(t, env.engine, kind, identity) })
+			switch kind {
+			case "volume":
+				runEngine(t, env.engine, "volume", "create", identity)
+			case "network":
+				identity = runEngine(t, env.engine, "network", "create", identity)
+			case "container":
+				identity = runEngine(t, env.engine, "run", "-d", "--name", identity, alphaPreparedImage, "sleep", "300")
+			}
 			writeAlphaPreparedConfig(t, cfg, root, env.engine, collision, alphaPreparedImage, `volumes = List("data:/data")`, false)
 			before := alphaResourceSnapshot(t, env.engine)
 			since := time.Now().UTC().Format(time.RFC3339Nano)
@@ -447,8 +466,9 @@ func alphaRemovalNameReuse(t *testing.T, engine, bin, root, stack string) {
 	}
 	// Deliberate fixture replacement occurs AFTER capture and BEFORE consent.
 	runEngine(t, engine, "rm", original)
-	foreign := runEngine(t, engine, "run", "-d", "--name", stack+"_app", alphaPreparedImage, "sleep", "300")
+	foreign := stack + "_app"
 	t.Cleanup(func() { alphaCleanupResource(t, engine, "container", foreign) })
+	foreign = runEngine(t, engine, "run", "-d", "--name", foreign, alphaPreparedImage, "sleep", "300")
 	before := alphaResourceSnapshot(t, engine)
 	since := time.Now().UTC().Format(time.RFC3339Nano)
 	if _, err := input.Write([]byte("yes\n")); err != nil {

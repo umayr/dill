@@ -214,12 +214,8 @@ func (f *alphaQualifiedFixture) rejectNoWrites(t *testing.T, operation string, w
 func TestAlphaQualifiedStandalonePreflight(t *testing.T) {
 	f := newAlphaQualifiedFixture(t)
 	f.seed(t)
-	seed := runEngine(t, "docker", "create", f.imageID, "true")
-	t.Cleanup(func() { alphaCleanupResource(t, "docker", "container", seed) })
 	volumeImage := "localhost/" + f.stack + ":declared-volume"
-	runEngine(t, "docker", "commit", "--change", `VOLUME ["/hidden"]`, seed, volumeImage)
-	runEngine(t, "docker", "rm", seed)
-	t.Cleanup(func() { alphaCleanupResource(t, "docker", "image", volumeImage) })
+	alphaPrepareVolumeImage(t, "docker", f.imageID, f.stack, volumeImage)
 	for _, tc := range []struct {
 		name, image, extra string
 		code               int
@@ -273,16 +269,21 @@ func TestAlphaQualifiedForeignOwnership(t *testing.T) {
 	for _, kind := range []string{"network", "volume", "container"} {
 		t.Run(kind, func(t *testing.T) {
 			f := newAlphaQualifiedFixture(t)
-			var identity string
-			switch kind {
-			case "network":
-				identity = runEngine(t, "docker", "network", "create", f.stack)
-			case "volume":
-				identity = runEngine(t, "docker", "volume", "create", f.stack+"_data")
-			case "container":
-				identity = runEngine(t, "docker", "run", "-d", "--name", f.stack+"_app", f.imageID, "sleep", "300")
+			identity := f.stack
+			if kind == "volume" {
+				identity += "_data"
+			} else if kind == "container" {
+				identity += "_app"
 			}
 			t.Cleanup(func() { alphaCleanupResource(t, "docker", kind, identity) })
+			switch kind {
+			case "network":
+				identity = runEngine(t, "docker", "network", "create", identity)
+			case "volume":
+				runEngine(t, "docker", "volume", "create", identity)
+			case "container":
+				identity = runEngine(t, "docker", "run", "-d", "--name", identity, f.imageID, "sleep", "300")
+			}
 			f.rejectNoWrites(t, "up", 1, "failed")
 		})
 	}
@@ -327,6 +328,30 @@ func alphaQualifiedAxes(t *testing.T, result alphaOperationResult, code, wantCod
 	}
 }
 
+func alphaAcknowledgeKnownPartial(t *testing.T, f *alphaQualifiedFixture, result alphaOperationResult) {
+	t.Helper()
+	record := alphaInspectCoordination(t, f)
+	if record.OperationID != result.OperationID || record.State != "terminal" || record.Outcome != "failed" || record.Effects != "partial" || record.Source != "cli" {
+		t.Fatal("known partial receipt and actual durable record differ")
+	}
+	// Inspect the actual completed container removal and retained owned storage
+	// before explicitly consenting. Acknowledgement does NOT undo/replay down.
+	if runEngine(t, "docker", "ps", "-aq", "--filter", "label=dill.stack="+f.stack) != "" {
+		t.Fatal("partial down still has live captured resources")
+	}
+	if runEngine(t, "docker", "network", "inspect", "--format", `{{index .Labels "dill.stack"}}|{{index .Labels "dill.managed"}}`, f.stack) != f.stack+"|true" || runEngine(t, "docker", "volume", "inspect", "--format", `{{index .Labels "dill.stack"}}|{{index .Labels "dill.managed"}}`, f.stack+"_data") != f.stack+"|true" {
+		t.Fatal("partial down did not retain the inspected owned network/volume")
+	}
+	alphaOfflineNoEngineEffects(t, f, func() {
+		if _, code := alphaOfflineCoordination(t, f, "acknowledge", "--operation-id", result.OperationID, "--inspected"); code != 0 {
+			t.Fatal("known partial outcome did not accept exact inspected acknowledgement")
+		}
+	})
+	if acknowledged := alphaInspectCoordination(t, f); acknowledged.OperationID != result.OperationID || acknowledged.State != "acknowledged" {
+		t.Fatal("known partial acknowledgement lost exact operation correlation")
+	}
+}
+
 func TestAlphaQualifiedHandlers(t *testing.T) {
 	f := newAlphaQualifiedFixture(t)
 	f.seed(t)
@@ -349,10 +374,11 @@ func TestAlphaQualifiedHandlers(t *testing.T) {
 	result, code = f.run(t, "down", "cli", "")
 	// This supported handler removes the immutable captured container but
 	// conservatively retains the network; partial known completion is NOT success.
-	alphaQualifiedAxes(t, result, code, 1, "failed", "complete")
+	alphaQualifiedAxes(t, result, code, 1, "failed", "partial")
 	if runEngine(t, "docker", "ps", "-aq", "--filter", "label=dill.stack="+f.stack) != "" {
 		t.Fatal("qualified down left the captured owned container")
 	}
+	alphaAcknowledgeKnownPartial(t, f, result)
 	f.rejectNoWrites(t, "teardown", 2, "invalid_input", "--yes")
 	f.assertForeign(t)
 }
@@ -379,10 +405,11 @@ func TestAlphaQualifiedDockerProfile(t *testing.T) {
 		t.Fatal("qualified convergence changed dedicated volume content")
 	}
 	result, code = f.run(t, "down", "cli", "")
-	alphaQualifiedAxes(t, result, code, 1, "failed", "complete")
+	alphaQualifiedAxes(t, result, code, 1, "failed", "partial")
 	if runEngine(t, "docker", "run", "--rm", "--network", "none", "-v", f.stack+"_data:/data:ro", f.imageID, "cat", "/data/value") != "synthetic-qualified-v1" {
 		t.Fatal("qualified down lost retained dedicated data")
 	}
+	alphaAcknowledgeKnownPartial(t, f, result)
 	f.assertForeign(t)
 }
 
@@ -415,11 +442,8 @@ func TestAlphaQualifiedActualLivePreflight(t *testing.T) {
 			liveImage, target, wantCode, outcome := f.imageID, "/data", 2, "invalid_input"
 			var oldImageID string
 			if tc.name == "old-covered-image-volume" {
-				seed := runEngine(t, "docker", "create", f.imageID, "true")
-				t.Cleanup(func() { alphaCleanupResource(t, "docker", "container", seed) })
 				liveImage = "localhost/" + f.stack + ":old-volume"
-				oldImageID = runEngine(t, "docker", "commit", "--change", `VOLUME ["/hidden"]`, seed, liveImage)
-				runEngine(t, "docker", "rm", seed)
+				oldImageID = alphaPrepareVolumeImage(t, "docker", f.imageID, f.stack, liveImage)
 				target, wantCode, outcome = "/hidden", 1, "failed"
 				f.write(t, f.image, `volumes = List("data:/hidden")`, false)
 			}
@@ -428,15 +452,15 @@ func TestAlphaQualifiedActualLivePreflight(t *testing.T) {
 				"--label", "dill.service=app", "-v", f.stack + "_data:" + target}
 			args = append(args, tc.args...)
 			args = append(args, liveImage, "sh", "-c", alphaPreparedCommand)
-			liveID := runEngine(t, "docker", args...)
+			liveID := f.stack + "_app"
 			if oldImageID != "" {
-				t.Cleanup(func() {
-					// Delete only the captured synthetic old-container/image IDs;
-					// the normal stack callback follows, then scoped convergence.
-					alphaCleanupResource(t, "docker", "container", liveID)
-					alphaCleanupResource(t, "docker", "image", oldImageID)
-					alphaCleanupResource(t, "docker", "image", liveImage)
-				})
+				// Tag cleanup was registered before commit; the extra dangling
+				// immutable image ID becomes known only after successful creation.
+				t.Cleanup(func() { alphaCleanupResource(t, "docker", "image", oldImageID) })
+				t.Cleanup(func() { alphaCleanupResource(t, "docker", "container", liveID) })
+			}
+			liveID = runEngine(t, "docker", args...)
+			if oldImageID != "" {
 				// Now the old create tag resolves to SAFE A but actual live content
 				// remains bad B. Census must use immutable .Image, never this tag.
 				runEngine(t, "docker", "tag", f.imageID, liveImage)
