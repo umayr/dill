@@ -16,13 +16,26 @@ import (
 
 	"github.com/umayr/dill/internal/config"
 	"github.com/umayr/dill/internal/operation"
+	"github.com/umayr/dill/internal/orchestrator"
 	"github.com/umayr/dill/internal/plan"
+	"sort"
 )
 
 type operationState struct {
 	recorder *operation.Recorder
 	config   *config.DillConfig
 	declined bool
+	engine   *operation.Engine
+	endpoint string
+}
+
+func (s *operationState) release() error {
+	if s.engine == nil {
+		return nil
+	}
+	engine := s.engine
+	s.engine = nil
+	return engine.Engine.Close()
 }
 
 func operationSupported(name string) bool {
@@ -64,7 +77,14 @@ func runOperation(ctx context.Context, args []string) error {
 	}
 	result := operation.Result{Version: operation.Version, OperationID: "op_" + hex.EncodeToString(id[:]), Outcome: "invalid_input", Effects: "none", Resources: []operation.Resource{}, Errors: []operation.Error{}}
 	state := &operationState{recorder: &operation.Recorder{}}
+	defer state.release()
 	emit := func(code int, errorCode, message string) error {
+		if state.release() != nil {
+			result.Outcome = "unknown"
+			code = 1
+			errorCode = "ENGINE_CLOSE_FAILED"
+			message = "Engine connection release failed. Inspect the target before retrying."
+		}
 		if errorCode != "" {
 			result.Errors = append(result.Errors, operation.Error{Code: errorCode, Message: message})
 		}
@@ -187,27 +207,32 @@ func runOperation(ctx context.Context, args []string) error {
 		if *force {
 			handlerArgs = append([]string{"--force"}, handlerArgs...)
 		}
-		switch name {
-		case "validate":
-			err = runValidate(ctx, opts, nil)
-		case "plan":
-			err = runPlan(ctx, opts, nil)
-		case "diff":
-			err = runDiff(ctx, opts, nil)
-		case "up":
-			err = runUp(ctx, opts, handlerArgs)
-		case "down":
-			err = runDown(ctx, opts, handlerArgs)
-		case "stop":
-			err = runStop(ctx, opts, handlerArgs)
-		case "start":
-			err = runStart(ctx, opts, handlerArgs)
-		case "restart":
-			err = runRestart(ctx, opts, handlerArgs)
-		case "rm":
-			err = runRm(ctx, opts, handlerArgs)
-		case "teardown":
-			err = runTeardown(ctx, opts, handlerArgs)
+		if name != "validate" && name != "plan" && name != "diff" {
+			err = preflightOperationOwnership(ctx, opts, cfg)
+		}
+		if err == nil {
+			switch name {
+			case "validate":
+				err = runValidate(ctx, opts, nil)
+			case "plan":
+				err = runPlan(ctx, opts, nil)
+			case "diff":
+				err = runDiff(ctx, opts, nil)
+			case "up":
+				err = runUp(ctx, opts, handlerArgs)
+			case "down":
+				err = runDown(ctx, opts, handlerArgs)
+			case "stop":
+				err = runStop(ctx, opts, handlerArgs)
+			case "start":
+				err = runStart(ctx, opts, handlerArgs)
+			case "restart":
+				err = runRestart(ctx, opts, handlerArgs)
+			case "rm":
+				err = runRm(ctx, opts, handlerArgs)
+			case "teardown":
+				err = runTeardown(ctx, opts, handlerArgs)
+			}
 		}
 	}
 	switch {
@@ -233,6 +258,44 @@ func runOperation(ctx context.Context, args []string) error {
 		result.Outcome = "failed"
 		return emit(1, "OPERATION_FAILED", "Operation failed. Inspect the target before retrying if effects are uncertain.")
 	}
+}
+
+// Census all declared and stack-listed container identities before any lifecycle
+// writes. Reuse the invocation-owned engine for this census and every handler;
+// individual handlers still revalidate immutable mutation targets independently.
+func preflightOperationOwnership(ctx context.Context, opts commandOptions, cfg *config.DillConfig) error {
+	engine, err := newEngine(ctx, cfg.Engine, opts)
+	if err != nil {
+		return err
+	}
+	stack := resolveStackNameWithOptions(cfg, opts)
+	expected := map[string]string{}
+	for service, svc := range cfg.Services {
+		expected[serviceContainerName(stack, service, svc)] = service
+	}
+	listed, err := engine.ListStack(ctx, stack)
+	if err != nil {
+		return err
+	}
+	for _, name := range listed {
+		if _, exists := expected[name]; !exists {
+			expected[name] = ""
+		}
+	}
+	names := make([]string, 0, len(expected))
+	for name := range expected {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	for _, name := range names {
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
+		if _, err := orchestrator.OwnedID(ctx, engine, name, stack, expected[name]); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func (o commandOptions) output() io.Writer {
