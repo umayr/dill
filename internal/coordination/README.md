@@ -1,9 +1,10 @@
-# Local coordination library (not yet an operational guarantee)
+# Local coordination library
 
-The package is deliberately **not wired to the legacy CLI or protocol** in this
-commit. No existing mutation is protected merely by importing this package.
-Issue #78 remains open until explicit operation-mode integration, independent
-review and disposable engine qualification pass.
+The package is wired ONLY into the explicit qualified `dill operation` mode;
+see `docs/local-mutation-coordination-design.md` for supported invocations and
+restrictions. It does not protect the legacy CLI, unqualified operations or
+metadata-only protocol. Issue #78 remains open pending independent final-head
+review, disposable engine/Brine qualification and bypass-path workflow gates.
 
 ## Qualified boundary
 
@@ -17,7 +18,8 @@ review and disposable engine qualification pass.
 - Explicit existing local Unix socket and independently provisioned expected
   Docker `/info` ID. Remote targets, other engines and guessed identities fail.
 - Trusted state must not be deleted, substituted, copied or independently
-  provisioned per caller while callers run. Private descriptors pin state opens;
+  provisioned per caller while callers run. Missing identity keys in populated
+  state fail closed; only proven fresh directories can initialize a key. Private descriptors pin state opens;
   they cannot prevent an operator from splitting callers across directories.
   External Docker clients do not cooperate and are outside this guarantee.
 

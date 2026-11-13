@@ -55,6 +55,17 @@ func (e *InspectionRequired) Error() string {
 	return "coordination state requires inspection; no mutation permitted"
 }
 
+// StartError correlates an operation whose Begin failed after its ID was
+// allocated and state may have been installed. No mutation permission is given.
+// Error text is fixed; only context cancellation/deadline may be unwrapped.
+type StartError struct {
+	OperationID string
+	cause       error
+}
+
+func (e *StartError) Error() string { return "operation start not durable; inspection required" }
+func (e *StartError) Unwrap() error { return e.cause }
+
 // Session is not safe for concurrent use. Close releases locks without changing
 // any record; incomplete operations remain unknown, never replay instructions.
 type Session struct {
@@ -197,11 +208,11 @@ func (s *State) Begin(ctx context.Context, target *Target, stack, source string,
 	}
 	if err != nil {
 		session.Close()
-		return nil, errors.New("operation start not durable; inspection required")
+		return nil, &StartError{OperationID: session.record.OperationID}
 	}
 	if err = ctx.Err(); err != nil {
 		session.Close()
-		return nil, err
+		return nil, &StartError{OperationID: session.record.OperationID, cause: err}
 	}
 	return session, nil
 }

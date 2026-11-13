@@ -93,6 +93,9 @@ func run(args []string) (retErr error) {
 	if len(args) > 0 && args[0] == "operation-capabilities" {
 		return runOperationCapabilities(args[1:])
 	}
+	if len(args) > 0 && args[0] == "coordination" {
+		return runCoordination(context.Background(), args[1:])
+	}
 	safe := secretInvocation(args)
 	check := secretCheckInvocation(args)
 	diagnostics := &secretDiagnostics{}
@@ -173,6 +176,7 @@ Commands:
   secrets check        Check authorized local secret sources without mutation
   operation-capabilities  Discover the bounded local operation contract
   operation Execute an attended local operation (--contract dill.operation/1)
+  coordination Inspect/acknowledge qualified local crash state (offline)
   protocol  Discover the experimental metadata-only operation protocol
   rm        Remove stopped containers in the stack
   wait      Wait for services to become ready

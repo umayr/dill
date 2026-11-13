@@ -115,6 +115,10 @@ func TestPartialReservationInstallConservativelyBlocks(t *testing.T) {
 		if r == nil || !needsInspection(*r) {
 			t.Fatalf("lost unresolved stack: %+v", r)
 		}
+		var started *StartError
+		if !errors.As(err, &started) || started.OperationID != r.OperationID {
+			t.Fatalf("failed Begin lost durable operation ID: %v %+v", err, r)
+		}
 		ctx, cancel = bounded()
 		if _, err = reopened.Begin(ctx, testTarget(), "A", "cli", nil); err == nil {
 			t.Fatal("same stack bypassed partial installation")
