@@ -109,6 +109,19 @@ func (e *Engine) EnforceDisposableVolumes() error {
 	return errors.New("disposable volume enforcement unavailable")
 }
 
+// DisposableImage forwards prepared local immutable identity and metadata.
+// Missing support is unavailable, never permission to pull, ignore image VOLUME
+// entries, or substitute a mutable tag for the attested local image ID.
+func (e *Engine) DisposableImage(ctx context.Context, image string) (string, []string, error) {
+	inspector, ok := e.Engine.(interface {
+		DisposableImage(context.Context, string) (string, []string, error)
+	})
+	if !ok {
+		return "", nil, errors.New("disposable image inspection unavailable")
+	}
+	return inspector.DisposableImage(ctx, image)
+}
+
 func (e *Engine) PreviewResources(ctx context.Context, stack string, names []string) ([]orchestrator.PreviewResource, error) {
 	inspector, ok := e.Engine.(orchestrator.PreviewResourceInspector)
 	if !ok {

@@ -51,8 +51,14 @@ A command emits one newline-terminated JSON document on stdout. Progress, pull
 output, evaluator diagnostics, SDK diagnostics, raw errors, configuration,
 image references, and plan before/after values are not emitted. Attended
 `rm` and `teardown` retain their confirmation requirement unless `--yes` is
-provided. The machine adapter uses a fixed, identity-free stderr prompt;
-legacy prompts, retention behavior, and legacy stdout are unchanged.
+provided. The machine adapter uses an identity-free stderr prompt with a
+resource-intent count and domain-separated digest of the full bounded intent
+set. The count includes retention statements, not only destructive actions.
+Incomplete intent inventories fail closed, even with `--yes`. This is not
+saved-plan authorization. The operation-only prompt polls stdin with its
+invocation context: deadline/SIGINT produces one cancelled result without
+requiring EOF, closing the caller's descriptor, or abandoning a reader goroutine.
+Legacy prompts, retention behavior, and legacy stdout are unchanged.
 
 All results have these fields (the operation ID is freshly generated):
 
@@ -104,7 +110,13 @@ consumers must treat missing, malformed, or incomplete terminal output as
 `changesDetected` reports computed desired-state actions, not a mutation audit.
 `resources` contains bounded observations (maximum 4096 entries, with a truncation
 flag), **not a complete recovery inventory**. Each entry has `kind`,
-`identityDigest`, `action`, and `effect`. Plan summaries use kind `service` with
+`identityDigest`, `action`, and `effect`. Destructive preflight candidates use
+`intent.*` actions with effect `none`; they are distinct from performed calls.
+Dry/declined `rm` uses `intent.removeStoppedCandidate` because running containers
+may be skipped. Down/teardown containers use `intent.stopRemove`; teardown images
+use `intent.removeCandidate` based on read-only `LocalImageID` capture, and
+volumes/networks use `intent.retain`. These are candidates, not guarantees that
+all actions will occur. Plan summaries use kind `service` with
 `create`/`recreate`/`remove`/`noop` and effect `none`. Mutation summaries use
 `container`, `image`, `network`, `volume`, or `createScope`.
 
@@ -131,7 +143,11 @@ Secret-enabled operation mode is deliberately **unsupported**. Identifiable
 secret selectors/policy reject before evaluation. Decoded secret grants reject
 before engine access with fixed `SECRET_UNAVAILABLE` and no target/stack/resource
 metadata. Evaluation is private from the start of this machine path, not only
-after grants are discovered. Do not use this path to bypass the existing Alpha
+after grants are discovered. Machine-private evaluation retains only closed,
+fixed typed invalid-input/evaluator-failure/cancellation categories; raw parser,
+filesystem, and subprocess errors are replaced, not wrapped. Existing secret
+private evaluation still masks all failure categories exactly as before.
+Do not use this path to bypass the existing Alpha
 secret authorization, preflight, or lifecycle restrictions; legacy secret-aware
 handlers remain independently supported and unchanged.
 
@@ -174,7 +190,16 @@ and explicit disposable-volume enforcement forwarding (missing support fails
 closed).
 The decorator records attempts **before** delegating to the engine and never
 changes returned errors. `Recorder.Finish` snapshots bounded resources and
-conservative aggregate effects before stdout emission.
+conservative aggregate effects before stdout emission. `Recorder.Intent(kind,
+identity, action)` adds an opaque candidate/retention entry. A handler can
+atomically supersede provisional candidates using
+`ReplaceIntents([]operation.Intent{...}) error`, with `Kind`, `Identity`, and
+`Action` fields. Replacement is rejected after the first mutation attempt.
+`ReplaceIntents(nil)` clears provisional intent. `IntentSummary()` returns
+`(count, digest, complete)`; the digest sorts all captured tokens, domain-separated
+with `dill.intent/1`, independent of capture order. More than 4096 intent entries
+explicitly reports incomplete rather than presenting a bounded prefix as full
+approval. Final wire resources still carry their existing truncation flag.
 
 Coordination integration must qualify and retain the same connected engine for
 this entire handler scope, begin durable intent before any delegate mutation,

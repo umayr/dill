@@ -5,7 +5,9 @@ package operation
 import (
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"sort"
+	"strings"
 	"sync"
 )
 
@@ -17,6 +19,9 @@ type Target struct {
 	Engine         string `json:"engine"`
 	EndpointDigest string `json:"endpointDigest"`
 }
+
+// Intent is a pre-mutation candidate or retention statement, never a result.
+type Intent struct{ Kind, Identity, Action string }
 
 type Resource struct {
 	Kind           string `json:"kind"`
@@ -66,6 +71,9 @@ type Recorder struct {
 	resources                       []Resource
 	attempted, completed, uncertain int
 	truncated, changes              bool
+	intentCount                     int
+	intentTokens                    []string
+	intentTruncated                 bool
 }
 
 func (r *Recorder) Begin(kind, identity, action string) func(string, error) {
@@ -110,6 +118,61 @@ func (r *Recorder) Planned(identity, action string) {
 	r.resources = append(r.resources, Resource{"service", ResourceDigest("service", identity), action, "none"})
 }
 
+// Intent identifies a preflight candidate, not an attempted mutation or a
+// saved-plan authorization. Summary completeness is explicit and bounded.
+// Callers must use explicit conditional action names
+// when an existing resource might be skipped by the handler.
+func (r *Recorder) Intent(kind, identity, action string) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.intentLocked(kind, identity, action)
+}
+
+// ReplaceIntents atomically supersedes provisional candidates with the
+// handler's captured set. It cannot rewrite intent after mutation has begun.
+func (r *Recorder) ReplaceIntents(intents []Intent) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.attempted > 0 {
+		return errors.New("cannot replace intent after mutation")
+	}
+	kept := r.resources[:0]
+	for _, resource := range r.resources {
+		if !strings.HasPrefix(resource.Action, "intent.") {
+			kept = append(kept, resource)
+		}
+	}
+	r.resources = kept
+	r.intentCount = 0
+	r.intentTokens = nil
+	r.intentTruncated = false
+	for _, intent := range intents {
+		r.intentLocked(intent.Kind, intent.Identity, intent.Action)
+	}
+	return nil
+}
+
+func (r *Recorder) intentLocked(kind, identity, action string) {
+	digest := ResourceDigest(kind, identity)
+	r.intentCount++
+	if len(r.intentTokens) < 4096 {
+		r.intentTokens = append(r.intentTokens, kind+"\x00"+digest+"\x00"+action)
+	}
+	if len(r.resources) >= 4096 {
+		r.intentTruncated = true
+		return
+	}
+	r.resources = append(r.resources, Resource{kind, digest, "intent." + action, "none"})
+}
+
+func (r *Recorder) IntentSummary() (count int, digest string, complete bool) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	tokens := append([]string{}, r.intentTokens...)
+	sort.Strings(tokens)
+	return r.intentCount, Digest("dill.intent/1\x00" + strings.Join(tokens, "\x00")), r.intentCount == len(tokens)
+}
+
 func (r *Recorder) Finish(result *Result) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -127,7 +190,7 @@ func (r *Recorder) Finish(result *Result) {
 		}
 		return a.Effect < b.Effect
 	})
-	result.ResourcesTruncated = r.truncated
+	result.ResourcesTruncated = r.truncated || r.intentTruncated
 	result.ChangesDetected = r.changes
 	result.Effects = "none"
 	if r.uncertain > 0 {

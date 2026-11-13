@@ -10,6 +10,7 @@ import (
 	"io"
 	"os"
 	"os/signal"
+	"sort"
 	"strings"
 	"syscall"
 	"time"
@@ -18,7 +19,6 @@ import (
 	"github.com/umayr/dill/internal/operation"
 	"github.com/umayr/dill/internal/orchestrator"
 	"github.com/umayr/dill/internal/plan"
-	"sort"
 )
 
 type operationState struct {
@@ -28,6 +28,9 @@ type operationState struct {
 	engine       *operation.Engine
 	endpoint     string
 	coordination *operationCoordination
+	census       map[string]string
+	listed       []string
+	ctx          context.Context
 }
 
 func (s *operationState) release() error {
@@ -140,6 +143,8 @@ func runOperation(ctx context.Context, args []string) error {
 	addActionFlags(fs, &opts)
 	addTimeoutFlag(fs, &opts)
 	fs.BoolVar(&opts.ForceRecreate, "force-recreate", false, "force recreate containers")
+	fs.BoolVar(&opts.NoPrune, "no-prune", false, "retain omitted services during up")
+	fs.BoolVar(&opts.AlphaDisposable, "alpha-disposable", false, "restrict up to the disposable-volume Alpha profile")
 	contract := fs.String("contract", "", "required operation contract version")
 	format := fs.String("format", "json", "output format: json")
 	noDeps := fs.Bool("no-deps", false, "omit dependencies")
@@ -150,6 +155,15 @@ func runOperation(ctx context.Context, args []string) error {
 	fs.SetOutput(io.Discard)
 	if fs.Parse(args[1:]) != nil {
 		return emit(2, "INVALID_ARGUMENTS", "Invalid operation arguments.")
+	}
+	guardrailFlag := false
+	fs.Visit(func(f *flag.Flag) {
+		if f.Name == "no-prune" || f.Name == "alpha-disposable" {
+			guardrailFlag = true
+		}
+	})
+	if guardrailFlag && name != "up" {
+		return emit(2, "INVALID_ARGUMENTS", "Unsupported options for this operation.")
 	}
 	if *contract != operation.Version {
 		return emit(2, "UNSUPPORTED_CONTRACT", "Unsupported operation contract. Use operation-capabilities discovery.")
@@ -190,6 +204,7 @@ func runOperation(ctx context.Context, args []string) error {
 	defer stop()
 	ctx, cancel := context.WithTimeout(ctx, opts.Timeout)
 	defer cancel()
+	state.ctx = ctx
 	if ctx.Err() != nil {
 		result.Outcome = "cancelled"
 		return emit(1, "CANCELLED", "Operation cancelled or deadline exceeded.")
@@ -234,6 +249,9 @@ func runOperation(ctx context.Context, args []string) error {
 		}
 		if err == nil && name != "validate" && name != "plan" && name != "diff" {
 			err = preflightOperationOwnership(ctx, opts, cfg)
+		}
+		if err == nil && (name == "down" || name == "rm" || name == "teardown") {
+			err = recordOperationRemovalIntent(ctx, opts, cfg, name, fs.Args())
 		}
 		if err == nil {
 			switch name {
@@ -315,14 +333,73 @@ func preflightOperationOwnership(ctx context.Context, opts commandOptions, cfg *
 		names = append(names, name)
 	}
 	sort.Strings(names)
+	captured := map[string]string{}
 	for _, name := range names {
 		if ctx.Err() != nil {
 			return ctx.Err()
 		}
-		if _, err := orchestrator.OwnedID(ctx, engine, name, stack, expected[name]); err != nil {
+		id, err := orchestrator.OwnedID(ctx, engine, name, stack, expected[name])
+		if err != nil {
 			return err
 		}
+		captured[name] = id
 	}
+	opts.operation.census = captured
+	opts.operation.listed = append([]string{}, listed...)
+	return nil
+}
+
+// Publish only opaque preflight candidates. Existing handlers still decide
+// whether each candidate is applicable and repeat their own ownership checks.
+func recordOperationRemovalIntent(ctx context.Context, opts commandOptions, cfg *config.DillConfig, name string, services []string) error {
+	state := opts.operation
+	names := append([]string{}, state.listed...)
+	if len(services) > 0 {
+		names = nil
+		for _, service := range services {
+			names = append(names, serviceContainerName(opts.StackName, service, cfg.Services[service]))
+		}
+	}
+	sort.Strings(names)
+	action := "stopRemove"
+	if name == "rm" {
+		action = "removeStoppedCandidate"
+	}
+	for _, container := range names {
+		if id := state.census[container]; id != "" {
+			state.recorder.Intent("container", id, action)
+		}
+	}
+	if name != "teardown" {
+		return nil
+	}
+	images := map[string]bool{}
+	for _, svc := range cfg.Services {
+		images[svc.Image] = true
+	}
+	imageNames := make([]string, 0, len(images))
+	for image := range images {
+		imageNames = append(imageNames, image)
+	}
+	sort.Strings(imageNames)
+	for _, image := range imageNames {
+		id, err := state.engine.LocalImageID(ctx, image)
+		if err != nil {
+			return err
+		}
+		if id != "" {
+			state.recorder.Intent("image", id, "removeCandidate")
+		}
+	}
+	volumes, err := state.engine.ListStackVolumes(ctx, opts.StackName)
+	if err != nil {
+		return err
+	}
+	sort.Strings(volumes)
+	for _, volume := range volumes {
+		state.recorder.Intent("volume", volume, "retain")
+	}
+	state.recorder.Intent("network", opts.StackName, "retain")
 	return nil
 }
 

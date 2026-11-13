@@ -28,8 +28,14 @@ import (
 )
 
 type DockerEngine struct {
-	cli *client.Client
+	cli        *client.Client
+	disposable bool
 }
+
+func (d *DockerEngine) EngineName() string { return "docker" }
+
+// EnforceDisposableVolumes is configured before concurrent deployment begins.
+func (d *DockerEngine) EnforceDisposableVolumes() error { d.disposable = true; return nil }
 
 func NewDockerEngine() (*DockerEngine, error) {
 	cli, err := client.NewClientWithOpts(client.FromEnv, client.WithAPIVersionNegotiation())
@@ -65,6 +71,9 @@ func NewDockerEngineWithClient(endpoint string, httpClient *http.Client) (*Docke
 }
 
 func (d *DockerEngine) PullImage(ctx context.Context, img string, w io.Writer) error {
+	if d.disposable {
+		return ErrDisposableUnsupported
+	}
 	logger.Debug("pulling image", "image", img)
 	rc, err := d.cli.ImagePull(ctx, img, dockertypes.ImagePullOptions{})
 	if err != nil {
@@ -162,6 +171,20 @@ func (d *DockerEngine) LocalImageID(ctx context.Context, img string) (string, er
 	return inspect.ID, nil
 }
 
+// DisposableImage rejects missing metadata instead of assuming no implicit volumes.
+func (d *DockerEngine) DisposableImage(ctx context.Context, image string) (string, []string, error) {
+	data, _, err := d.cli.ImageInspectWithRaw(ctx, image)
+	if err != nil || data.ID == "" || data.Config == nil {
+		return "", nil, ErrDisposableUnavailable
+	}
+	volumes := make([]string, 0, len(data.Config.Volumes))
+	for target := range data.Config.Volumes {
+		volumes = append(volumes, target)
+	}
+	sort.Strings(volumes)
+	return data.ID, volumes, nil
+}
+
 func (d *DockerEngine) StartService(ctx context.Context, name string, svc *config.Service, stackName string) (string, error) {
 	if svc == nil || len(svc.Secrets) > 0 {
 		return "", config.ErrSecretUnavailable
@@ -183,6 +206,20 @@ func (d *DockerEngine) StartServiceChecked(ctx context.Context, name string, svc
 }
 
 func (d *DockerEngine) startService(ctx context.Context, name string, svc *config.Service, stackName string, secrets []config.ResolvedSecret, target string) (string, error) {
+	image := svc.Image
+	if d.disposable {
+		if err := ValidateDisposableConfig(&config.DillConfig{Services: map[string]*config.Service{name: svc}}); err != nil {
+			return "", err
+		}
+		id, volumes, err := d.DisposableImage(ctx, image)
+		if err != nil {
+			return "", err
+		}
+		if len(volumes) > 0 {
+			return "", ErrDisposableUnsupported
+		}
+		image = id // pin metadata-checked immutable content, never a moving tag
+	}
 	for key := range svc.Labels {
 		if strings.HasPrefix(key, config.SystemLabelPrefix) {
 			return "", config.ErrSecretUnavailable
@@ -282,7 +319,7 @@ func (d *DockerEngine) startService(ctx context.Context, name string, svc *confi
 	}
 
 	containerCfg := &container.Config{
-		Image:        svc.Image,
+		Image:        image,
 		Env:          env,
 		Labels:       labels,
 		ExposedPorts: exposedPorts,
@@ -686,14 +723,26 @@ func (d *DockerEngine) RemoveImage(ctx context.Context, image string, force bool
 // EnsureVolume creates a stack-owned volume with dill labels if it does not
 // exist. Existing volumes (including Compose-created ones) are left untouched.
 func (d *DockerEngine) EnsureVolume(ctx context.Context, name, stackName string) error {
-	_, err := d.cli.VolumeInspect(ctx, name)
+	if d.disposable && (stackName == "" || name == "") {
+		return ErrDisposableOwnership
+	}
+	live, err := d.cli.VolumeInspect(ctx, name)
 	if err == nil {
+		if d.disposable {
+			if live.Name != name {
+				return ErrDisposableUnavailable
+			}
+			return checkDisposableSettings(stackName, "local", disposableSettings{live.Driver, live.Options, live.Labels})
+		}
 		return nil
 	}
 	if !client.IsErrNotFound(err) {
+		if d.disposable {
+			return ErrDisposableUnavailable
+		}
 		return err
 	}
-	_, err = d.cli.VolumeCreate(ctx, volumetypes.CreateOptions{
+	live, err = d.cli.VolumeCreate(ctx, volumetypes.CreateOptions{
 		Name: name,
 		Labels: map[string]string{
 			"dill.managed": "true",
@@ -701,7 +750,18 @@ func (d *DockerEngine) EnsureVolume(ctx context.Context, name, stackName string)
 		},
 	})
 	if err != nil {
+		if d.disposable {
+			return ErrDisposableUnavailable
+		}
 		return fmt.Errorf("creating volume %s: %w", name, err)
+	}
+	if d.disposable {
+		if live.Name != name {
+			return ErrDisposableUnavailable
+		}
+		if err := checkDisposableSettings(stackName, "local", disposableSettings{live.Driver, live.Options, live.Labels}); err != nil {
+			return err
+		}
 	}
 	logger.Debug("volume created", "name", name, "stack", stackName)
 	return nil
