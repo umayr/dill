@@ -3,9 +3,11 @@
 This is the **baseline harness** for [#80](https://github.com/umayr/dill/issues/80),
 not completion of that issue, a deployment tool, or full conformance/release
 qualification. A green baseline does **not** qualify the combined #77/#78/#79
-pilot. `evidence.json` deliberately says `"qualification": "incomplete"` even
-when its implemented cases pass. Missing acceptance is represented as `blocked`
-or `not-run`, never passed or silently skipped.
+pilot. `evidence.json` currently says `"qualification": "incomplete"` because
+required combined cases remain blocked, even when implemented baseline cases
+pass. The final acceptance gate can become complete only after every required
+case has pinned disposable runtime evidence. Missing acceptance is represented
+as `blocked` or `not-run`, never passed or silently skipped.
 
 ## Boundary and current subset
 
@@ -61,7 +63,11 @@ merely because a prerequisite compiles or its mock tests pass:
   capability rejection **before any pull/write**, name reuse and explicit
   destructive intent after prompting. The proposed Docker-only disposable profile
   rejects binds, secrets, host namespaces, capabilities/devices and external,
-  anonymous or explicitly named volumes. Approved isolated bind paths remain
+  anonymous or explicitly named volumes. Positive qualified images must be
+  prepared locally with effective pull never, and all image-declared VOLUME
+  entries are initially denied, even with a matching named mount. Unknown image
+  metadata cannot qualify; create must use the immutable inspected image ID.
+  Approved isolated bind paths remain
   unsupported, not implicitly qualified. Podman profile rejection is not parity.
 - #78: approved local layout, explicit expected daemon ID, trusted state directory,
   same-stack CLI/Brine contention, different-stack independence, alias handling,
@@ -116,8 +122,15 @@ check**, not a signature or an attestation against an adversarial binary.
 Exit 0 means **implemented baseline passed**, not pilot approval. Exit 1 means
 input rejection, failed/missing/skipped selected tests, timeout, provenance
 failure or baseline assertion failure. `baselinePassed` is separate from the
-permanently incomplete qualification field. Offline mode leaves engine cases
-`not-run`; it cannot establish Docker or Podman runtime evidence.
+computed qualification/acceptance fields. Add `--require-complete` for the final
+approval run: a green baseline with any incomplete required acceptance then exits
+1. Missing/duplicate/extra required IDs, blocked/not-run/skip/failure, non-runtime
+or wrong-candidate/target evidence, dirty provenance, incomplete final integrity
+or missing supported-profile limitations all fail closed. There is no optional
+case/waiver mechanism. Offline mode leaves engine cases `not-run`; it cannot
+establish Docker or Podman runtime evidence. See
+[combined runtime design](alpha-coordination-qualification.md) for the exact
+required concurrency/crash/recovery inventory and unbound implementation gates.
 
 ## Opt-in real-engine runs and CI
 

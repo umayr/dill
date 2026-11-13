@@ -17,6 +17,83 @@ COMMIT = "a" * 40
 
 
 class QualificationTests(unittest.TestCase):
+    def synthetic_complete_gate_inputs(self):
+        # Pure predicate fixtures only. Never write these as qualification output.
+        from copy import deepcopy
+        manifest = deepcopy(json.loads((q.FIXTURES / "cases.json").read_text()))
+        endpoint, digest = "unix:///synthetic/disposable.sock", "b" * 64
+        results = []
+        for case in manifest["cases"]:
+            if case["id"] in q.QUALIFIED_CASES:
+                case["mode"], kind = "qualified-engine", "real-qualified-engine"
+            elif case["mode"] == "offline":
+                kind = "offline"
+            else:
+                kind = "real-engine"
+            results.append({"id": case["id"], "status": "passed", "evidenceKind": kind,
+                            "candidateCommit": COMMIT, "binarySha256": digest, "target": endpoint})
+        evidence = {"fixtureVersion": manifest["version"], "cases": results,
+                    "source": {"commit": COMMIT, "dirty": False},
+                    "binary": {"buildRevision": COMMIT, "buildModified": "false", "sha256": digest},
+                    "schema": {"sha256": "c" * 64}, "pkl": {"sha256": "d" * 64},
+                    "checksumsAfter": {"binary": digest, "schema": "c" * 64, "pkl": "d" * 64},
+                    "integrityVerified": True, "engine": "docker", "disposableAttested": True,
+                    "target": endpoint, "engineVersion": {"Server": {"Version": "synthetic"}},
+                    "baselinePassed": True, "commands": [{"passed": True}]}
+        return evidence, manifest
+
+    def test_final_gate_is_not_permanently_incomplete(self):
+        evidence, manifest = self.synthetic_complete_gate_inputs()
+        self.assertEqual(set(c["id"] for c in manifest["cases"]), q.FINAL_REQUIRED_CASES)
+        result = q.final_acceptance(evidence, manifest)
+        self.assertTrue(result["complete"], result["reasons"])
+        self.assertEqual(result["reasons"], [])
+
+    def test_final_gate_missing_failed_or_unqualified_evidence_never_passes(self):
+        mutations = [
+            lambda e, m: e["cases"].pop(),
+            lambda e, m: m["cases"].pop(),
+            lambda e, m: e["cases"].append(e["cases"][0]),
+            lambda e, m: e["cases"][0].update(status="blocked"),
+            lambda e, m: e["cases"][0].update(status="not-run"),
+            lambda e, m: e["cases"][0].update(status="skipped"),
+            lambda e, m: e["cases"][0].update(status="failed"),
+            lambda e, m: e["cases"][0].pop("evidenceKind"),
+            lambda e, m: e["cases"][-1].update(evidenceKind="real-engine"),
+            lambda e, m: e["cases"][-1].update(candidateCommit="e" * 40),
+            lambda e, m: e["cases"][-1].update(binarySha256="e" * 64),
+            lambda e, m: e["cases"][-1].update(target="unix:///other.sock"),
+            lambda e, m: m["cases"][-1].update(mode="blocked"),
+            lambda e, m: e["source"].update(dirty=True),
+            lambda e, m: e["binary"].update(buildModified="true"),
+            lambda e, m: e.update(engine="podman"),
+            lambda e, m: e.update(disposableAttested=False),
+            lambda e, m: e.pop("engineVersion"),
+            lambda e, m: e.pop("integrityVerified"),
+            lambda e, m: e["checksumsAfter"].update(schema="e" * 64),
+            lambda e, m: e.update(baselinePassed=False),
+            lambda e, m: e["commands"].clear(),
+            lambda e, m: e["commands"][0].update(passed=False),
+            lambda e, m: m["qualifiedProfile"]["limitations"].pop(),
+        ]
+        for index, mutate in enumerate(mutations):
+            with self.subTest(index=index):
+                evidence, manifest = self.synthetic_complete_gate_inputs()
+                mutate(evidence, manifest)
+                self.assertFalse(q.final_acceptance(evidence, manifest)["complete"])
+
+    def test_require_complete_rejects_green_incomplete_baseline(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            args = self.fake_candidate(root)
+            args.require_complete = True
+            with patch.object(q, "ROOT", root), patch.object(q, "FIXTURES", root / "test/qualification/v1"), patch.object(q, "Recorder", self.fake_recorder()):
+                self.assertEqual(q.collect(args), 1)
+            evidence = json.loads((Path(args.output) / "evidence.json").read_text())
+            self.assertTrue(evidence["baselinePassed"])
+            self.assertEqual(evidence["qualification"], "incomplete")
+            self.assertFalse(evidence["acceptance"]["complete"])
+
     def test_hash(self):
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "file"
@@ -200,7 +277,7 @@ print('private-empty-auth-only')
         return argparse.Namespace(expected_commit=COMMIT, binary=str(root / "dill"),
                                   binary_sha256=q.sha256(root / "dill"), pkl=str(root / "pkl"),
                                   output=str(root / "evidence"), allow_dirty=False,
-                                  engine=None, socket=None, disposable=False, operations=False)
+                                  engine=None, socket=None, disposable=False, operations=False, require_complete=False)
 
     def fake_recorder(self, revision=COMMIT, modified="false", dirty=False, pkl_version="Pkl 0.31.1 (Linux)"):
         class Fake(q.Recorder):

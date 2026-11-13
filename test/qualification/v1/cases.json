@@ -1,6 +1,15 @@
 {
   "version": "dill.alpha-qualification/1",
   "scope": "disposable single-host internal Alpha; not full conformance or release qualification",
+  "qualifiedProfile": {
+    "engine": "docker",
+    "layout": "native-local-docker-v1",
+    "limitations": [
+      "docker-only", "prepared-local-images-only", "effective-pull-never", "all-image-volumes-denied",
+      "dedicated-named-volumes-only", "no-binds", "no-secrets", "no-host-namespace",
+      "no-devices-or-capabilities", "no-orphans-or-uninventoried-mounts", "qualified-teardown-unsupported"
+    ]
+  },
   "cases": [
     {"id": "offline-valid", "mode": "offline", "fixture": "valid.pkl", "exit": 0},
     {"id": "offline-invalid-graph", "mode": "offline", "fixture": "invalid-graph.pkl", "exit": 2},
@@ -18,6 +27,13 @@
     {"id": "same-stack-concurrency", "mode": "blocked", "requires": [77, 78], "reason": "CLI and Brine must contend while different stacks remain independent; final integrated hooks required."},
     {"id": "crash-unknown-recovery", "mode": "blocked", "requires": [77, 78], "reason": "SIGKILL and durable unknown outcome/recovery inspection require final trusted-state interface."},
     {"id": "foreign-resource-inventory", "mode": "blocked", "requires": [78, 79], "reason": "Combined suite must compare foreign container/network/volume identities and state before/after every failure and cleanup."},
-    {"id": "brine-candidate-handoff", "mode": "blocked", "requires": [77, 78, 79], "reason": "Brine must consume this exact candidate checksum, schema and fixture version on combined final heads."}
+    {"id": "brine-candidate-handoff", "mode": "blocked", "requires": [77, 78, 79], "reason": "Brine must consume this exact candidate checksum, schema and fixture version on combined final heads."},
+    {"id": "qualified-docker-profile", "mode": "blocked", "requires": [78, 79], "reason": "Requires actual native-local-docker-v1 qualified operations with prepared immutable images and effective pull never."},
+    {"id": "qualified-podman-rejected", "mode": "blocked", "requires": [78, 79], "reason": "Qualified Podman is unsupported and must reject before any pull/write; legacy parity remains independently required."},
+    {"id": "different-stack-concurrency", "mode": "blocked", "requires": [78], "reason": "Independent stacks must progress concurrently on one attested daemon without accidental global locking."},
+    {"id": "alias-concurrency", "mode": "blocked", "requires": [78], "reason": "Path/URI/symlink socket aliases and CLI/Brine sources must contend on one daemon+stack identity."},
+    {"id": "corrupt-journal-rejection", "mode": "blocked", "requires": [78], "reason": "Malformed, stale or mismatched trusted state must fail closed before engine mutation."},
+    {"id": "inspected-exact-operation-recovery", "mode": "blocked", "requires": [78], "reason": "Unknown state stays blocked until manual live inspection and exact-ID acknowledgement with explicit inspected intent."},
+    {"id": "qualified-image-volume-rejected", "mode": "blocked", "requires": [79], "reason": "All image-declared VOLUME entries are initially denied, even named-mount-covered; unknown metadata cannot pass."}
   ]
 }

@@ -27,6 +27,88 @@ SELECTORS = {
 }
 
 
+FINAL_REQUIRED_CASES = frozenset({
+    "offline-valid", "offline-invalid-graph", "success-repeat-config-change", "changed-image",
+    "invalid-config-preserves-live", "foreign-container-collision", "retained-volume",
+    "cancellation", "failed-start-cleanup", "operation-contract-baseline", "operation-outcomes",
+    "no-prune", "bounded-storage-preflight", "same-stack-concurrency", "crash-unknown-recovery",
+    "foreign-resource-inventory", "brine-candidate-handoff", "qualified-docker-profile",
+    "qualified-podman-rejected", "different-stack-concurrency", "alias-concurrency",
+    "corrupt-journal-rejection", "inspected-exact-operation-recovery", "qualified-image-volume-rejected",
+})
+QUALIFIED_CASES = FINAL_REQUIRED_CASES - {
+    "offline-valid", "offline-invalid-graph", "success-repeat-config-change", "changed-image",
+    "invalid-config-preserves-live", "foreign-container-collision", "retained-volume",
+    "cancellation", "failed-start-cleanup", "operation-contract-baseline",
+}
+PROFILE_LIMITATIONS = frozenset({
+    "docker-only", "prepared-local-images-only", "effective-pull-never", "all-image-volumes-denied",
+    "dedicated-named-volumes-only", "no-binds", "no-secrets", "no-host-namespace",
+    "no-devices-or-capabilities", "no-orphans-or-uninventoried-mounts", "qualified-teardown-unsupported",
+})
+
+
+def final_acceptance(evidence, manifest):
+    """Evaluate only this run's pinned evidence; no waiver/optional-case mechanism.
+
+    Synthetic unit tests of this evaluator are not runtime evidence. Runtime
+    records remain trustworthy only within the reviewed candidate/test boundary.
+    """
+    reasons = []
+    definitions = manifest.get("cases", [])
+    results = evidence.get("cases", [])
+    declared = [case.get("id") for case in definitions]
+    observed = [case.get("id") for case in results]
+    if (len(declared) != len(set(declared)) or set(declared) != FINAL_REQUIRED_CASES
+            or len(observed) != len(set(observed)) or set(observed) != FINAL_REQUIRED_CASES):
+        reasons.append("required-case-set-mismatch")
+    if manifest.get("version") != "dill.alpha-qualification/1" or evidence.get("fixtureVersion") != manifest.get("version"):
+        reasons.append("fixture-version-mismatch")
+    source, binary = evidence.get("source", {}), evidence.get("binary", {})
+    commit = source.get("commit", "")
+    if (not re.fullmatch(r"[0-9a-f]{40}", commit) or source.get("dirty") is not False
+            or binary.get("buildRevision") != commit or binary.get("buildModified") != "false"):
+        reasons.append("candidate-not-clean-and-pinned")
+    if (evidence.get("engine") != "docker" or evidence.get("disposableAttested") is not True
+            or not str(evidence.get("target", "")).startswith("unix:///")
+            or not isinstance(evidence.get("engineVersion"), dict) or not evidence["engineVersion"]):
+        reasons.append("disposable-docker-runtime-missing")
+    expected_hashes = {key: evidence.get(key, {}).get("sha256") for key in ("binary", "schema", "pkl")}
+    if (not all(isinstance(value, str) and re.fullmatch(r"[0-9a-f]{64}", value) for value in expected_hashes.values())
+            or evidence.get("checksumsAfter") != expected_hashes
+            or evidence.get("integrityVerified") is not True):
+        reasons.append("final-integrity-evidence-missing")
+    profile = manifest.get("qualifiedProfile", {})
+    if (profile.get("engine") != "docker" or profile.get("layout") != "native-local-docker-v1"
+            or set(profile.get("limitations", [])) != PROFILE_LIMITATIONS):
+        reasons.append("supported-profile-limitations-missing")
+    by_id = {case.get("id"): case for case in results}
+    for case in definitions:
+        case_id = case.get("id")
+        result = by_id.get(case_id, {})
+        mode = case.get("mode")
+        if (mode not in {"offline", "engine", "operation-engine", "qualified-engine"}
+                or (case_id in QUALIFIED_CASES and mode != "qualified-engine")
+                or (case_id in {"offline-valid", "offline-invalid-graph"} and mode != "offline")):
+            reasons.append("required-case-not-implemented")
+        if result.get("status") != "passed" or mode == "blocked":
+            reasons.append("required-case-not-passed")
+            continue
+        kind = "offline" if case.get("mode") == "offline" else "real-engine"
+        if case_id in QUALIFIED_CASES:
+            kind = "real-qualified-engine"
+        if result.get("evidenceKind") != kind:
+            reasons.append("required-case-runtime-evidence-missing")
+        if (result.get("candidateCommit") != commit or result.get("binarySha256") != binary.get("sha256")
+                or result.get("target") != evidence.get("target")):
+            reasons.append("required-case-candidate-or-target-mismatch")
+    if (evidence.get("baselinePassed") is not True or not evidence.get("commands")
+            or any(command.get("passed") is not True for command in evidence["commands"])):
+        reasons.append("baseline-or-command-failed")
+    return {"complete": not reasons, "reasons": sorted(set(reasons)),
+            "requiredCases": len(FINAL_REQUIRED_CASES), "profile": profile}
+
+
 def sha256(path):
     digest = hashlib.sha256()
     with Path(path).open("rb") as source:
@@ -186,6 +268,7 @@ def collect(args):
                 "operationContractRequested": args.operations,
                 "commands": recorder.commands, "cases": [], "gaps": []}
     ok = True
+    manifest = {}
     try:
         commit, passed = recorder.run(["git", "rev-parse", "HEAD"])
         commit = commit.decode().strip()
@@ -233,7 +316,8 @@ def collect(args):
             if case["mode"] == "offline":
                 _, passed = recorder.run([binary, "-f", FIXTURES / case["fixture"], "validate"],
                                          expected=case["exit"])
-                result["status"] = "passed" if passed else "failed"
+                result.update(status="passed" if passed else "failed", evidenceKind="offline",
+                              candidateCommit=commit, binarySha256=evidence["binary"]["sha256"], target=endpoint)
                 ok &= passed
             elif case["mode"] == "blocked" or (case["mode"] == "operation-engine" and not args.operations):
                 result.update(status="blocked", requires=case["requires"], reason=case["reason"])
@@ -275,13 +359,12 @@ def collect(args):
             states = test_results(data, tests)
             for case, result in zip(manifest["cases"], evidence["cases"]):
                 if case["mode"] in modes:
-                    result.update(status=states[case["test"]], test=case["test"])
+                    result.update(status=states[case["test"]], test=case["test"], evidenceKind="real-engine",
+                                  candidateCommit=commit, binarySha256=evidence["binary"]["sha256"], target=endpoint)
             ok &= passed and all(s == "passed" for s in states.values())
         if dirty or settings.get("vcs.modified") != "false":
             evidence["gaps"].append("development-only dirty source/binary; not transferable candidate evidence")
         evidence["baselinePassed"] = bool(ok)
-        # Even a green baseline intentionally cannot satisfy pending combined cases.
-        evidence["gaps"].append("Prerequisite acceptance and Brine final-head qualification remain blocked; issue #80 is not complete.")
         evidence["checksumsAfter"] = {"binary": sha256(binary), "schema": sha256(ROOT / "dill.pkl"),
                                       "pkl": sha256(pkl)}
         final_commit, final_commit_ok = recorder.run(["git", "rev-parse", "HEAD"])
@@ -296,13 +379,18 @@ def collect(args):
                                            "schema": evidence["schema"]["sha256"],
                                            "pkl": evidence["pkl"]["sha256"]}:
             raise ValueError("candidate files changed during qualification")
+        evidence["integrityVerified"] = True
     except (ValueError, KeyError, OSError, json.JSONDecodeError, KeyboardInterrupt) as error:
         evidence.update(baselinePassed=False, error=type(error).__name__)
         ok = False
     finally:
+        evidence["acceptance"] = final_acceptance(evidence, manifest)
+        evidence["qualification"] = "complete" if evidence["acceptance"]["complete"] else "incomplete"
+        if not evidence["acceptance"]["complete"]:
+            evidence["gaps"].append("Final required-case acceptance is incomplete; baseline success is not issue #80 completion.")
         (output / "evidence.json").write_text(json.dumps(evidence, indent=2) + "\n")
     print(str(output / "evidence.json"))
-    return 0 if ok else 1
+    return 0 if ok and (not args.require_complete or evidence["acceptance"]["complete"]) else 1
 
 
 def main():
@@ -313,6 +401,7 @@ def main():
     parser.add_argument("--pkl", required=True)
     parser.add_argument("--output", required=True)
     parser.add_argument("--allow-dirty", action="store_true", help="development only, never qualification")
+    parser.add_argument("--require-complete", action="store_true", help="fail unless every final required case has pinned disposable runtime evidence")
     parser.add_argument("--engine", choices=("docker", "podman"))
     parser.add_argument("--operations", action="store_true", help="require discovered dill.operation/1 and run its real-engine consumer cases")
     parser.add_argument("--socket")
