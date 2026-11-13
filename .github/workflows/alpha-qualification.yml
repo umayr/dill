@@ -1,0 +1,100 @@
+name: Disposable Alpha baseline
+
+on:
+  pull_request:
+  workflow_dispatch:
+    inputs:
+      candidate_sha:
+        description: Full 40-character candidate commit SHA (not a branch or tag)
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  disposable-baseline:
+    # Only GitHub-hosted ephemeral engines: no operator/production targets.
+    # This is a baseline, not an issue #80 completion gate. The existing
+    # CI workflow (including Alpha secrets) remains independently mandatory.
+    name: Disposable baseline / ${{ matrix.engine }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    env:
+      PYTHONDONTWRITEBYTECODE: "1"
+    strategy:
+      fail-fast: false
+      matrix:
+        engine: [docker, podman]
+    steps:
+      - name: Validate exact candidate selector
+        env:
+          CANDIDATE_SHA: ${{ inputs.candidate_sha || github.event.pull_request.head.sha }}
+        run: '[[ "$CANDIDATE_SHA" =~ ^[0-9a-f]{40}$ ]]'
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.candidate_sha || github.event.pull_request.head.sha }}
+          fetch-depth: 0
+      - name: Verify checkout
+        env:
+          CANDIDATE_SHA: ${{ inputs.candidate_sha || github.event.pull_request.head.sha }}
+        run: test "$(git rev-parse HEAD)" = "$CANDIDATE_SHA"
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - name: Install checksum-verified pinned Pkl
+        run: |
+          python3 scripts/install-pkl.py "$RUNNER_TEMP/pkl"
+          echo "$RUNNER_TEMP" >> "$GITHUB_PATH"
+      - name: Build and baseline checks on exact candidate
+        run: |
+          make build VERSION="$(git rev-parse HEAD)"
+          make test
+          make vet
+          make validate
+          git diff --check
+          test -z "$(git status --porcelain --untracked-files=all)"
+      - name: Provision rootless Podman on disposable hosted runner
+        if: matrix.engine == 'podman'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y podman
+          # This socket/service and all engine storage exist only on this job VM.
+          podman system service --time=0 "unix://$RUNNER_TEMP/alpha-podman.sock" > "$RUNNER_TEMP/podman-service.log" 2>&1 &
+          for i in $(seq 1 30); do
+            [ -S "$RUNNER_TEMP/alpha-podman.sock" ] && exit 0
+            sleep 1
+          done
+          exit 1
+      - name: Run selected real-engine baseline with pinned binary
+        env:
+          ENGINE: ${{ matrix.engine }}
+          CANDIDATE_SHA: ${{ inputs.candidate_sha || github.event.pull_request.head.sha }}
+        run: |
+          if [ "$ENGINE" = docker ]; then
+            socket=/var/run/docker.sock
+          else
+            socket="$RUNNER_TEMP/alpha-podman.sock"
+          fi
+          python3 scripts/qualify-alpha.py \
+            --expected-commit "$CANDIDATE_SHA" \
+            --binary "$PWD/bin/dill" \
+            --binary-sha256 "$(sha256sum bin/dill | cut -d ' ' -f 1)" \
+            --pkl "$RUNNER_TEMP/pkl" \
+            --output "$PWD/bin/alpha-evidence-$ENGINE" \
+            --engine "$ENGINE" --socket "$socket" --disposable
+      - name: Publish exact candidate and bounded evidence for inspection/Brine
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: alpha-baseline-${{ inputs.candidate_sha || github.event.pull_request.head.sha }}-${{ matrix.engine }}
+          if-no-files-found: error
+          retention-days: 14
+          path: |
+            bin/dill
+            bin/alpha-evidence-*/evidence.json
+            dill.pkl
+            internal/loader/pkl-toolchain.json
+            test/qualification/v1
+            test/integration
+            scripts/qualify-alpha.py

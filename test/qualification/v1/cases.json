@@ -1,0 +1,22 @@
+{
+  "version": "dill.alpha-qualification/1",
+  "scope": "disposable single-host internal Alpha; not full conformance or release qualification",
+  "cases": [
+    {"id": "offline-valid", "mode": "offline", "fixture": "valid.pkl", "exit": 0},
+    {"id": "offline-invalid-graph", "mode": "offline", "fixture": "invalid-graph.pkl", "exit": 2},
+    {"id": "success-repeat-config-change", "mode": "engine", "test": "TestDillRealEngineLifecycle"},
+    {"id": "changed-image", "mode": "engine", "test": "TestDillImageUpdateRecreates"},
+    {"id": "invalid-config-preserves-live", "mode": "engine", "test": "TestConformanceInvalidPartialSelectionPreservesStack"},
+    {"id": "foreign-container-collision", "mode": "engine", "test": "TestDillForeignContainerOwnership"},
+    {"id": "retained-volume", "mode": "engine", "test": "TestDillRealEngineTeardown"},
+    {"id": "cancellation", "mode": "engine", "test": "TestDillCancelledUpRollsBack"},
+    {"id": "failed-start-cleanup", "mode": "engine", "test": "TestDillRealEngineFailedStartCleanup"},
+    {"id": "operation-outcomes", "mode": "blocked", "requires": [77], "reason": "Combined lifecycle operation-result contract and failure/cancellation assertions await approved interface."},
+    {"id": "no-prune", "mode": "blocked", "requires": [79], "reason": "Explicit no-prune flag and omitted-service preservation assertions await approved interface."},
+    {"id": "bounded-storage-preflight", "mode": "blocked", "requires": [79], "reason": "Approved disposable mount/capability and destructive-intent contract required; prove zero mutations on rejection."},
+    {"id": "same-stack-concurrency", "mode": "blocked", "requires": [77, 78], "reason": "CLI and Brine must contend while different stacks remain independent; final integrated hooks required."},
+    {"id": "crash-unknown-recovery", "mode": "blocked", "requires": [77, 78], "reason": "SIGKILL and durable unknown outcome/recovery inspection require final trusted-state interface."},
+    {"id": "foreign-resource-inventory", "mode": "blocked", "requires": [78, 79], "reason": "Combined suite must compare foreign container/network/volume identities and state before/after every failure and cleanup."},
+    {"id": "brine-candidate-handoff", "mode": "blocked", "requires": [77, 78, 79], "reason": "Brine must consume this exact candidate checksum, schema and fixture version on combined final heads."}
+  ]
+}
