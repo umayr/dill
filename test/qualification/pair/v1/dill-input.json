@@ -1,0 +1,21 @@
+{
+  "version": "dill.brine-alpha-input/1",
+  "repository": "umayr/dill",
+  "candidateCommit": "b3ecbaa29260f65d56cf55e54ccd8fedcdf496d2",
+  "sourceTree": "cc545129c5a178cd07fa97b9e7827f74fe624866",
+  "qualificationRun": 43399222914,
+  "artifactId": 14025176783,
+  "artifactName": "alpha-baseline-b3ecbaa29260f65d56cf55e54ccd8fedcdf496d2-docker",
+  "artifactSize": 79518348,
+  "zipSha256": "1cf5c94eb3ef93c6354fabf91cb07d664c4b6890f134cf2a3b5874fc38acffd8",
+  "archiveMember": "bin/alpha-evidence-docker/handoff.tar.gz",
+  "archiveSha256": "75a108b6537457b36c4b6aa75f25895683e60d45e104c6fe8085016584a34bcd",
+  "manifestSha256": "d4cd775de86486376e05977bff68d39ce6e601e53e59fd066808392c7c9fd732",
+  "binarySha256": "3acea65d4121402194787bb0bdccc20a79c725e1ee5bb2337cc5b33b16e12d51",
+  "pklVersion": "0.31.1",
+  "pklSha256": "618f13955d755cafbfe8c9cba1d27635848cd49dbc6abffd398d2751db1231bf",
+  "schemaSha256": "b34206d0622fc6c1aa99d5edefb9b6d4b01232635756d2c67fb135161f8db345",
+  "fixtureVersion": "dill.alpha-qualification/1",
+  "platform": "linux-amd64",
+  "jointApplicationAcceptance": "not-run"
+}
