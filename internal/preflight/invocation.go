@@ -3,9 +3,12 @@ package preflight
 import (
 	"flag"
 	"io"
+	"net/url"
 	"path/filepath"
 	"strings"
 	"time"
+	"unicode"
+	"unicode/utf8"
 )
 
 // Invocation is a strictly parsed opt-in named-profile request, not a saved plan
@@ -91,13 +94,23 @@ func ParseInvocation(args []string, apply bool) (Invocation, string) {
 	return v, ""
 }
 func explicitUnixSocket(value string) bool {
-	path := value
-	if strings.HasPrefix(path, "unix://") {
-		path = strings.TrimPrefix(path, "unix://")
-	} else if strings.Contains(path, "://") {
+	// Match the existing explicit localEngineSocket grammar without ambient
+	// lookup, filesystem probes, cleaning or normalizing a different target.
+	if !utf8.ValidString(value) || strings.ContainsFunc(value, unicode.IsControl) || strings.ContainsAny(value, "?#%\\") {
 		return false
 	}
-	return filepath.IsAbs(path) && !strings.ContainsAny(path, "\x00\r\n")
+	path := value
+	if !strings.HasPrefix(value, "/") {
+		u, err := url.Parse(value)
+		if err != nil || u.Scheme != "unix" || u.Host != "" || u.User != nil || u.Opaque != "" || u.RawQuery != "" || u.Fragment != "" {
+			return false
+		}
+		path = u.Path
+		if value != "unix://"+path {
+			return false
+		}
+	}
+	return strings.HasPrefix(path, "/") && !strings.HasPrefix(path, "//") && strings.TrimRightFunc(path, unicode.IsSpace) == path
 }
 func uniqueFlags(fs *flag.FlagSet, args []string) (map[string]bool, bool) {
 	seen := map[string]bool{}
