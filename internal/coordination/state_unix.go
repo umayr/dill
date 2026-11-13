@@ -56,6 +56,21 @@ func Open(ctx context.Context, path string) (*State, error) {
 	defer lock.Release()
 	s.key, err = s.readFile("identity.key", 32)
 	if errors.Is(err, os.ErrNotExist) {
+		// A lost key changes EVERY stack/resource lookup. Re-keying populated
+		// state would hide unresolved operations, so bootstrap only a proven
+		// fresh directory containing our one known bootstrap lock.
+		entries, scanErr := dir.ReadDir(2)
+		fresh := scanErr == nil || errors.Is(scanErr, io.EOF)
+		bootstrapName := hex.EncodeToString(bootstrap[:]) + ".lock"
+		for _, entry := range entries {
+			if entry.Name() != bootstrapName {
+				fresh = false
+			}
+		}
+		if !fresh || len(entries) != 1 {
+			dir.Close()
+			return nil, errors.New("state identity missing from populated directory; inspection required")
+		}
 		s.key = make([]byte, 32)
 		if _, err = rand.Read(s.key); err == nil {
 			err = s.replace("identity.key", s.key)

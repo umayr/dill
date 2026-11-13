@@ -182,7 +182,7 @@ func (s *State) Begin(ctx context.Context, target *Target, stack, source string,
 		session.Close()
 		return nil, errors.New("operation entropy unavailable")
 	}
-	session.record.OperationID = hex.EncodeToString(id[:])
+	session.record.OperationID = "op_" + hex.EncodeToString(id[:])
 	// Stack first, so a partial reservation install cannot free the same stack.
 	stackKey := s.stackKey(record.Target, record.Stack)
 	if err = s.save(nameFor(stackKey), session.record); err == nil {
@@ -389,7 +389,7 @@ func (s *State) load(name, target, stack string) (*Record, error) {
 	return head, nil
 }
 func validRecord(r Record) bool {
-	if r.Version != JournalVersion || !hexID(r.OperationID, 32) || !hexID(r.Target, 64) || !hexID(r.Stack, 64) || r.Resources == nil || len(r.Resources) > 256 || r.Source != "cli" && r.Source != "brine" {
+	if r.Version != JournalVersion || !strings.HasPrefix(r.OperationID, "op_") || !hexID(strings.TrimPrefix(r.OperationID, "op_"), 32) || !hexID(r.Target, 64) || !hexID(r.Stack, 64) || r.Resources == nil || len(r.Resources) > 256 || r.Source != "cli" && r.Source != "brine" {
 		return false
 	}
 	for _, v := range r.Resources {

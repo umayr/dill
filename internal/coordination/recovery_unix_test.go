@@ -175,6 +175,86 @@ func TestCommitMarkerLossAndUnsafeInodePairs(t *testing.T) {
 		})
 	}
 }
+func TestMissingIdentityKeyCannotHideUnresolvedState(t *testing.T) {
+	dir := t.TempDir()
+	os.Chmod(dir, 0700)
+	ctx, cancel := bounded()
+	defer cancel()
+	state, err := Open(ctx, dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	session, err := state.Begin(ctx, testTarget(), "A", "brine", []ResourceInput{{Kind: "container", Name: "shared", Action: "reconcile"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	session.Close()
+	state.Close()
+	if err = os.Remove(filepath.Join(dir, "identity.key")); err != nil {
+		t.Fatal(err)
+	}
+	if replacement, err := Open(ctx, dir); err == nil {
+		replacement.Close()
+		t.Fatal("silently re-keyed populated state and hid unknown operation")
+	}
+	if _, err = os.Stat(filepath.Join(dir, "identity.key")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatal("created replacement key despite failed recovery")
+	}
+	// Even an interrupted first bootstrap temporary file is not proven fresh.
+	pending := t.TempDir()
+	os.Chmod(pending, 0700)
+	os.WriteFile(filepath.Join(pending, ".pending-orphan"), nil, 0600)
+	if replacement, err := Open(ctx, pending); err == nil {
+		replacement.Close()
+		t.Fatal("re-keyed ambiguous bootstrap directory")
+	}
+	fresh := t.TempDir()
+	os.Chmod(fresh, 0700)
+	replacement, err := Open(ctx, fresh)
+	if err != nil {
+		t.Fatal("fresh state did not initialize", err)
+	}
+	replacement.Close()
+	if _, err = os.Stat(filepath.Join(fresh, "identity.key")); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestMissingKeyBlocksBothStackAndResourceRecovery(t *testing.T) {
+	for _, stack := range []string{"original-stack", "different-stack"} {
+		t.Run(stack, func(t *testing.T) {
+			dir := t.TempDir()
+			os.Chmod(dir, 0700)
+			ctx, cancel := bounded()
+			defer cancel()
+			state, err := Open(ctx, dir)
+			if err != nil {
+				t.Fatal(err)
+			}
+			resources := []ResourceInput{{Kind: "container", Name: "shared-resource", Action: "reconcile"}}
+			operation, err := state.Begin(ctx, testTarget(), "original-stack", "brine", resources)
+			if err != nil {
+				t.Fatal(err)
+			}
+			operation.Close()
+			state.Close()
+			os.Remove(filepath.Join(dir, "identity.key"))
+			reopened, err := Open(ctx, dir)
+			if err == nil {
+				permit, beginErr := reopened.Begin(ctx, testTarget(), stack, "cli", resources)
+				if permit != nil {
+					permit.Close()
+				}
+				reopened.Close()
+				t.Fatalf("missing key reopened populated state for %s (Begin error: %v)", stack, beginErr)
+			}
+			if _, err = os.Stat(filepath.Join(dir, "identity.key")); !errors.Is(err, os.ErrNotExist) {
+				t.Fatal("replacement key was written")
+			}
+		})
+	}
+}
+
 func TestNoGenericHardlinkExemption(t *testing.T) {
 	dir := t.TempDir()
 	os.Chmod(dir, 0700)

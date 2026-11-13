@@ -100,8 +100,7 @@ func Qualify(ctx context.Context, q Qualification) (*Target, error) {
 		t.Close()
 		return nil, errors.New("target identity does not match qualification")
 	}
-	sum := sha256.Sum256([]byte("dill-local-docker-v1\x00" + daemon.ID))
-	t.identity = hex.EncodeToString(sum[:])
+	t.identity, _ = DockerIdentity(daemon.ID)
 	return t, nil
 }
 
@@ -112,6 +111,16 @@ func (t localTransport) RoundTrip(r *http.Request) (*http.Response, error) {
 		return nil, errors.New("request does not use qualified target")
 	}
 	return t.inner.RoundTrip(r)
+}
+
+// DockerIdentity derives an offline lookup token from the independently known
+// daemon ID. It is not live qualification and cannot authorize engine mutation.
+func DockerIdentity(id string) (string, error) {
+	if !safeDaemonID(id) {
+		return "", errors.New("invalid qualified daemon identity")
+	}
+	sum := sha256.Sum256([]byte("dill-local-docker-v1\x00" + id))
+	return hex.EncodeToString(sum[:]), nil
 }
 
 func safeDaemonID(s string) bool {
