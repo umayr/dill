@@ -77,9 +77,9 @@ func runOperationCapabilities(args []string) error {
 		Operations                      []string `json:"operations"`
 		Engines                         []string `json:"engines"`
 		Features                        []string `json:"features"`
-		QualifiedCoordinationOperations []string `json:"qualifiedCoordinationOperations"`
-		QualifiedCoordinationEngines    []string `json:"qualifiedCoordinationEngines"`
-		QualifiedCoordinationLayouts    []string `json:"qualifiedCoordinationLayouts"`
+		QualifiedCoordinationOperations []string `json:"qualifiedCoordinationOperations,omitempty"`
+		QualifiedCoordinationEngines    []string `json:"qualifiedCoordinationEngines,omitempty"`
+		QualifiedCoordinationLayouts    []string `json:"qualifiedCoordinationLayouts,omitempty"`
 	}{operation.Version, operation.Operations, []string{"docker", "podman"}, features, qOperations, qEngines, qLayouts})
 	if err != nil {
 		return protocolExit{1}

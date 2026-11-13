@@ -93,9 +93,20 @@ func TestQualifiedUnsupportedHostRejectsBeforeSocketStateAndDiscovery(t *testing
 		t.Fatalf("unsupported host was not rejected before access: %s %s %d", out, stderr, code)
 	}
 	out, stderr, code = runCoordinationProcess(t, "unsupported-host", "operation-capabilities")
-	var discovery struct{ Operations, Features, QualifiedCoordinationOperations, QualifiedCoordinationEngines, QualifiedCoordinationLayouts []string }
-	if json.Unmarshal([]byte(out), &discovery) != nil || code != 0 || stderr != "" || len(discovery.Operations) == 0 || len(discovery.QualifiedCoordinationOperations) != 0 || len(discovery.QualifiedCoordinationEngines) != 0 || len(discovery.QualifiedCoordinationLayouts) != 0 {
-		t.Fatalf("unsupported host advertised qualification: %s %s %d", out, stderr, code)
+	var discovery struct{ Operations, Features []string }
+	if json.Unmarshal([]byte(out), &discovery) != nil || code != 0 || stderr != "" || len(discovery.Operations) == 0 {
+		t.Fatalf("unsupported host broke legacy discovery: %s %s %d", out, stderr, code)
+	}
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal([]byte(out), &fields); err != nil {
+		t.Fatal(err)
+	}
+	// Strict consumers negotiate presence, not merely array length: even []
+	// must be omitted when the matching qualification feature is absent.
+	for _, key := range []string{"qualifiedCoordinationOperations", "qualifiedCoordinationEngines", "qualifiedCoordinationLayouts"} {
+		if _, present := fields[key]; present {
+			t.Fatalf("unsupported host emitted unavailable capability key %q: %s", key, out)
+		}
 	}
 	for _, feature := range discovery.Features {
 		if feature == "optInQualifiedLocalCoordination" {
