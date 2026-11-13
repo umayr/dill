@@ -22,17 +22,26 @@ import (
 )
 
 type operationState struct {
-	recorder *operation.Recorder
-	config   *config.DillConfig
-	declined bool
-	engine   *operation.Engine
-	endpoint string
-	census   map[string]string
-	listed   []string
-	ctx      context.Context
+	recorder     *operation.Recorder
+	config       *config.DillConfig
+	declined     bool
+	engine       *operation.Engine
+	endpoint     string
+	coordination *operationCoordination
+	census       map[string]string
+	listed       []string
+	ctx          context.Context
 }
 
 func (s *operationState) release() error {
+	err := s.releaseEngine()
+	if s.coordination != nil {
+		err = errors.Join(err, s.coordination.close())
+	}
+	return err
+}
+
+func (s *operationState) releaseEngine() error {
 	if s.engine == nil {
 		return nil
 	}
@@ -58,11 +67,14 @@ func runOperationCapabilities(args []string) error {
 		return protocolExit{2}
 	}
 	err := json.NewEncoder(os.Stdout).Encode(struct {
-		Version    string   `json:"version"`
-		Operations []string `json:"operations"`
-		Engines    []string `json:"engines"`
-		Features   []string `json:"features"`
-	}{operation.Version, operation.Operations, []string{"docker", "podman"}, []string{"explicitLocalSelector", "attended", "redactedSummary", "conservativeEffects"}})
+		Version                         string   `json:"version"`
+		Operations                      []string `json:"operations"`
+		Engines                         []string `json:"engines"`
+		Features                        []string `json:"features"`
+		QualifiedCoordinationOperations []string `json:"qualifiedCoordinationOperations"`
+		QualifiedCoordinationEngines    []string `json:"qualifiedCoordinationEngines"`
+		QualifiedCoordinationLayouts    []string `json:"qualifiedCoordinationLayouts"`
+	}{operation.Version, operation.Operations, []string{"docker", "podman"}, []string{"explicitLocalSelector", "attended", "redactedSummary", "conservativeEffects", "optInQualifiedLocalCoordination"}, qualifiedOperations, qualifiedEngines, qualifiedLayouts})
 	if err != nil {
 		return protocolExit{1}
 	}
@@ -82,7 +94,7 @@ func runOperation(ctx context.Context, args []string) error {
 	state := &operationState{recorder: &operation.Recorder{}}
 	defer state.release()
 	emit := func(code int, errorCode, message string) error {
-		if state.release() != nil {
+		if state.releaseEngine() != nil {
 			result.Outcome = "unknown"
 			code = 1
 			errorCode = "ENGINE_CLOSE_FAILED"
@@ -94,6 +106,21 @@ func runOperation(ctx context.Context, args []string) error {
 		state.recorder.Finish(&result)
 		if result.Effects == "unknown" && result.Outcome == "failed" {
 			result.Outcome = "unknown"
+		}
+		if result.Outcome == "unknown" {
+			result.Effects = "unknown"
+		}
+		if state.coordination != nil {
+			if err := state.coordination.finish(&result); err != nil {
+				result.Outcome, result.Effects = "unknown", "unknown"
+				result.Errors = append(result.Errors, operation.Error{Code: "COORDINATION_COMMIT_FAILED", Message: "Durable outcome unavailable. Inspect coordination state before retrying."})
+				code = 1
+			}
+		}
+		if state.release() != nil {
+			result.Outcome, result.Effects = "unknown", "unknown"
+			code = 1
+			result.Errors = append(result.Errors, operation.Error{Code: "COORDINATION_RELEASE_FAILED", Message: "Coordination release failed. Inspect state before retrying."})
 		}
 		if json.NewEncoder(os.Stdout).Encode(result) != nil {
 			return protocolExit{1}
@@ -125,6 +152,8 @@ func runOperation(ctx context.Context, args []string) error {
 	noDeps := fs.Bool("no-deps", false, "omit dependencies")
 	pull := fs.String("pull", "", "pull policy override")
 	force := fs.Bool("force", false, "force image removal")
+	coordOptions := coordinationOptions{}
+	coordOptions.flags(fs)
 	fs.SetOutput(io.Discard)
 	if fs.Parse(args[1:]) != nil {
 		return emit(2, "INVALID_ARGUMENTS", "Invalid operation arguments.")
@@ -165,6 +194,12 @@ func runOperation(ctx context.Context, args []string) error {
 		return emit(2, "INVALID_TARGET", "Explicit local engine, socket and valid stack are required.")
 	}
 	opts.EngineSocket = endpoint
+	if coordOptions.requested() {
+		if err := coordOptions.validate(name, opts); err != nil {
+			return emit(2, "UNSUPPORTED_COORDINATION", "Unsupported qualified coordination invocation.")
+		}
+		state.coordination = &operationCoordination{options: coordOptions}
+	}
 	result.Target = &operation.Target{Engine: opts.Engine, EndpointDigest: operation.Digest(endpoint)}
 	result.Stack = opts.StackName
 	ctx, stop := signal.NotifyContext(ctx, os.Interrupt, syscall.SIGTERM)
@@ -211,7 +246,10 @@ func runOperation(ctx context.Context, args []string) error {
 		if *force {
 			handlerArgs = append([]string{"--force"}, handlerArgs...)
 		}
-		if name != "validate" && name != "plan" && name != "diff" {
+		if state.coordination != nil {
+			err = state.coordination.prepare(ctx, opts, cfg, name, *pull)
+		}
+		if err == nil && name != "validate" && name != "plan" && name != "diff" {
 			err = preflightOperationOwnership(ctx, opts, cfg)
 		}
 		if err == nil && (name == "down" || name == "rm" || name == "teardown") {
@@ -258,6 +296,9 @@ func runOperation(ctx context.Context, args []string) error {
 	case errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) || ctx.Err() != nil:
 		result.Outcome = "cancelled"
 		return emit(1, "CANCELLED", "Operation cancelled or deadline exceeded.")
+	case coordinationInspection(err):
+		result.Outcome = "failed"
+		return emit(1, "COORDINATION_INSPECTION_REQUIRED", "Unresolved coordination state. Inspect and explicitly acknowledge it before retrying.")
 	case failureKind(err) == "invalid_input":
 		result.Outcome = "invalid_input"
 		return emit(2, "INVALID_INPUT", "Invalid operation input.")

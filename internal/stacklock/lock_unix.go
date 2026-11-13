@@ -36,20 +36,45 @@ func Acquire(ctx context.Context, dir string, key [32]byte) (*Lock, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	path := filepath.Join(dir, hex.EncodeToString(key[:])+".lock")
-	fd, err := unix.Open(path, unix.O_CREAT|unix.O_RDWR|unix.O_CLOEXEC|unix.O_NOFOLLOW|unix.O_NONBLOCK, 0600)
+	return acquire(ctx, func(name string) (int, error) {
+		return unix.Open(filepath.Join(dir, name), unix.O_CREAT|unix.O_RDWR|unix.O_CLOEXEC|unix.O_NOFOLLOW|unix.O_NONBLOCK, 0600)
+	}, key)
+}
+
+// AcquireAt is Acquire relative to an already opened, trusted directory. The
+// caller owns dir and must keep it open until AcquireAt returns. Relative opens
+// keep coordination on the same directory inode if its pathname is replaced.
+func AcquireAt(ctx context.Context, dir *os.File, key [32]byte) (*Lock, error) {
+	if dir == nil {
+		return nil, errors.New("missing lock directory")
+	}
+	if _, ok := ctx.Deadline(); !ok {
+		return nil, errors.New("stack lock requires a deadline")
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	return acquire(ctx, func(name string) (int, error) {
+		return unix.Openat(int(dir.Fd()), name, unix.O_CREAT|unix.O_RDWR|unix.O_CLOEXEC|unix.O_NOFOLLOW|unix.O_NONBLOCK, 0600)
+	}, key)
+}
+
+func acquire(ctx context.Context, open func(string) (int, error), key [32]byte) (*Lock, error) {
+	name := hex.EncodeToString(key[:]) + ".lock"
+	fd, err := open(name)
 	if err != nil {
 		return nil, fmt.Errorf("open stack lock: %w", err)
 	}
-	f := os.NewFile(uintptr(fd), path)
+	f := os.NewFile(uintptr(fd), name)
 	info, err := f.Stat()
 	if err != nil {
 		f.Close()
 		return nil, fmt.Errorf("stat stack lock: %w", err)
 	}
-	if !info.Mode().IsRegular() {
+	var stat unix.Stat_t
+	if err := unix.Fstat(fd, &stat); err != nil || !info.Mode().IsRegular() || info.Mode().Perm() != 0600 || stat.Uid != uint32(os.Geteuid()) || stat.Nlink != 1 {
 		f.Close()
-		return nil, errors.New("stack lock is not a regular file")
+		return nil, errors.New("stack lock is not a private operator-owned regular file")
 	}
 	for {
 		if err := ctx.Err(); err != nil {

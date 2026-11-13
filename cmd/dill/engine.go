@@ -6,6 +6,7 @@ import (
 	"os"
 
 	"github.com/umayr/dill/internal/config"
+	"github.com/umayr/dill/internal/coordination"
 	"github.com/umayr/dill/internal/log"
 	"github.com/umayr/dill/internal/operation"
 	"github.com/umayr/dill/internal/orchestrator"
@@ -22,7 +23,20 @@ func newEngine(ctx context.Context, engineName string, opts commandOptions) (orc
 		}
 		return opts.operation.engine, nil
 	}
-	engine, err := engineFactory(ctx, engineName, endpoint)
+	var engine orchestrator.Engine
+	if opts.operation != nil && opts.operation.coordination != nil {
+		coord := opts.operation.coordination
+		if engineName != "docker" || coord.target == nil || coord.guard == nil {
+			return nil, usageError{"qualified target is not initialized"}
+		}
+		engine, err = orchestrator.NewDockerEngineWithClient(coordination.Endpoint, coord.target.Client())
+		if err == nil {
+			coord.guard.Engine = engine
+			engine = coord.guard
+		}
+	} else {
+		engine, err = engineFactory(ctx, engineName, endpoint)
+	}
 	if err != nil {
 		return nil, err
 	}

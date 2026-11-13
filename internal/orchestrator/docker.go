@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net/http"
 	"sort"
 	"strconv"
 	"strings"
@@ -49,6 +50,20 @@ func NewDockerEngine() (*DockerEngine, error) {
 // before reaching this constructor.
 func NewDockerEngineAt(endpoint string) (*DockerEngine, error) {
 	cli, err := client.NewClientWithOpts(client.WithHost(endpoint), client.WithAPIVersionNegotiation())
+	if err != nil {
+		return nil, err
+	}
+	return &DockerEngine{cli: cli}, nil
+}
+
+// NewDockerEngineWithClient uses an invocation-owned qualified HTTP client.
+// No environment/socket fallback is imported. The caller retains transport
+// ownership and must close it after the engine and operation are finished.
+func NewDockerEngineWithClient(endpoint string, httpClient *http.Client) (*DockerEngine, error) {
+	if httpClient == nil {
+		return nil, fmt.Errorf("qualified client required")
+	}
+	cli, err := client.NewClientWithOpts(client.WithHost(endpoint), client.WithHTTPClient(httpClient), client.WithAPIVersionNegotiation())
 	if err != nil {
 		return nil, err
 	}
