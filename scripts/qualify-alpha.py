@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
-"""Collect bounded, synthetic Alpha evidence. Never claims complete qualification."""
+"""Collect bounded Alpha evidence; completion requires pinned disposable native runtime proof."""
 
 import argparse
 import hashlib
+import gzip
 import json
 import os
 from pathlib import Path
@@ -13,6 +14,7 @@ import signal
 import stat
 import subprocess
 import sys
+import tarfile
 from datetime import datetime, timezone
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -55,6 +57,31 @@ REQUIRED_CASE_EVIDENCE = {
     "inspected-exact-operation-recovery": ("qualified-engine", "real-qualified-engine"),
     "qualified-image-volume-rejected": ("qualified-engine", "real-qualified-engine"),
 }
+REQUIRED_RUNTIME_TESTS = {
+    "success-repeat-config-change": ("TestDillRealEngineLifecycle",),
+    "changed-image": ("TestDillImageUpdateRecreates",),
+    "invalid-config-preserves-live": ("TestConformanceInvalidPartialSelectionPreservesStack",),
+    "foreign-container-collision": ("TestDillForeignContainerOwnership",),
+    "retained-volume": ("TestDillRealEngineTeardown",),
+    "cancellation": ("TestDillCancelledUpRollsBack",),
+    "failed-start-cleanup": ("TestDillRealEngineFailedStartCleanup",),
+    "operation-contract-baseline": ("TestAlphaOperationEnvelopeConformance",),
+    "no-prune": ("TestAlphaNoPruneBothEngines",),
+    "operation-outcomes": ("TestAlphaQualifiedHandlers",),
+    "bounded-storage-preflight": ("TestAlphaQualifiedStandalonePreflight", "TestAlphaQualifiedOrphanRejection", "TestAlphaQualifiedActualLivePreflight"),
+    "same-stack-concurrency": ("TestAlphaQualifiedSameStackConcurrency",),
+    "crash-unknown-recovery": ("TestAlphaQualifiedCrashUnknownRecovery",),
+    "foreign-resource-inventory": ("TestAlphaQualifiedForeignOwnership",),
+    "brine-candidate-handoff": ("TestAlphaQualifiedCandidateHandoff",),
+    "qualified-docker-profile": ("TestAlphaQualifiedDockerProfile",),
+    "qualified-podman-rejected": ("TestAlphaQualifiedPodmanRejected",),
+    "different-stack-concurrency": ("TestAlphaQualifiedDifferentStackConcurrency",),
+    "alias-concurrency": ("TestAlphaQualifiedAliasConcurrency",),
+    "corrupt-journal-rejection": ("TestAlphaQualifiedCorruptJournal",),
+    "inspected-exact-operation-recovery": ("TestAlphaQualifiedCrashUnknownRecovery",),
+    "qualified-image-volume-rejected": ("TestAlphaQualifiedStandalonePreflight",),
+}
+REQUIRED_OFFLINE_FIXTURES = {"offline-valid": ("valid.pkl", 0), "offline-invalid-graph": ("invalid-graph.pkl", 2)}
 FINAL_REQUIRED_CASES = frozenset(REQUIRED_CASE_EVIDENCE)
 QUALIFIED_CASES = frozenset(case for case, (mode, _) in REQUIRED_CASE_EVIDENCE.items() if mode == "qualified-engine")
 PROFILE_LIMITATIONS = frozenset({
@@ -89,6 +116,16 @@ def final_acceptance(evidence, manifest):
             or not str(evidence.get("target", "")).startswith("unix:///")
             or not isinstance(evidence.get("engineVersion"), dict) or not evidence["engineVersion"]):
         reasons.append("disposable-docker-runtime-missing")
+    provisioning = evidence.get("qualifiedProvisioning") or {}
+    if (evidence.get("qualifiedRequested") is not True or provisioning.get("source") != PROVISIONING_SOURCE
+            or provisioning.get("layout") != "native-local-docker-v1" or provisioning.get("privateStateRootVerified") is not True
+            or not re.fullmatch(r"sha256:[0-9a-f]{64}", str(provisioning.get("expectedIdentityDigest", "")))):
+        reasons.append("trusted-native-provisioning-missing")
+    supply = evidence.get("dillArtifactSupply") or {}
+    if (supply.get("status") != "verified" or supply.get("candidateCommit") != commit
+            or supply.get("binarySha256") != binary.get("sha256")
+            or any(not re.fullmatch(r"[0-9a-f]{64}", str(supply.get(key, ""))) for key in ("manifestSha256", "archiveSha256"))):
+        reasons.append("immutable-copied-candidate-supply-missing")
     expected_hashes = {key: evidence.get(key, {}).get("sha256") for key in ("binary", "schema", "pkl")}
     if (not all(isinstance(value, str) and re.fullmatch(r"[0-9a-f]{64}", value) for value in expected_hashes.values())
             or evidence.get("checksumsAfter") != expected_hashes
@@ -106,6 +143,16 @@ def final_acceptance(evidence, manifest):
         expected_mode, kind = REQUIRED_CASE_EVIDENCE.get(case_id, (None, None))
         if expected_mode is None or mode != expected_mode:
             reasons.append("required-case-not-implemented")
+        if case_id in REQUIRED_RUNTIME_TESTS:
+            try:
+                declared_tests = tuple(runtime_tests(case))
+            except (ValueError, TypeError):
+                declared_tests = ()
+            required_tests = REQUIRED_RUNTIME_TESTS[case_id]
+            if declared_tests != required_tests or result.get("tests") != list(required_tests):
+                reasons.append("required-runtime-test-bindings-mismatch")
+        elif case_id in REQUIRED_OFFLINE_FIXTURES and (case.get("fixture"), case.get("exit")) != REQUIRED_OFFLINE_FIXTURES[case_id]:
+            reasons.append("required-offline-fixture-binding-mismatch")
         if result.get("status") != "passed" or mode == "blocked":
             reasons.append("required-case-not-passed")
             continue
@@ -204,6 +251,17 @@ def make_test_selector(names):
     return "DILL_TEST_RUN=" + shlex.quote(selector.replace("$", "$$"))
 
 
+def runtime_tests(case):
+    extra = case.get("additionalTests", [])
+    if not isinstance(extra, list):
+        raise ValueError("invalid additional executable test bindings")
+    names = [case.get("test")] + extra
+    make_test_selector(names)
+    if len(names) != len(set(names)):
+        raise ValueError("duplicate executable test bindings")
+    return names
+
+
 def operation_capabilities(document, engine):
     """Accept only reviewed dill.operation/1 discovery fields, not arbitrary extensions."""
     base = {"version", "operations", "engines", "features"}
@@ -292,6 +350,84 @@ def resolve_executable(value):
     return Path(result).resolve(strict=True)
 
 
+PROVISIONING_SOURCE = "trusted-gha-native-linux-host"
+
+
+def qualified_inputs(args):
+    """Consume explicit trusted provisioning; NEVER obtain expected identity from a socket."""
+    supplied = (args.coordination_daemon_id, args.coordination_state_root, args.provisioning_source)
+    if not args.qualified:
+        if any(value is not None for value in supplied) or args.native_layout_provisioned:
+            raise ValueError("qualified provisioning inputs require explicit qualified mode")
+        return None, None
+    if (args.engine != "docker" or not args.disposable or not args.operations
+            or sys.platform != "linux" or not args.native_layout_provisioned
+            or args.provisioning_source != PROVISIONING_SOURCE
+            or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9:_-]{7,127}", args.coordination_daemon_id or "")):
+        raise ValueError("qualified mode requires trusted disposable native Linux Docker provisioning")
+    root = Path(args.coordination_state_root or "")
+    info = root.lstat()
+    if (not root.is_absolute() or not stat.S_ISDIR(info.st_mode)
+            or stat.S_IMODE(info.st_mode) != 0o700 or info.st_uid != os.geteuid()):
+        raise ValueError("qualified state root must be an existing private native operator directory")
+    identity = "sha256:" + hashlib.sha256(("dill-local-docker-v1\0" + args.coordination_daemon_id).encode()).hexdigest()
+    return root, {"source": PROVISIONING_SOURCE, "layout": "native-local-docker-v1",
+                  "expectedIdentityDigest": identity, "privateStateRootVerified": True}
+
+
+def handoff_sources(binary, pkl):
+    sources = {"bin/dill": binary, "bin/pkl": pkl, "dill.pkl": ROOT / "dill.pkl",
+               "internal/loader/pkl-toolchain.json": ROOT / "internal/loader/pkl-toolchain.json",
+               "docs/alpha-candidate-handoff.md": ROOT / "docs/alpha-candidate-handoff.md"}
+    for directory in (FIXTURES, ROOT / "internal/operation/testdata"):
+        for path in directory.rglob("*"):
+            if path.is_symlink() or (not path.is_dir() and not path.is_file()):
+                raise ValueError("public supply inputs must be regular files, never links or state")
+            if path.is_file():
+                sources[str(path.relative_to(ROOT))] = path
+    return sources
+
+
+def verify_handoff(output, binary, pkl, commit, identity):
+    """Independently bind the public copy to pinned originals; archive NO private state."""
+    bundle = output / "handoff"
+    if bundle.is_symlink() or not bundle.is_dir():
+        raise ValueError("copied candidate supply missing")
+    expected = {name: sha256(source) for name, source in handoff_sources(binary, pkl).items()}
+    allowed = set(expected) | {"handoff.json"}
+    actual = set()
+    for path in bundle.rglob("*"):
+        if path.is_symlink() or (not path.is_dir() and not path.is_file()):
+            raise ValueError("copied supply contains a link or nonregular entry")
+        if path.is_file():
+            actual.add(str(path.relative_to(bundle)))
+    if actual != allowed or any(sha256(bundle / name) != digest for name, digest in expected.items()):
+        raise ValueError("copied supply differs from pinned public inputs")
+    document = json.loads((bundle / "handoff.json").read_text())
+    fixed = {"version": "dill.alpha-handoff/1", "status": "verified", "candidateCommit": commit,
+             "binarySha256": expected["bin/dill"], "fixtureVersion": "dill.alpha-qualification/1", "files": expected,
+             "caller": {"contract": "dill.operation/1", "source": "brine", "outcome": "succeeded",
+                        "effects": "complete", "qualifiedIdentityDigest": identity},
+             "downstreamBrineAcceptance": "not-run"}
+    if document != fixed:
+        raise ValueError("copied caller manifest does not match pinned supply and provisioned target")
+    archive = output / "handoff.tar.gz"
+    with archive.open("xb") as destination, gzip.GzipFile(filename="", mode="wb", fileobj=destination, mtime=0) as compressed:
+        with tarfile.open(fileobj=compressed, mode="w") as package:
+            for name in sorted(allowed):
+                path = bundle / name
+                header = package.gettarinfo(str(path), arcname=name)
+                header.uid = header.gid = 0
+                header.uname = header.gname = ""
+                header.mtime = 0
+                header.mode = 0o755 if name.startswith("bin/") else 0o644
+                with path.open("rb") as source:
+                    package.addfile(header, source)
+    return {"status": "verified", "candidateCommit": commit, "binarySha256": expected["bin/dill"],
+            "manifestSha256": sha256(bundle / "handoff.json"), "archiveSha256": sha256(archive),
+            "scope": "Dill-side byte-identical copied qualified caller; downstream Brine application not run"}
+
+
 def collect(args):
     if not re.fullmatch(r"[0-9a-f]{40}", args.expected_commit):
         raise ValueError("expected-commit must be a full lowercase Git SHA")
@@ -306,6 +442,7 @@ def collect(args):
         raise ValueError("socket/disposable/operations/profiles require an engine")
     if args.profiles and not args.operations:
         raise ValueError("profile cases require explicit operation-contract discovery opt-in")
+    state_root, provisioning = qualified_inputs(args)
     endpoint = local_socket(args.socket) if args.engine else None
     # A new directory prevents clobbering or accidentally mixing prior evidence.
     output = Path(args.output).resolve()
@@ -316,6 +453,8 @@ def collect(args):
                 "qualification": "incomplete", "engine": args.engine or "not-run",
                 "target": endpoint, "disposableAttested": args.disposable,
                 "operationContractRequested": args.operations,
+                "qualifiedRequested": args.qualified, "qualifiedProvisioning": provisioning,
+                "dillArtifactSupply": {"status": "not-run"},
                 "downstreamBrineAcceptance": {"status": "not-run", "scope": "Dill-side artifact supply is not Brine application E2E"},
                 "commands": recorder.commands, "cases": [], "gaps": []}
     ok = True
@@ -344,6 +483,8 @@ def collect(args):
                                   goOS=settings.get("GOOS"), goArch=settings.get("GOARCH"))
         evidence["binary"]["buildRevision"] = settings.get("vcs.revision")
         evidence["binary"]["buildModified"] = settings.get("vcs.modified")
+        if args.qualified and settings.get("GOOS") != "linux":
+            raise ValueError("qualified candidate must be a native Linux binary")
         if settings.get("vcs.revision") != commit:
             raise ValueError("binary build revision does not match candidate commit")
         if settings.get("vcs.modified") != "false" and not args.allow_dirty:
@@ -370,7 +511,8 @@ def collect(args):
                 result.update(status="passed" if passed else "failed", evidenceKind="offline",
                               candidateCommit=commit, binarySha256=evidence["binary"]["sha256"], target=endpoint)
                 ok &= passed
-            elif case["mode"] == "blocked" or (case["mode"] == "operation-engine" and not args.operations):
+            elif (case["mode"] == "blocked" or (case["mode"] == "operation-engine" and not args.operations)
+                  or (case["mode"] == "qualified-engine" and not args.qualified)):
                 result.update(status="blocked", requires=case["requires"], reason=case["reason"])
             evidence["cases"].append(result)
         # Deliberately separate narrower #79 observations from the 24 required
@@ -400,6 +542,17 @@ def collect(args):
                 evidence["operationCapabilities"] = capabilities
                 target_env["DILL_TEST_ALPHA_OPERATIONS"] = "1"
                 modes.add("operation-engine")
+            if args.qualified:
+                if "optInQualifiedLocalCoordination" not in evidence["operationCapabilities"]["features"]:
+                    raise ValueError("qualified capabilities unavailable; no fallback to prepared profile")
+                target_env.update(DILL_TEST_ALPHA_COORDINATION="1",
+                                  DILL_TEST_ALPHA_STATE_ROOT=str(state_root),
+                                  DILL_TEST_ALPHA_DAEMON_ID=args.coordination_daemon_id,
+                                  DILL_TEST_ALPHA_NATIVE_LAYOUT="native-local-docker-v1",
+                                  DILL_TEST_ALPHA_HANDOFF_DIR=str(output / "handoff"),
+                                  DILL_TEST_ALPHA_CANDIDATE_SHA=commit,
+                                  DILL_TEST_ALPHA_BINARY_SHA256=evidence["binary"]["sha256"])
+                modes.add("qualified-engine")
             cli = [args.engine, "--host" if args.engine == "docker" else "--url", endpoint]
             version_format = "{{json .}}" if args.engine == "docker" else "json"
             engine_version, passed = recorder.run(cli + ["version", "--format", version_format], env=target_env)
@@ -409,16 +562,21 @@ def collect(args):
             if len(engine_version) > 64 * 1024:
                 raise ValueError("unexpected engine version response size")
             evidence["engineVersion"] = json.loads(engine_version)
-            tests = list(dict.fromkeys(c["test"] for c in runtime_cases if c["mode"] in modes))
+            tests = list(dict.fromkeys(name for case in runtime_cases if case["mode"] in modes for name in runtime_tests(case)))
             data, passed = recorder.run(["make", "integration-test", make_test_selector(tests)],
                                         timeout=1800, env=target_env)
             states = test_results(data, tests)
             for case, result in zip(runtime_cases, runtime_results):
                 if case["mode"] in modes:
-                    kind = "real-profile-engine" if case["mode"] == "profile-engine" else "real-engine"
-                    result.update(status=states[case["test"]], test=case["test"], evidenceKind=kind,
-                                  candidateCommit=commit, binarySha256=evidence["binary"]["sha256"], target=endpoint)
+                    kind = {"profile-engine": "real-profile-engine", "qualified-engine": "real-qualified-engine"}.get(case["mode"], "real-engine")
+                    bound = runtime_tests(case)
+                    result.update(status="passed" if all(states[name] == "passed" for name in bound) else "failed",
+                                  test=case["test"], tests=bound, evidenceKind=kind,
+                                  candidateCommit=commit, binarySha256=evidence["binary"]["sha256"], target=endpoint,
+                                  scope=case.get("scope", "selected executable disposable-engine consumer"))
             ok &= passed and all(s == "passed" for s in states.values())
+            if args.qualified and any(c["id"] == "brine-candidate-handoff" and c["status"] == "passed" for c in evidence["cases"]):
+                evidence["dillArtifactSupply"] = verify_handoff(output, binary, pkl, commit, provisioning["expectedIdentityDigest"])
         if dirty or settings.get("vcs.modified") != "false":
             evidence["gaps"].append("development-only dirty source/binary; not transferable candidate evidence")
         evidence["baselinePassed"] = bool(ok)
@@ -461,7 +619,12 @@ def main():
     parser.add_argument("--require-complete", action="store_true", help="fail unless every final required case has pinned disposable runtime evidence")
     parser.add_argument("--engine", choices=("docker", "podman"))
     parser.add_argument("--operations", action="store_true", help="require discovered dill.operation/1 and run its real-engine consumer cases")
-    parser.add_argument("--profiles", action="store_true", help="run no-prune parity and Docker prepared-image profile cases; not qualified coordination")
+    parser.add_argument("--profiles", action="store_true", help="add narrower Docker prepared-image observations; not qualified coordination")
+    parser.add_argument("--qualified", action="store_true", help="run native Linux Docker combined cases using separately trusted disposable CI provisioning")
+    parser.add_argument("--coordination-daemon-id", help="explicit independently provisioned expected daemon ID; never derived by this runner")
+    parser.add_argument("--coordination-state-root", help="pre-existing private native directory owned by the single caller operator")
+    parser.add_argument("--native-layout-provisioned", action="store_true", help="attest separate fresh native GHA host provisioning; not production autodetection")
+    parser.add_argument("--provisioning-source", choices=(PROVISIONING_SOURCE,))
     parser.add_argument("--socket")
     parser.add_argument("--disposable", action="store_true", help="attest target is exclusively disposable")
     args = parser.parse_args()

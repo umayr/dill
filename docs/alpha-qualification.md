@@ -1,13 +1,41 @@
 # Disposable Alpha candidate evidence (fixture v1)
 
-This is the **baseline harness** for [#80](https://github.com/umayr/dill/issues/80),
-not completion of that issue, a deployment tool, or full conformance/release
-qualification. A green baseline does **not** qualify the combined #77/#78/#79
-pilot. `evidence.json` currently says `"qualification": "incomplete"` because
-required combined cases remain blocked, even when implemented baseline cases
-pass. The final acceptance gate can become complete only after every required
+This is the disposable evidence harness for [#80](https://github.com/umayr/dill/issues/80),
+not a deployment tool or full conformance/release qualification. A green baseline
+does **not** qualify the combined #77/#78/#79 pilot. Combined runtime selectors
+are wired but have **not been executed locally**. Without actual trusted native
+runtime evidence, `evidence.json` must remain `"qualification": "incomplete"`. The final acceptance gate can become complete only after every required
 case has pinned disposable runtime evidence. Missing acceptance is represented
 as `blocked` or `not-run`, never passed or silently skipped.
+
+## Combined native execution and copied supply
+
+`--qualified` requires `--operations`, Docker, `--disposable`, a Linux binary/host,
+`--coordination-daemon-id`, `--coordination-state-root`,
+`--native-layout-provisioned` and
+`--provisioning-source trusted-gha-native-linux-host`. The separate trusted
+workflow step must provision identity/private state **before candidate execution**;
+the runner never derives expected identity from a selected endpoint. No unsupported
+host/discovery fallback is allowed. All 24 IDs have independently bound modes,
+evidence kinds and exact executable test names. Supplementary tests are mandatory:
+`bounded-storage-preflight` requires standalone, orphan and actual-live suites all
+passing. Pure decoder/process/readiness helpers cannot satisfy runtime IDs.
+
+`--require-complete` additionally requires clean source/binary provenance,
+unchanged pinned files, trusted provisioning, every required actual runtime case,
+and independently verified copied public supply. Docker's hosted job is the
+combined gate; ordinary Podman parity remains a separate baseline. Prepared
+profile observations are kept separate. The only positive no-prune row remains
+ordinary isolated CLI, never substituted by qualified orphan rejection.
+
+The copied `handoff.tar.gz` includes the exact candidate, pinned Pkl, schema,
+versioned fixtures, public operation goldens and a checksum manifest. The actual
+copied executable evaluates the unchanged copied fixture with source `brine` and
+pull never; its qualified receipt and durable record must match before publication.
+Public evidence records archive/manifest hashes. **No private state/HOME/auth/logs
+are archived.** See [recipient instructions](alpha-candidate-handoff.md).
+Actual external Brine application/browser acceptance remains separately **not-run**;
+Dill-side supply does not imply app E2E, release approval or production safety.
 
 ## Boundary and current subset
 

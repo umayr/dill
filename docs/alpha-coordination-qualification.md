@@ -1,9 +1,14 @@
-# Required combined Alpha runtime cases (wire bound; runtime pending)
+# Required combined Alpha runtime cases (wired; runtime pending)
 
-This is an execution design for #80, **not executed evidence**. The supervisor's
-approved #78 composition `86e9d07a2bebe515aeeec48729e29c5ecb0a4d8f`
-now binds the wire fields below; #79 correction
-`0283cb3d0f8ff7cc48e395a3f1efc1c0d0d8f04c` is incorporated too.
+This is the executable #80 contract, **not executed local runtime evidence**.
+Final approved #78 `54065654d0a1ba5b01473d9dcc8d12297bf1b173` and additive
+concurrency/recovery suite `59b86e1093d011ca2bb8e4cf2b5484b1ba14d3f0` are
+incorporated with #79 `0283cb3d0f8ff7cc48e395a3f1efc1c0d0d8f04c`.
+The runner now binds all required selectors, including mandatory supplementary
+whole-pilot/orphan/live-census cases. Compilation, mocks, helper tests and skipped
+tests cannot clear them. Separate trusted fresh-GHA native provisioning precedes
+candidate execution; complete acceptance requires its explicit inputs and actual
+runtime artifacts. See [copied candidate supply](alpha-candidate-handoff.md).
 The executable consumer recognizes only the specific reviewed additions and
 continues rejecting unknown fields. Operation IDs retain the `op_` shape.
 Existing baseline engine parity and Alpha secret CI remain mandatory.
