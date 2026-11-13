@@ -297,6 +297,7 @@ func TestAlphaDisposableProfileDocker(t *testing.T) {
 	})
 	// Prepare a local metadata-only negative image; no image VOLUME workload runs.
 	seed := runEngine(t, env.engine, "create", alphaPreparedImage, "true")
+	t.Cleanup(func() { alphaCleanupResource(t, env.engine, "container", seed) })
 	volumeImage := "localhost/" + stack + ":declared-volume"
 	runEngine(t, env.engine, "commit", "--change", `VOLUME ["/hidden"]`, seed, volumeImage)
 	runEngine(t, env.engine, "rm", seed)

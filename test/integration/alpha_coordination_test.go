@@ -215,6 +215,7 @@ func TestAlphaQualifiedStandalonePreflight(t *testing.T) {
 	f := newAlphaQualifiedFixture(t)
 	f.seed(t)
 	seed := runEngine(t, "docker", "create", f.imageID, "true")
+	t.Cleanup(func() { alphaCleanupResource(t, "docker", "container", seed) })
 	volumeImage := "localhost/" + f.stack + ":declared-volume"
 	runEngine(t, "docker", "commit", "--change", `VOLUME ["/hidden"]`, seed, volumeImage)
 	runEngine(t, "docker", "rm", seed)
@@ -254,6 +255,15 @@ func TestAlphaQualifiedStandalonePreflight(t *testing.T) {
 			}
 		})
 	}
+	t.Run("retargeted-tag-rechecked", func(t *testing.T) {
+		f.write(t, f.image, `volumes = List("data:/data")`, false)
+		// Controlled retarget BETWEEN requests, not a fabricated internal hook.
+		// seed proved the actual create reference was immutable A: retargeting
+		// its former desired tag cannot change that live content. A new request
+		// must nevertheless refresh metadata and deny newly tagged VOLUME B.
+		runEngine(t, "docker", "tag", volumeImage, f.image)
+		f.rejectNoWrites(t, "up", 1, "failed")
+	})
 }
 
 func TestAlphaQualifiedForeignOwnership(t *testing.T) {
@@ -304,5 +314,142 @@ func TestAlphaQualifiedPodmanRejected(t *testing.T) {
 	entries, err := os.ReadDir(f.state)
 	if err != nil || len(entries) != 0 {
 		t.Fatal("unsupported qualified Podman initialized state or fell back")
+	}
+}
+
+func alphaQualifiedAxes(t *testing.T, result alphaOperationResult, code, wantCode int, outcome, effects string) {
+	t.Helper()
+	if code != wantCode || result.Outcome != outcome || result.Effects != effects || result.Target == nil || result.Target.QualifiedIdentityDigest == "" {
+		t.Fatalf("attested terminal axes mismatch: exit/outcome/effects=%d/%s/%s", code, result.Outcome, result.Effects)
+	}
+	if code == 0 && outcome == "succeeded" && len(result.Errors) != 0 {
+		t.Fatal("qualified success carried errors")
+	}
+}
+
+func TestAlphaQualifiedHandlers(t *testing.T) {
+	f := newAlphaQualifiedFixture(t)
+	f.seed(t)
+	for _, operation := range []string{"stop", "start", "restart", "stop"} {
+		result, code := f.run(t, operation, "cli", "")
+		alphaQualifiedAxes(t, result, code, 0, "succeeded", "complete")
+	}
+	before := alphaResourceSnapshot(t, "docker")
+	since := time.Now().UTC().Format(time.RFC3339Nano)
+	result, code := f.run(t, "rm", "cli", "n\n", "--attended")
+	until := time.Now().UTC().Format(time.RFC3339Nano)
+	alphaQualifiedAxes(t, result, code, 0, "cancelled", "none")
+	if after := alphaResourceSnapshot(t, "docker"); after != before || runEngine(t, "docker", "events", "--since", since, "--until", until, "--format", "{{json .}}") != "" {
+		t.Fatal("qualified declined confirmation wrote engine state")
+	}
+	result, code = f.run(t, "rm", "cli", "", "--yes")
+	alphaQualifiedAxes(t, result, code, 0, "succeeded", "complete")
+	f.rejectNoWrites(t, "down", 1, "failed") // Network retention is read-only.
+	f.seed(t)
+	result, code = f.run(t, "down", "cli", "")
+	// This supported handler removes the immutable captured container but
+	// conservatively retains the network; partial known completion is NOT success.
+	alphaQualifiedAxes(t, result, code, 1, "failed", "complete")
+	if runEngine(t, "docker", "ps", "-aq", "--filter", "label=dill.stack="+f.stack) != "" {
+		t.Fatal("qualified down left the captured owned container")
+	}
+	f.rejectNoWrites(t, "teardown", 2, "invalid_input", "--yes")
+	f.assertForeign(t)
+}
+
+func TestAlphaQualifiedDockerProfile(t *testing.T) {
+	f := newAlphaQualifiedFixture(t)
+	f.seed(t)
+	original := runEngine(t, "docker", "inspect", "--format", "{{.Id}}|{{.State.Status}}", f.stack+"_app")
+	if !strings.HasSuffix(original, "|running") {
+		t.Fatal("qualified preparation was not running")
+	}
+	runEngine(t, "docker", "exec", f.stack+"_app", "sh", "-c", "printf synthetic-qualified-v1 > /data/value")
+	since := time.Now().UTC().Format(time.RFC3339Nano)
+	result, code := f.run(t, "up", "cli", "")
+	until := time.Now().UTC().Format(time.RFC3339Nano)
+	alphaQualifiedAxes(t, result, code, 0, "succeeded", "complete")
+	if result.ChangesDetected || runEngine(t, "docker", "inspect", "--format", "{{.Id}}|{{.State.Status}}", f.stack+"_app") != original {
+		t.Fatal("qualified immutable repeat did not converge on the same running container")
+	}
+	if runEngine(t, "docker", "events", "--since", since, "--until", until, "--format", "{{json .}}") != "" {
+		t.Fatal("qualified no-op up mutated the daemon")
+	}
+	if runEngine(t, "docker", "exec", f.stack+"_app", "cat", "/data/value") != "synthetic-qualified-v1" {
+		t.Fatal("qualified convergence changed dedicated volume content")
+	}
+	result, code = f.run(t, "down", "cli", "")
+	alphaQualifiedAxes(t, result, code, 1, "failed", "complete")
+	if runEngine(t, "docker", "run", "--rm", "--network", "none", "-v", f.stack+"_data:/data:ro", f.imageID, "cat", "/data/value") != "synthetic-qualified-v1" {
+		t.Fatal("qualified down lost retained dedicated data")
+	}
+	f.assertForeign(t)
+}
+
+func TestAlphaQualifiedActualLivePreflight(t *testing.T) {
+	if os.Getenv("DILL_TEST_ALPHA_COORDINATION") != "1" {
+		t.Skip("requires independently provisioned disposable native coordination opt-in")
+	}
+	for _, tc := range []struct {
+		name string
+		args []string
+	}{
+		{"privileged", []string{"--privileged"}},
+		{"capability", []string{"--cap-add", "SYS_ADMIN"}},
+		{"device", []string{"--device", "/dev/null:/dev/synthetic-null"}},
+		{"pid-host", []string{"--pid", "host"}},
+		{"ipc-host", []string{"--ipc", "host"}},
+		{"uts-host", []string{"--uts", "host"}},
+		{"cgroup-host", []string{"--cgroupns", "host"}},
+		{"userns-host", []string{"--userns", "host"}},
+		{"explicit-host-tmpfs", []string{"--tmpfs", "/synthetic-tmpfs"}},
+		{"old-covered-image-volume", nil},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newAlphaQualifiedFixture(t)
+			// Intentional pre-existing synthetic fixture, before any qualified
+			// caller. Safe desired config/ownership labels do NOT attest live host
+			// settings or the old image that start/restart would actually execute.
+			runEngine(t, "docker", "network", "create", "--label", "dill.managed=true", "--label", "dill.stack="+f.stack, f.stack)
+			runEngine(t, "docker", "volume", "create", "--label", "dill.managed=true", "--label", "dill.stack="+f.stack, f.stack+"_data")
+			liveImage, target, wantCode, outcome := f.imageID, "/data", 2, "invalid_input"
+			var oldImageID string
+			if tc.name == "old-covered-image-volume" {
+				seed := runEngine(t, "docker", "create", f.imageID, "true")
+				t.Cleanup(func() { alphaCleanupResource(t, "docker", "container", seed) })
+				liveImage = "localhost/" + f.stack + ":old-volume"
+				oldImageID = runEngine(t, "docker", "commit", "--change", `VOLUME ["/hidden"]`, seed, liveImage)
+				runEngine(t, "docker", "rm", seed)
+				target, wantCode, outcome = "/hidden", 1, "failed"
+				f.write(t, f.image, `volumes = List("data:/hidden")`, false)
+			}
+			args := []string{"run", "-d", "--name", f.stack + "_app", "--network", f.stack,
+				"--label", "dill.managed=true", "--label", "dill.stack=" + f.stack,
+				"--label", "dill.service=app", "-v", f.stack + "_data:" + target}
+			args = append(args, tc.args...)
+			args = append(args, liveImage, "sh", "-c", alphaPreparedCommand)
+			liveID := runEngine(t, "docker", args...)
+			if oldImageID != "" {
+				t.Cleanup(func() {
+					// Delete only the captured synthetic old-container/image IDs;
+					// the normal stack callback follows, then scoped convergence.
+					alphaCleanupResource(t, "docker", "container", liveID)
+					alphaCleanupResource(t, "docker", "image", oldImageID)
+					alphaCleanupResource(t, "docker", "image", liveImage)
+				})
+				// Now the old create tag resolves to SAFE A but actual live content
+				// remains bad B. Census must use immutable .Image, never this tag.
+				runEngine(t, "docker", "tag", f.imageID, liveImage)
+			}
+			for _, operation := range []string{"up", "down", "stop", "start", "restart", "rm"} {
+				t.Run(operation, func(t *testing.T) {
+					var options []string
+					if operation == "rm" {
+						options = []string{"--yes"}
+					}
+					f.rejectNoWrites(t, operation, wantCode, outcome, options...)
+				})
+			}
+		})
 	}
 }
