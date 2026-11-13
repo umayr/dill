@@ -403,6 +403,34 @@ func (e *operationDisposableEngine) EnforceDisposableVolumes() error {
 	return e.enforcementError
 }
 
+type operationImageInspectorEngine struct {
+	*operationPreviewEngine
+	failure error
+}
+
+func (e *operationImageInspectorEngine) DisposableImageVolumes(context.Context, string) ([]string, error) {
+	return []string{"/image-volume"}, e.failure
+}
+
+func TestOperationDecoratorPreservesPreparedImageInspection(t *testing.T) {
+	plain := &operationPreviewEngine{&endpointFake{fakeEngine: newFakeEngine()}}
+	wrapped := &operation.Engine{Engine: plain, Recorder: &operation.Recorder{}, Adapter: "docker"}
+	if _, err := wrapped.DisposableImageVolumes(context.Background(), "image"); err == nil {
+		t.Fatal("missing image inventory accepted")
+	}
+	failure := errors.New("metadata unavailable")
+	inner := &operationImageInspectorEngine{operationPreviewEngine: plain, failure: failure}
+	wrapped.Engine = inner
+	if _, err := wrapped.DisposableImageVolumes(context.Background(), "image"); err != failure {
+		t.Fatal("metadata error not forwarded")
+	}
+	inner.failure = nil
+	volumes, err := wrapped.DisposableImageVolumes(context.Background(), "image")
+	if err != nil || !reflect.DeepEqual(volumes, []string{"/image-volume"}) || len(plain.pulled) != 0 {
+		t.Fatalf("inspection not read-only: %v %v", volumes, err)
+	}
+}
+
 func TestOperationDecoratorRequiresDisposableCapability(t *testing.T) {
 	plain := &operationPreviewEngine{&endpointFake{fakeEngine: newFakeEngine()}}
 	wrapped := &operation.Engine{Engine: plain, Recorder: &operation.Recorder{}, Adapter: "docker"}

@@ -109,6 +109,18 @@ func (e *Engine) EnforceDisposableVolumes() error {
 	return errors.New("disposable volume enforcement unavailable")
 }
 
+// DisposableImageVolumes forwards prepared local metadata only. Missing support
+// is unavailable, never permission to pull or synthesize an empty inventory.
+func (e *Engine) DisposableImageVolumes(ctx context.Context, image string) ([]string, error) {
+	inspector, ok := e.Engine.(interface {
+		DisposableImageVolumes(context.Context, string) ([]string, error)
+	})
+	if !ok {
+		return nil, errors.New("disposable image inspection unavailable")
+	}
+	return inspector.DisposableImageVolumes(ctx, image)
+}
+
 func (e *Engine) PreviewResources(ctx context.Context, stack string, names []string) ([]orchestrator.PreviewResource, error) {
 	inspector, ok := e.Engine.(orchestrator.PreviewResourceInspector)
 	if !ok {

@@ -8,6 +8,15 @@ import (
 )
 
 type privateEvaluationKey struct{}
+type machineEvaluationKey struct{}
+
+// WithMachineEvaluation uses the same bounded diagnostic-discarding evaluator
+// as private secret mode, but retains ONLY closed, fixed failure categories for
+// the executable operation adapter. It never returns raw diagnostic causes.
+// Existing WithPrivateEvaluation remains strictly identity/category-free.
+func WithMachineEvaluation(ctx context.Context) context.Context {
+	return context.WithValue(ctx, machineEvaluationKey{}, true)
+}
 
 // WithPrivateEvaluation selects bounded, fixed-error Pkl evaluation for a
 // launcher-known secret path. It is not Pkl sandboxing or general taint tracking.

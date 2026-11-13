@@ -29,6 +29,7 @@ type operationState struct {
 	endpoint string
 	census   map[string]string
 	listed   []string
+	ctx      context.Context
 }
 
 func (s *operationState) release() error {
@@ -159,6 +160,7 @@ func runOperation(ctx context.Context, args []string) error {
 	defer stop()
 	ctx, cancel := context.WithTimeout(ctx, opts.Timeout)
 	defer cancel()
+	state.ctx = ctx
 	if ctx.Err() != nil {
 		result.Outcome = "cancelled"
 		return emit(1, "CANCELLED", "Operation cancelled or deadline exceeded.")

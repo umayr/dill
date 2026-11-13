@@ -10,7 +10,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/umayr/dill/internal/config"
 	"github.com/umayr/dill/internal/operation"
+	"github.com/umayr/dill/internal/orchestrator"
 )
 
 func TestOperationMainHelper(t *testing.T) {
@@ -18,6 +20,12 @@ func TestOperationMainHelper(t *testing.T) {
 		return
 	}
 	os.Unsetenv("DILL_SECRET_POLICY")
+	if os.Getenv("DILL_OPERATION_MAIN_RUNTIME") == "prompt" {
+		configLoader = func(context.Context, string) (*config.DillConfig, error) { return testConfig(), nil }
+		f := &operationPromptMarkerEngine{fakeEngine: newFakeEngine(), marker: os.Getenv("DILL_OPERATION_MUTATION_MARKER")}
+		f.statuses["app_web"] = &orchestrator.ContainerStatus{Name: "app_web", State: "exited"}
+		engineFactory = func(context.Context, string, string) (orchestrator.Engine, error) { return f, nil }
+	}
 	for i, arg := range os.Args {
 		if arg == "--" {
 			os.Args = append([]string{"dill"}, os.Args[i+1:]...)
