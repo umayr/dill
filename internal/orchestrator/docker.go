@@ -28,14 +28,22 @@ import (
 )
 
 type DockerEngine struct {
-	cli        *client.Client
-	disposable bool
+	cli            *client.Client
+	disposable     bool
+	preparedImages preparedImageConstraint
 }
 
 func (d *DockerEngine) EngineName() string { return "docker" }
 
 // EnforceDisposableVolumes is configured before concurrent deployment begins.
 func (d *DockerEngine) EnforceDisposableVolumes() error { d.disposable = true; return nil }
+
+func (d *DockerEngine) EnforcePreparedImages(images map[string]PreparedImage) error {
+	if !d.disposable {
+		return ErrDisposableUnavailable
+	}
+	return d.preparedImages.install(images)
+}
 
 func NewDockerEngine() (*DockerEngine, error) {
 	cli, err := client.NewClientWithOpts(client.FromEnv, client.WithAPIVersionNegotiation())
@@ -206,7 +214,10 @@ func (d *DockerEngine) StartServiceChecked(ctx context.Context, name string, svc
 }
 
 func (d *DockerEngine) startService(ctx context.Context, name string, svc *config.Service, stackName string, secrets []config.ResolvedSecret, target string) (string, error) {
-	image := svc.Image
+	image, constrained, err := d.preparedImages.resolve(name, svc.Image)
+	if err != nil || (constrained && !d.disposable) {
+		return "", ErrDisposableUnavailable
+	}
 	if d.disposable {
 		if err := ValidateDisposableConfig(&config.DillConfig{Services: map[string]*config.Service{name: svc}}); err != nil {
 			return "", err
@@ -218,7 +229,12 @@ func (d *DockerEngine) startService(ctx context.Context, name string, svc *confi
 		if len(volumes) > 0 {
 			return "", ErrDisposableUnsupported
 		}
-		image = id // pin metadata-checked immutable content, never a moving tag
+		if constrained && !preparedImageMatches(id, image) {
+			return "", ErrDisposableUnavailable
+		}
+		if !constrained {
+			image = id
+		} // otherwise preserve the compared canonical ID
 	}
 	for key := range svc.Labels {
 		if strings.HasPrefix(key, config.SystemLabelPrefix) {

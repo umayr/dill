@@ -109,6 +109,14 @@ func (e *Engine) EnforceDisposableVolumes() error {
 	return errors.New("disposable volume enforcement unavailable")
 }
 
+// EnforcePreparedImages forwards a restriction only; it is not an engine write.
+func (e *Engine) EnforcePreparedImages(images map[string]orchestrator.PreparedImage) error {
+	if enforcer, ok := e.Engine.(orchestrator.PreparedImageEnforcer); ok {
+		return enforcer.EnforcePreparedImages(images)
+	}
+	return orchestrator.ErrDisposableUnavailable
+}
+
 // DisposableImage forwards prepared local immutable identity and metadata.
 // Missing support is unavailable, never permission to pull, ignore image VOLUME
 // entries, or substitute a mutable tag for the attested local image ID.

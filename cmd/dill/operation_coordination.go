@@ -408,6 +408,12 @@ func (e *coordinatedEngine) EnforceDisposableVolumes() error {
 	}
 	return errors.New("disposable volume enforcement unavailable")
 }
+func (e *coordinatedEngine) EnforcePreparedImages(images map[string]orchestrator.PreparedImage) error {
+	if p, ok := e.Engine.(orchestrator.PreparedImageEnforcer); ok {
+		return p.EnforcePreparedImages(images)
+	}
+	return orchestrator.ErrDisposableUnavailable
+}
 func (e *coordinatedEngine) PreviewResources(ctx context.Context, stack string, names []string) ([]orchestrator.PreviewResource, error) {
 	if v, ok := e.Engine.(orchestrator.PreviewResourceInspector); ok {
 		return v.PreviewResources(ctx, stack, names)

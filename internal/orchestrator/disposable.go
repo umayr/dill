@@ -214,6 +214,21 @@ func (e *disposableEngine) StartService(ctx context.Context, name string, svc *c
 func (e *disposableEngine) PullImage(context.Context, string, io.Writer) error {
 	return ErrDisposableUnsupported
 }
+func (e *disposableEngine) EnforcePreparedImages(images map[string]PreparedImage) error {
+	if e.cfg == nil || len(images) != len(e.cfg.Services) {
+		return ErrDisposableUnavailable
+	}
+	for service, svc := range e.cfg.Services {
+		image, ok := images[service]
+		if !ok || svc == nil || image.Reference != svc.Image {
+			return ErrDisposableUnavailable
+		}
+	}
+	if p, ok := e.Engine.(PreparedImageEnforcer); ok {
+		return p.EnforcePreparedImages(images)
+	}
+	return ErrDisposableUnavailable
+}
 func (e *disposableEngine) DisposableImage(ctx context.Context, image string) (string, []string, error) {
 	return e.Engine.(DisposableImageInspector).DisposableImage(ctx, image)
 }

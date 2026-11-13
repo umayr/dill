@@ -50,6 +50,14 @@ func (e *readOnlyEngine) EnforceDisposableVolumes() error {
 	}
 	return ErrDisposableUnsupported
 }
+
+// Installing a restriction is local metadata, not permission to mutate.
+func (e *readOnlyEngine) EnforcePreparedImages(images map[string]PreparedImage) error {
+	if p, ok := e.Engine.(PreparedImageEnforcer); ok {
+		return p.EnforcePreparedImages(images)
+	}
+	return ErrDisposableUnavailable
+}
 func (e *readOnlyEngine) DisposableImage(ctx context.Context, image string) (string, []string, error) {
 	if p, ok := e.Engine.(DisposableImageInspector); ok {
 		return p.DisposableImage(ctx, image)

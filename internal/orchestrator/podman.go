@@ -36,15 +36,23 @@ func podmanNotFound(err error) bool {
 }
 
 type PodmanEngine struct {
-	conn       context.Context
-	socket     string
-	disposable bool
+	conn           context.Context
+	socket         string
+	disposable     bool
+	preparedImages preparedImageConstraint
 }
 
 func (p *PodmanEngine) EngineName() string { return "podman" }
 
 // EnforceDisposableVolumes is configured before concurrent deployment begins.
 func (p *PodmanEngine) EnforceDisposableVolumes() error { p.disposable = true; return nil }
+
+func (p *PodmanEngine) EnforcePreparedImages(images map[string]PreparedImage) error {
+	if !p.disposable {
+		return ErrDisposableUnavailable
+	}
+	return p.preparedImages.install(images)
+}
 
 func NewPodmanEngine(ctx context.Context, socket string) (*PodmanEngine, error) {
 	conn, err := bindings.NewConnection(ctx, socket)
@@ -148,7 +156,10 @@ func (p *PodmanEngine) StartServiceChecked(ctx context.Context, name string, svc
 }
 
 func (p *PodmanEngine) startService(ctx context.Context, name string, svc *config.Service, stackName string, secrets []config.ResolvedSecret, target string) (string, error) {
-	image := svc.Image
+	image, constrained, err := p.preparedImages.resolve(name, svc.Image)
+	if err != nil || (constrained && !p.disposable) {
+		return "", ErrDisposableUnavailable
+	}
 	if p.disposable {
 		if err := ValidateDisposableConfig(&config.DillConfig{Services: map[string]*config.Service{name: svc}}); err != nil {
 			return "", err
@@ -160,7 +171,12 @@ func (p *PodmanEngine) startService(ctx context.Context, name string, svc *confi
 		if len(volumes) > 0 {
 			return "", ErrDisposableUnsupported
 		}
-		image = id // pin metadata-checked immutable content, never a moving tag
+		if constrained && !preparedImageMatches(id, image) {
+			return "", ErrDisposableUnavailable
+		}
+		if !constrained {
+			image = id
+		} // otherwise preserve the compared canonical ID
 	}
 	for key := range svc.Labels {
 		if strings.HasPrefix(key, config.SystemLabelPrefix) {
