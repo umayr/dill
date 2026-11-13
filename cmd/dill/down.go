@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/umayr/dill/internal/dag"
+	"github.com/umayr/dill/internal/operation"
 	"github.com/umayr/dill/internal/orchestrator"
 )
 
@@ -52,6 +53,9 @@ func runDown(ctx context.Context, opts commandOptions, args []string) error {
 		if err != nil {
 			return err
 		}
+		if err := opts.replaceRemovalIntent(intent, "remove", nil); err != nil {
+			return err
+		}
 		if !opts.DryRun {
 			var errs []error
 			for _, resource := range intent.Resources {
@@ -70,6 +74,27 @@ func runDown(ctx context.Context, opts commandOptions, args []string) error {
 		return nil
 	}
 
+	if opts.operation != nil {
+		names, err := engine.ListStack(ctx, sn)
+		if err != nil {
+			return err
+		}
+		targets := make([]orchestrator.RemovalTarget, 0, len(names))
+		for _, name := range names {
+			targets = append(targets, orchestrator.RemovalTarget{Name: name})
+		}
+		intent, err := orchestrator.CaptureRemovalIntent(ctx, engine, sn, targets)
+		if err != nil {
+			return err
+		}
+		if err := opts.replaceRemovalIntent(intent, "remove", []operation.Intent{{Kind: "network", Identity: sn, Action: "retain"}}); err != nil {
+			return err
+		}
+		if opts.DryRun {
+			return nil
+		}
+		return dag.DownIntent(ctx, engine, intent, opts.downProgress(sn))
+	}
 	if opts.DryRun {
 		names, err := engine.ListStack(ctx, sn)
 		if err != nil {
@@ -128,7 +153,7 @@ func runTeardown(ctx context.Context, opts commandOptions, args []string) error 
 	}
 	imageIDs := map[string]string{}
 	var imageErrors []error
-	if !opts.DryRun {
+	if !opts.DryRun || opts.operation != nil {
 		for _, svc := range cfg.Services {
 			if svc.Image == "" {
 				continue
@@ -145,6 +170,21 @@ func runTeardown(ctx context.Context, opts commandOptions, args []string) error 
 				imageErrors = append(imageErrors, &orchestrator.ResourceError{Operation: "inspect image", Resource: svc.Image, Err: err})
 			}
 		}
+	}
+	if opts.operation != nil && len(imageErrors) > 0 {
+		return errors.Join(imageErrors...)
+	}
+	extraIntents := []operation.Intent{{Kind: "network", Identity: sn, Action: "retain"}}
+	for _, id := range imageIDs {
+		if id != "" {
+			extraIntents = append(extraIntents, operation.Intent{Kind: "image", Identity: id, Action: "remove"})
+		}
+	}
+	for _, volume := range vols {
+		extraIntents = append(extraIntents, operation.Intent{Kind: "volume", Identity: volume, Action: "retain"})
+	}
+	if err := opts.replaceRemovalIntent(intent, "remove", extraIntents); err != nil {
+		return err
 	}
 	networkAction := "retain the network"
 	if !opts.DryRun {

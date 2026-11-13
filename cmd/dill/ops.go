@@ -290,6 +290,9 @@ func runRm(ctx context.Context, opts commandOptions, args []string) error {
 	if err != nil {
 		return err
 	}
+	if err := opts.replaceRemovalIntent(intent, "removeStoppedCandidate", nil); err != nil {
+		return err
+	}
 	if !opts.DryRun {
 		ok, err := confirmDestructive(fmt.Sprintf("This will remove stopped containers for stack %s: %s", sn, removalSummary(intent)), opts)
 		if err != nil {

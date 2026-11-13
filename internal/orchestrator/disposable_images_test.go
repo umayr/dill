@@ -8,6 +8,8 @@ import (
 	"net/http"
 	"strings"
 	"testing"
+
+	"github.com/umayr/dill/internal/config"
 )
 
 func TestAdapterDisposablePreparedImageMetadataParity(t *testing.T) {
@@ -56,19 +58,28 @@ func TestAdapterDisposablePreparedImageMetadataParity(t *testing.T) {
 func TestAdapterDisposableCreatePinsPreparedImageID(t *testing.T) {
 	for _, adapter := range []string{"docker", "podman"} {
 		t.Run(adapter, func(t *testing.T) {
-			var createdImage string
+			var createdImage, createdHash string
+			var retagged bool
 			var writes int
 			engine := guardrailAdapterRaw(t, adapter, contextTransport(func(r *http.Request) (*http.Response, error) {
 				if strings.Contains(r.URL.Path, "/images/") {
+					// Immediately after metadata inspection the tag is retargeted to
+					// hypothetical content with an implicit VOLUME. Only the old ID
+					// remains qualified; creating by the original tag is unsafe.
+					retagged = true
 					return contextResponse(r, 200, `{"Id":"immutable-prepared-image","Config":{}}`), nil
 				}
 				if r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/containers/create") {
 					writes++
-					var body struct{ Image string }
+					var body struct {
+						Image  string
+						Labels map[string]string
+					}
 					if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 						t.Fatal(err)
 					}
 					createdImage = body.Image
+					createdHash = body.Labels["dill.config-hash"]
 					return contextResponse(r, 201, `{"Id":"immutable-created-container-id"}`), nil
 				}
 				if r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/start") {
@@ -86,8 +97,12 @@ func TestAdapterDisposableCreatePinsPreparedImageID(t *testing.T) {
 			if _, err := engine.StartService(context.Background(), "app", cfg.Services["app"], "stack"); err != nil {
 				t.Fatal(err)
 			}
-			if createdImage != "immutable-prepared-image" || writes != 2 {
-				t.Fatalf("created image=%q writes=%d", createdImage, writes)
+			expectedHash, err := config.SecretServiceConfigHash("stack", "app", cfg.Services["app"], "", nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !retagged || createdImage != "immutable-prepared-image" || createdHash != expectedHash || writes != 2 {
+				t.Fatalf("created image=%q hash=%q expectedHash=%q retagged=%t writes=%d", createdImage, createdHash, expectedHash, retagged, writes)
 			}
 			before := writes
 			if !errors.Is(engine.PullImage(context.Background(), "synthetic", io.Discard), ErrDisposableUnsupported) || writes != before {
