@@ -545,7 +545,7 @@ func TestAlphaQualifiedRecoveryDecoder(t *testing.T) {
 func TestAlphaQualifiedProcessHelpers(t *testing.T) {
 	t.Run("actual-attended-argument-contract", func(t *testing.T) {
 		root := t.TempDir()
-		f := &alphaQualifiedFixture{bin: dillBinary(t, root), cfg: filepath.Join(root, "absent.pkl"),
+		f := &alphaQualifiedFixture{bin: dillBinary(t, repoRoot(t)), cfg: filepath.Join(root, "absent.pkl"),
 			stack: "argument-contract", state: filepath.Join(root, "absent-state"), daemon: "synthetic-daemon"}
 		for _, tc := range []struct {
 			name, want string
