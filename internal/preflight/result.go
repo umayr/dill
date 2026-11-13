@@ -324,6 +324,9 @@ func (r Result) Validate(exit int) error {
 		if (exit == 2) != (r.Outcome == "invalid_input") || len(r.Errors) == 0 || len(r.Resources) != 0 || r.InputDigest != nil || r.SelectionDigest != nil || r.Coverage != EmptyCoverage() {
 			return errors.New("preflight failure disclosed review")
 		}
+		if err := r.validateFailurePhase(exit); err != nil {
+			return err
+		}
 	}
 	return nil
 }
