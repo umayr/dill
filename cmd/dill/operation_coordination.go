@@ -67,6 +67,25 @@ type operationCoordination struct {
 // external/anonymous/bind storage, special networks and undeclared orphans.
 // Unsupported options never fall back to uncoordinated behavior.
 func (c *operationCoordination) prepare(ctx context.Context, opts commandOptions, cfg *config.DillConfig, name, pull string) error {
+	// Apply the canonical pilot's complete static boundary before opening a
+	// socket. Copy policy overrides; never mutate unselected desired config.
+	effective := *cfg
+	effective.Services = make(map[string]*config.Service, len(cfg.Services))
+	for service, svc := range cfg.Services {
+		if svc == nil {
+			return usageError{"unsupported qualified service layout"}
+		}
+		copy := *svc
+		if name != "up" {
+			copy.PullPolicy = "never"
+		} else if pull != "" {
+			copy.PullPolicy = pull
+		}
+		effective.Services[service] = &copy
+	}
+	if err := orchestrator.ValidateDisposableConfig(&effective); err != nil {
+		return usageError{"unsupported qualified disposable configuration"}
+	}
 	stack := resolveStackNameWithOptions(cfg, opts)
 	resources := []coordination.ResourceInput{{Kind: "network", Name: stack, Action: "reconcile"}}
 	containers, volumes := map[string]bool{}, map[string]bool{}
@@ -168,21 +187,20 @@ func (c *operationCoordination) prepare(ctx context.Context, opts commandOptions
 		}
 		c.guard.ids[live.ID] = true
 	}
-	if name == "up" {
-		// Image-declared VOLUME creates anonymous resources inside ContainerCreate;
-		// reject these before ANY engine writes, even when config mounts are empty.
-		// #79 owns the shared metadata seam and strict adapter create path.
-		// Without both capabilities, qualified up remains unavailable.
-		if err = c.guard.EnforceDisposableVolumes(); err != nil {
-			return err
-		}
-		for _, svc := range cfg.Services {
-			id, targets, err := c.guard.DisposableImage(ctx, svc.Image)
-			if err != nil || id == "" || len(targets) != 0 {
-				return errors.New("prepared image qualification failed")
-			}
-		}
+	// Shared #79 whole-resource read-only preflight MUST precede every handler,
+	// not merely volume creation or a caller-selected --alpha-disposable flag.
+	// Its wrapper also revalidates before network/container creation and its
+	// strict adapter pins the just-inspected immutable image for actual create.
+	enforcer, ok := c.guard.Engine.(orchestrator.DisposableVolumeEnforcer)
+	if !ok {
+		return orchestrator.ErrDisposableUnavailable
 	}
+	c.guard.enforcer = enforcer
+	guarded, err := orchestrator.WithDisposableGuardrails(ctx, c.guard.Engine, &effective, stack)
+	if err != nil {
+		return err
+	}
+	c.guard.Engine = guarded
 	return nil
 }
 
@@ -230,6 +248,7 @@ type coordinatedEngine struct {
 	containers, volumes map[string]bool
 	mu                  sync.Mutex
 	ids                 map[string]bool
+	enforcer            orchestrator.DisposableVolumeEnforcer
 }
 
 func (e *coordinatedEngine) active() error {
@@ -339,8 +358,10 @@ func (e *coordinatedEngine) DisposableImage(ctx context.Context, image string) (
 	return "", nil, errors.New("prepared image qualification unavailable")
 }
 func (e *coordinatedEngine) EnforceDisposableVolumes() error {
-	if v, ok := e.Engine.(orchestrator.DisposableVolumeEnforcer); ok {
-		return v.EnforceDisposableVolumes()
+	// Retain the explicit capability of the SAME raw qualified adapter even
+	// after installing #79's disposable wrapper (whose Engine field is narrow).
+	if e.enforcer != nil {
+		return e.enforcer.EnforceDisposableVolumes()
 	}
 	return errors.New("disposable volume enforcement unavailable")
 }

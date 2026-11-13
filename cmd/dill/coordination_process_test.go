@@ -136,7 +136,11 @@ func TestQualifiedCLIAndBrineProcessContention(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	args := append([]string{"operation"}, fixture.args("stop", "--timeout", "80ms")...)
+	alias := filepath.Join(filepath.Dir(fixture.socket), "socket-alias.sock")
+	if err := os.Symlink(fixture.socket, alias); err != nil {
+		t.Fatal(err)
+	}
+	args := append([]string{"operation"}, fixture.args("stop", "--timeout", "80ms", "--engine-socket", alias, "-f", "/synthetic/alias-config.pkl")...)
 	out, stderr, code := runCoordinationProcess(t, "operation", args...)
 	var result operation.Result
 	if json.Unmarshal([]byte(out), &result) != nil || code != 1 || stderr != "" || result.Outcome != "cancelled" || result.Effects != "none" {
@@ -182,6 +186,64 @@ func TestQualifiedCLIAndBrineProcessContention(t *testing.T) {
 		}
 	}
 }
+func TestQualifiedProcessDeathAfterDaemonEffectRequiresInspection(t *testing.T) {
+	fixture := newCoordinatedDocker(t, true)
+	fixture.mu.Lock()
+	fixture.blockWrite = true
+	fixture.writeStarted = make(chan struct{}, 1)
+	fixture.mu.Unlock()
+	args := append([]string{"operation"}, fixture.args("stop", "--coordination-source", "brine")...)
+	cmd := coordinationProcess("operation", args...)
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+	if err := cmd.Start(); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if cmd.ProcessState == nil {
+			cmd.Process.Kill()
+			cmd.Wait()
+		}
+	})
+	select {
+	case <-fixture.writeStarted:
+	case <-time.After(5 * time.Second):
+		t.Fatal("child never reached synthetic daemon effect")
+	}
+	if err := cmd.Process.Kill(); err != nil {
+		t.Fatal(err)
+	}
+	if err := cmd.Wait(); err == nil {
+		t.Fatal("killed child succeeded")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	state, err := coordination.Open(ctx, fixture.stateDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer state.Close()
+	target, _ := coordination.DockerIdentity(syntheticDaemon)
+	record, err := state.Inspect(ctx, target, "app")
+	if err != nil || record == nil || record.State != "in_progress" || record.Outcome != "unknown" || record.Effects != "unknown" {
+		t.Fatalf("lost crashed effect: %+v %v", record, err)
+	}
+	// A fresh CLI process must not turn kernel lock release into blind replay.
+	out, stderrText, code := runCoordinationProcess(t, "operation", append([]string{"operation"}, fixture.args("stop")...)...)
+	var result operation.Result
+	if json.Unmarshal([]byte(out), &result) != nil || code != 1 || stderrText != "" || result.Effects != "none" {
+		t.Fatalf("crash retry outcome: %s %s %d", out, stderrText, code)
+	}
+	fixture.mu.Lock()
+	writes := fixture.writes
+	running := fixture.running
+	fixture.mu.Unlock()
+	if writes != 1 || running {
+		t.Fatalf("effect missing or blindly replayed: writes=%d running=%v", writes, running)
+	}
+}
+
 func TestDockerSDKQualifiedRedirectAndDeadlineFailClosed(t *testing.T) {
 	for _, mode := range []string{"redirect", "deadline"} {
 		t.Run(mode, func(t *testing.T) {

@@ -57,10 +57,15 @@ Additional conservative restrictions:
   Docker can create anonymous storage not present in the declared inventory.
   The shared disposable image preflight/strict adapter pins the inspected local
   immutable image ID at create time rather than trusting a mutable tag.
-- Bind mounts, external/anonymous volumes and special network modes are rejected.
-  Named volumes and explicit container names are inventoried and target-wide
-  locked. This is coordination, not a replacement for disposable storage policy,
-  ownership checks or destructive intent enforcement (#79).
+- The canonical #79 disposable static boundary applies automatically, without
+  requiring a separate profile flag: bind/external/anonymous/explicit-engine-name
+  volumes, tmpfs, special network modes, devices and added capabilities reject
+  before socket access. Declared stack-scoped named volumes and explicit
+  container names are inventoried and target-wide locked. Whole-resource
+  read-only network/volume/image ownership preflight runs under those locks
+  BEFORE any handler write; shared strict guardrails revalidate before create.
+  Explicit `--alpha-disposable` may compose with this automatic qualified guard.
+  This does not replace destructive intent enforcement or actual host qualification.
 - The whole declared inventory is locked even for a subset operation. Live
   ownership/mount/network census runs while holding those same locks, before
   every handler. Undeclared containers/orphans and uninventoried live storage

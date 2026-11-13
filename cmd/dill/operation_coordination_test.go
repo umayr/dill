@@ -2,6 +2,9 @@ package main
 
 import (
 	"context"
+	"crypto/hmac"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -34,6 +37,9 @@ type coordinatedDockerFixture struct {
 	writes, connections                                  int
 	uncoordinatedWrite, failTerminal                     bool
 	redirectList, blockReads                             bool
+	blockWrite                                           bool
+	networkExists, foreignNetwork, foreignVolume         bool
+	writeStarted                                         chan struct{}
 }
 
 func newCoordinatedDocker(t *testing.T, exists bool) *coordinatedDockerFixture {
@@ -47,7 +53,7 @@ func newCoordinatedDocker(t *testing.T, exists bool) *coordinatedDockerFixture {
 	if err = os.Mkdir(state, 0700); err != nil {
 		t.Fatal(err)
 	}
-	f := &coordinatedDockerFixture{socket: filepath.Join(dir, "docker.sock"), stateDir: state, exists: exists, image: "synthetic:v1", labels: map[string]string{"dill.managed": "true", "dill.stack": "app", "dill.service": "web"}}
+	f := &coordinatedDockerFixture{socket: filepath.Join(dir, "docker.sock"), stateDir: state, exists: exists, networkExists: exists, image: "synthetic:v1", labels: map[string]string{"dill.managed": "true", "dill.stack": "app", "dill.service": "web"}}
 	listener, err := net.Listen("unix", f.socket)
 	if err != nil {
 		t.Fatal(err)
@@ -96,6 +102,16 @@ func (f *coordinatedDockerFixture) serve(w http.ResponseWriter, r *http.Request)
 				os.Mkdir(filepath.Join(f.stateDir, record.OperationID+".result"), 0700)
 			}
 		}
+		if f.blockWrite {
+			// Model an engine effect before the client receives any outcome.
+			f.running = false
+			select {
+			case f.writeStarted <- struct{}{}:
+			default:
+			}
+			<-r.Context().Done()
+			return
+		}
 		if f.dropWrites {
 			conn, _, _ := w.(http.Hijacker).Hijack()
 			conn.Close()
@@ -139,10 +155,32 @@ func (f *coordinatedDockerFixture) serve(w http.ResponseWriter, r *http.Request)
 		}
 		json.NewEncoder(w).Encode(map[string]any{"Id": strings.Repeat("a", 64), "Image": "sha256:" + strings.Repeat("c", 64), "Config": map[string]any{"Image": f.image, "Labels": f.labels}, "HostConfig": map[string]any{"NetworkMode": "app"}, "NetworkSettings": map[string]any{}, "State": map[string]any{"Running": f.running}, "Mounts": []any{}})
 	case path == "/networks":
-		json.NewEncoder(w).Encode([]map[string]string{{"Name": "app", "Id": strings.Repeat("e", 64)}})
+		list := []map[string]string{}
+		if f.networkExists {
+			list = append(list, map[string]string{"Name": "app", "Id": strings.Repeat("e", 64)})
+		}
+		json.NewEncoder(w).Encode(list)
 	case path == "/networks/app":
-		w.WriteHeader(404)
-		io.WriteString(w, `{"message":"not found"}`)
+		if !f.networkExists {
+			w.WriteHeader(404)
+			io.WriteString(w, `{"message":"not found"}`)
+			return
+		}
+		owner := "app"
+		if f.foreignNetwork {
+			owner = "foreign-stack"
+		}
+		json.NewEncoder(w).Encode(map[string]any{"Name": "app", "Id": strings.Repeat("e", 64), "Driver": "bridge", "Options": map[string]string{}, "Labels": map[string]string{"dill.managed": "true", "dill.stack": owner}})
+	case path == "/networks/create":
+		f.networkExists = true
+		w.WriteHeader(201)
+		json.NewEncoder(w).Encode(map[string]any{"Id": strings.Repeat("e", 64), "Warning": ""})
+	case path == "/volumes/app_data":
+		owner := "app"
+		if f.foreignVolume {
+			owner = "foreign-stack"
+		}
+		json.NewEncoder(w).Encode(map[string]any{"Name": "app_data", "Driver": "local", "Options": map[string]string{}, "Labels": map[string]string{"dill.managed": "true", "dill.stack": owner}})
 	case path == "/containers/create":
 		var request struct {
 			Labels map[string]string
@@ -193,7 +231,11 @@ func TestQualifiedOperationAllSupportedHandlersUseDockerSDK(t *testing.T) {
 			fixture := newCoordinatedDocker(t, name != "up")
 			useSyntheticConfig(t, syntheticConfig())
 			result, code, stderr := captureOperation(t, "", fixture.args(name, "--yes"))
-			if code != 0 || result.Outcome != "succeeded" || stderr != "" {
+			wantCode, wantOutcome := 0, "succeeded"
+			if name == "down" {
+				wantCode, wantOutcome = 1, "failed"
+			} // existing network retention error contract
+			if code != wantCode || result.Outcome != wantOutcome || stderr != "" {
 				t.Fatalf("operation: %+v code=%d stderr=%s", result, code, stderr)
 			}
 			identity, _ := coordination.DockerIdentity(syntheticDaemon)
@@ -289,7 +331,7 @@ func TestQualifiedUnsupportedInvocationsHaveNoEngineAccess(t *testing.T) {
 	}
 }
 func TestQualifiedInvalidConfigNoSocketOrStateAccess(t *testing.T) {
-	for _, scenario := range []string{"pull", "bind", "external", "anonymous", "network"} {
+	for _, scenario := range []string{"pull", "bind", "external", "anonymous", "network", "devices", "capabilities", "tmpfs"} {
 		t.Run(scenario, func(t *testing.T) {
 			fixture := newCoordinatedDocker(t, false)
 			cfg := syntheticConfig()
@@ -304,6 +346,12 @@ func TestQualifiedInvalidConfigNoSocketOrStateAccess(t *testing.T) {
 				cfg.Services["web"].Volumes = []json.RawMessage{json.RawMessage(`"/data"`)}
 			case "network":
 				cfg.Services["web"].NetworkMode = "host"
+			case "devices":
+				cfg.Services["web"].Devices = []string{"/synthetic/device"}
+			case "capabilities":
+				cfg.Services["web"].CapAdd = []string{"SYS_ADMIN"}
+			case "tmpfs":
+				cfg.Services["web"].Volumes = []json.RawMessage{json.RawMessage(`{"type":"tmpfs","target":"/data"}`)}
 			}
 			useSyntheticConfig(t, cfg)
 			result, code, _ := captureOperation(t, "", fixture.args("up"))
@@ -316,6 +364,41 @@ func TestQualifiedInvalidConfigNoSocketOrStateAccess(t *testing.T) {
 		})
 	}
 }
+func TestQualifiedForeignResourcesFailBeforeAnyHTTPWrite(t *testing.T) {
+	for _, kind := range []string{"network", "volume"} {
+		t.Run(kind, func(t *testing.T) {
+			fixture := newCoordinatedDocker(t, false)
+			cfg := syntheticConfig()
+			fixture.mu.Lock()
+			if kind == "network" {
+				fixture.networkExists = true
+				fixture.foreignNetwork = true
+			} else {
+				fixture.foreignVolume = true
+				cfg.Services["web"].Volumes = []json.RawMessage{json.RawMessage(`"data:/data"`)}
+			}
+			fixture.mu.Unlock()
+			useSyntheticConfig(t, cfg)
+			result, code, _ := captureOperation(t, "", fixture.args("up"))
+			fixture.mu.Lock()
+			writes := fixture.writes
+			fixture.mu.Unlock()
+			if code != 1 || result.Effects != "none" || writes != 0 {
+				t.Fatalf("foreign %s caused earlier mutation: %+v code=%d HTTP writes=%d", kind, result, code, writes)
+			}
+		})
+	}
+}
+
+func TestQualifiedAutomaticGuardrailsComposeWithExplicitProfile(t *testing.T) {
+	fixture := newCoordinatedDocker(t, false)
+	useSyntheticConfig(t, syntheticConfig())
+	result, code, _ := captureOperation(t, "", fixture.args("up", "--alpha-disposable"))
+	if code != 0 || result.Outcome != "succeeded" {
+		t.Fatalf("canonical capability forwarding lost across wrappers: %+v code=%d", result, code)
+	}
+}
+
 func TestQualifiedLiveOrImageBoundaryFailsBeforeMutation(t *testing.T) {
 	for _, scenario := range []string{"orphan", "image-volumes"} {
 		t.Run(scenario, func(t *testing.T) {
@@ -344,6 +427,35 @@ func TestQualifiedFailedStartKeepsDurableOperationID(t *testing.T) {
 		}
 		id := session.OperationID()
 		session.Close()
+		// Inject a failed-return boundary with a genuinely partial on-disk
+		// reservation inventory. Real persistence fault windows/StartError
+		// production are separately exercised inside coordination tests.
+		key, err := os.ReadFile(filepath.Join(fixture.stateDir, "identity.key"))
+		if err != nil {
+			return nil, err
+		}
+		token := func(domain, value string) string {
+			h := hmac.New(sha256.New, key)
+			h.Write([]byte(domain))
+			h.Write([]byte{0})
+			h.Write([]byte(value))
+			return hex.EncodeToString(h.Sum(nil))
+		}
+		resource := resources[0]
+		resourceID := token("resource:"+resource.Kind, resource.Name)
+		lockID := token("resource-lock:"+target.Identity()+":"+resource.Kind, resourceID)
+		if err = os.Remove(filepath.Join(fixture.stateDir, lockID+".json")); err != nil {
+			return nil, err
+		}
+		directory, err := os.Open(fixture.stateDir)
+		if err != nil {
+			return nil, err
+		}
+		err = directory.Sync()
+		directory.Close()
+		if err != nil {
+			return nil, err
+		}
 		return nil, &coordination.StartError{OperationID: id}
 	}
 	defer func() { beginCoordinatedOperation = old }()
@@ -415,6 +527,14 @@ func TestQualifiedDisconnectNoRetryAndBlocksNextOperation(t *testing.T) {
 	fixture.mu.Lock()
 	laterWrites, connections := fixture.writes, fixture.connections
 	fixture.mu.Unlock()
+	if second.OperationID == first.OperationID || len(second.Resources) != 0 {
+		t.Fatal("prior unresolved operation ID/resources leaked into new receipt")
+	}
+	for _, failure := range second.Errors {
+		if strings.Contains(failure.Message, first.OperationID) {
+			t.Fatal("old operation ID leaked through fixed diagnostic")
+		}
+	}
 	if code != 1 || second.Effects != "none" || laterWrites != writes || connections != 2 {
 		t.Fatalf("blind retry or hidden SDK reconnect: first=%+v second=%+v writes=%d/%d connections=%d", first, second, writes, laterWrites, connections)
 	}
