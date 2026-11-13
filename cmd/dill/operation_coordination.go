@@ -123,6 +123,9 @@ func (c *operationCoordination) prepare(ctx context.Context, opts commandOptions
 		}
 		return resources[i].Name < resources[j].Name
 	})
+	if err := coordination.ValidateInventory(resources); err != nil {
+		return usageError{"unsupported qualified resource inventory"}
+	}
 	// State changes are local metadata, separate from engine effects. Qualification
 	// is read-only; the expected ID is operator assertion, not authorization.
 	socket := strings.TrimPrefix(opts.EngineSocket, "unix://")
@@ -174,7 +177,8 @@ func (c *operationCoordination) prepare(ctx context.Context, opts commandOptions
 		if err = orchestrator.CheckOwnership(container, stack, service, live); err != nil {
 			return err
 		}
-		if live == nil || live.ID == "" || !live.MountsKnown || (live.NetworkMode != "" && live.NetworkMode != stack) {
+		modeOK := live != nil && (live.NetworkMode == "" || live.NetworkMode == "bridge" || live.NetworkMode == "default" || live.NetworkMode == stack)
+		if live == nil || live.ID == "" || !live.MountsKnown || !modeOK || !live.NetworksKnown || len(live.Networks) != 1 || live.Networks[0] != stack {
 			return usageError{"unsupported qualified live resource layout"}
 		}
 		for _, mount := range live.Volumes {

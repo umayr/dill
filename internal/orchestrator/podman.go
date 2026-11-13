@@ -589,6 +589,15 @@ func (p *PodmanEngine) InspectConfig(ctx context.Context, name string) (*LiveCon
 		}
 	}
 
+	var networks []string
+	networksKnown := data.NetworkSettings != nil && data.NetworkSettings.Networks != nil
+	if networksKnown {
+		for name := range data.NetworkSettings.Networks {
+			networks = append(networks, name)
+		}
+	}
+	sort.Strings(networks)
+
 	// Mounts → []config.VolumeMount.
 	// Same normalisation as Docker: use Name for named volumes so comparisons
 	// against the desired config (volume name) work correctly.
@@ -678,6 +687,8 @@ func (p *PodmanEngine) InspectConfig(ctx context.Context, name string) (*LiveCon
 		UserLabels:    userLabels,
 		SystemLabels:  systemLabels,
 		NetworkMode:   networkMode,
+		NetworksKnown: networksKnown,
+		Networks:      networks,
 		User:          user,
 		HealthTest:    healthTest,
 		Command:       command,

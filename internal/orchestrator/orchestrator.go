@@ -35,6 +35,8 @@ type LiveConfig struct {
 	UserLabels     map[string]string // excludes dill.* system labels
 	SystemLabels   map[string]string // dill.* system labels
 	NetworkMode    string
+	NetworksKnown  bool     // adapter exposed attached-network metadata (not inferred from mode)
+	Networks       []string // sorted exact engine network names; qualified callers reject unknown/extra attachments
 	User           string
 	HealthTest     []string
 	Command        []string

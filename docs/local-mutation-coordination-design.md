@@ -64,11 +64,15 @@ Additional conservative restrictions:
   container names are inventoried and target-wide locked. Whole-resource
   read-only network/volume/image ownership preflight runs under those locks
   BEFORE any handler write; shared strict guardrails revalidate before create.
+  The full inventory budget (at most 256 resource identities) is checked before
+  opening a target or creating state metadata.
   Explicit `--alpha-disposable` may compose with this automatic qualified guard.
   This does not replace destructive intent enforcement or actual host qualification.
 - The whole declared inventory is locked even for a subset operation. Live
   ownership/mount/network census runs while holding those same locks, before
-  every handler. Undeclared containers/orphans and uninventoried live storage
+  every handler. Actual attached-network metadata must be known and contain
+  exactly the declared stack network; Docker default `bridge`/`default` host
+  mode aliases are not themselves evidence of which networks are attached. Undeclared containers/orphans and uninventoried live storage
   fail closed, never get pruned. Existing ownership and immutable-ID checks in
   handlers still apply; a stale preflight is not a deletion authorization.
 

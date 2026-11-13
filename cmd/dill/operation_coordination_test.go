@@ -38,6 +38,7 @@ type coordinatedDockerFixture struct {
 	uncoordinatedWrite, failTerminal                     bool
 	redirectList, blockReads                             bool
 	blockWrite                                           bool
+	unknownNetworks, extraNetwork                        bool
 	networkExists, foreignNetwork, foreignVolume         bool
 	writeStarted                                         chan struct{}
 }
@@ -153,7 +154,15 @@ func (f *coordinatedDockerFixture) serve(w http.ResponseWriter, r *http.Request)
 			io.WriteString(w, `{"message":"not found"}`)
 			return
 		}
-		json.NewEncoder(w).Encode(map[string]any{"Id": strings.Repeat("a", 64), "Image": "sha256:" + strings.Repeat("c", 64), "Config": map[string]any{"Image": f.image, "Labels": f.labels}, "HostConfig": map[string]any{"NetworkMode": "app"}, "NetworkSettings": map[string]any{}, "State": map[string]any{"Running": f.running}, "Mounts": []any{}})
+		settings := map[string]any{}
+		if !f.unknownNetworks {
+			networks := map[string]any{"app": map[string]any{"NetworkID": strings.Repeat("e", 64)}}
+			if f.extraNetwork {
+				networks["outside-inventory"] = map[string]any{}
+			}
+			settings["Networks"] = networks
+		}
+		json.NewEncoder(w).Encode(map[string]any{"Id": strings.Repeat("a", 64), "Image": "sha256:" + strings.Repeat("c", 64), "Config": map[string]any{"Image": f.image, "Labels": f.labels}, "HostConfig": map[string]any{"NetworkMode": "bridge"}, "NetworkSettings": settings, "State": map[string]any{"Running": f.running}, "Mounts": []any{}})
 	case path == "/networks":
 		list := []map[string]string{}
 		if f.networkExists {
@@ -364,6 +373,27 @@ func TestQualifiedInvalidConfigNoSocketOrStateAccess(t *testing.T) {
 		})
 	}
 }
+func TestQualifiedInventoryBudgetRejectsBeforeSocketOrState(t *testing.T) {
+	fixture := newCoordinatedDocker(t, false)
+	cfg := syntheticConfig()
+	cfg.Services = map[string]*config.Service{}
+	for i := 0; i < coordination.MaxResources; i++ {
+		cfg.Services[fmt.Sprintf("service%03d", i)] = &config.Service{Image: "synthetic:v1", PullPolicy: "never"}
+	}
+	useSyntheticConfig(t, cfg)
+	result, code, _ := captureOperation(t, "", fixture.args("up"))
+	fixture.mu.Lock()
+	connections, writes := fixture.connections, fixture.writes
+	fixture.mu.Unlock()
+	entries, err := os.ReadDir(fixture.stateDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if code != 2 || result.Outcome != "invalid_input" || result.Effects != "none" || connections != 0 || writes != 0 || len(entries) != 0 {
+		t.Fatalf("oversized inventory accessed target/state: %+v code=%d connections=%d writes=%d entries=%d", result, code, connections, writes, len(entries))
+	}
+}
+
 func TestQualifiedForeignResourcesFailBeforeAnyHTTPWrite(t *testing.T) {
 	for _, kind := range []string{"network", "volume"} {
 		t.Run(kind, func(t *testing.T) {
@@ -385,6 +415,26 @@ func TestQualifiedForeignResourcesFailBeforeAnyHTTPWrite(t *testing.T) {
 			fixture.mu.Unlock()
 			if code != 1 || result.Effects != "none" || writes != 0 {
 				t.Fatalf("foreign %s caused earlier mutation: %+v code=%d HTTP writes=%d", kind, result, code, writes)
+			}
+		})
+	}
+}
+
+func TestQualifiedRequiresActualAttachedNetworkEvidence(t *testing.T) {
+	for _, mode := range []string{"unknown", "extra"} {
+		t.Run(mode, func(t *testing.T) {
+			fixture := newCoordinatedDocker(t, true)
+			fixture.mu.Lock()
+			fixture.unknownNetworks = mode == "unknown"
+			fixture.extraNetwork = mode == "extra"
+			fixture.mu.Unlock()
+			useSyntheticConfig(t, syntheticConfig())
+			result, code, _ := captureOperation(t, "", fixture.args("start"))
+			fixture.mu.Lock()
+			writes := fixture.writes
+			fixture.mu.Unlock()
+			if code != 2 || result.Effects != "none" || writes != 0 {
+				t.Fatalf("unqualified actual attachments allowed: %+v code=%d HTTP writes=%d", result, code, writes)
 			}
 		})
 	}
