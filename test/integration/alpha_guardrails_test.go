@@ -22,6 +22,10 @@ import (
 
 const alphaPreparedImage = "docker.io/library/busybox:1.36"
 
+// Readiness/barrier fixtures must not self-expire or spend the stop deadline
+// waiting for PID 1's default signal handling. The test owns explicit cleanup.
+const alphaPreparedCommand = "trap 'exit 0' TERM; while true; do sleep 1; done"
+
 func alphaGuardrailEnvironment(t *testing.T) testEnv {
 	t.Helper()
 	if os.Getenv("DILL_TEST_ALPHA_GUARDRAILS") != "1" {
@@ -38,7 +42,7 @@ func writeAlphaPreparedConfig(t *testing.T, cfg, root, engine, stack, image, ext
 	t.Helper()
 	omitted := ""
 	if other {
-		omitted = fmt.Sprintf(`["other"] { image = %q; pullPolicy = "never"; command = List("sleep", "300") }`, image)
+		omitted = fmt.Sprintf(`["other"] { image = %q; pullPolicy = "never"; command = List("sh", "-c", %q) }`, image, alphaPreparedCommand)
 	}
 	body := fmt.Sprintf(`amends %q
 config {
@@ -49,13 +53,13 @@ config {
     ["app"] {
       image = %q
       pullPolicy = "never"
-      command = List("sleep", "300")
+      command = List("sh", "-c", %q)
       %s
     }
     %s
   }
 }
-`, filepath.ToSlash(filepath.Join(root, "dill.pkl")), stack, engine, strings.Join(declarations, "\n"), image, extra, omitted)
+`, filepath.ToSlash(filepath.Join(root, "dill.pkl")), stack, engine, strings.Join(declarations, "\n"), image, alphaPreparedCommand, extra, omitted)
 	if err := os.WriteFile(cfg, []byte(body), 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -165,6 +169,7 @@ func TestAlphaNoPruneBothEngines(t *testing.T) {
 	env := alphaGuardrailEnvironment(t)
 	root, bin := repoRoot(t), dillBinary(t, repoRoot(t))
 	stack := fmt.Sprintf("dill-alpha-no-prune-%s-%d", env.engine, time.Now().UnixNano())
+	t.Cleanup(func() { alphaVerifyScopedCleanup(t, env.engine, stack) })
 	cfg := filepath.Join(t.TempDir(), "compose.pkl")
 	// Preparation is separate from the pull-never operations under test.
 	runEngine(t, env.engine, "pull", alphaPreparedImage)
@@ -192,6 +197,7 @@ func TestAlphaDisposableProfileDocker(t *testing.T) {
 	}
 	root, bin := repoRoot(t), dillBinary(t, repoRoot(t))
 	stack := fmt.Sprintf("dill-alpha-profile-%d", time.Now().UnixNano())
+	t.Cleanup(func() { alphaVerifyScopedCleanup(t, env.engine, stack) })
 	cfg := filepath.Join(t.TempDir(), "compose.pkl")
 	runEngine(t, env.engine, "pull", alphaPreparedImage)
 	var metadata []struct {
@@ -205,9 +211,7 @@ func TestAlphaDisposableProfileDocker(t *testing.T) {
 	}
 	writeAlphaPreparedConfig(t, cfg, root, env.engine, stack, alphaPreparedImage, `volumes = List("data:/data")`, true)
 	// Volumes are deliberately retained by Dill; test-owned removal is separate.
-	t.Cleanup(func() {
-		_, _ = runEngineRaw(t, env.engine, "volume", "rm", stack+"_data")
-	})
+	t.Cleanup(func() { alphaCleanupResource(t, env.engine, "volume", stack+"_data") })
 	cleanupStack(t, bin, cfg, stack)
 	runProfile := func(t *testing.T, wantExit int, options ...string) alphaOperationResult {
 		t.Helper()
@@ -287,16 +291,16 @@ func TestAlphaDisposableProfileDocker(t *testing.T) {
 	foreign := runEngine(t, env.engine, "run", "-d", "--name", stack+"-foreign", "--network", foreignNetwork, "-v", foreignVolume+":/foreign", alphaPreparedImage, "sleep", "300")
 	runEngine(t, env.engine, "exec", foreign, "sh", "-c", "printf synthetic-foreign-v1 > /foreign/value")
 	t.Cleanup(func() {
-		_, _ = runEngineRaw(t, env.engine, "rm", "-f", foreign)
-		_, _ = runEngineRaw(t, env.engine, "network", "rm", foreignNetwork)
-		_, _ = runEngineRaw(t, env.engine, "volume", "rm", foreignVolume)
+		alphaCleanupResource(t, env.engine, "container", foreign)
+		alphaCleanupResource(t, env.engine, "network", foreignNetwork)
+		alphaCleanupResource(t, env.engine, "volume", foreignVolume)
 	})
 	// Prepare a local metadata-only negative image; no image VOLUME workload runs.
 	seed := runEngine(t, env.engine, "create", alphaPreparedImage, "true")
 	volumeImage := "localhost/" + stack + ":declared-volume"
 	runEngine(t, env.engine, "commit", "--change", `VOLUME ["/hidden"]`, seed, volumeImage)
 	runEngine(t, env.engine, "rm", seed)
-	t.Cleanup(func() { _, _ = runEngineRaw(t, env.engine, "rmi", volumeImage) })
+	t.Cleanup(func() { alphaCleanupResource(t, env.engine, "image", volumeImage) })
 
 	for _, tc := range []struct {
 		name, image, extra string
@@ -353,13 +357,7 @@ func TestAlphaDisposableProfileDocker(t *testing.T) {
 			case "container":
 				identity = runEngine(t, env.engine, "run", "-d", "--name", collision+"_app", alphaPreparedImage, "sleep", "300")
 			}
-			t.Cleanup(func() {
-				if kind == "container" {
-					_, _ = runEngineRaw(t, env.engine, "rm", "-f", identity)
-				} else {
-					_, _ = runEngineRaw(t, env.engine, kind, "rm", identity)
-				}
-			})
+			t.Cleanup(func() { alphaCleanupResource(t, env.engine, kind, identity) })
 			writeAlphaPreparedConfig(t, cfg, root, env.engine, collision, alphaPreparedImage, `volumes = List("data:/data")`, false)
 			before := alphaResourceSnapshot(t, env.engine)
 			since := time.Now().UTC().Format(time.RFC3339Nano)
@@ -407,6 +405,7 @@ func (p *alphaPromptBarrier) Write(data []byte) (int, error) {
 
 func alphaRemovalNameReuse(t *testing.T, engine, bin, root, stack string) {
 	t.Helper()
+	t.Cleanup(func() { alphaVerifyScopedCleanup(t, engine, stack) })
 	cfg := filepath.Join(t.TempDir(), "compose.pkl")
 	socket := os.Getenv("DILL_ENGINE_SOCKET")
 	writeAlphaPreparedConfig(t, cfg, root, engine, stack, alphaPreparedImage, "", false)
@@ -448,7 +447,7 @@ func alphaRemovalNameReuse(t *testing.T, engine, bin, root, stack string) {
 	// Deliberate fixture replacement occurs AFTER capture and BEFORE consent.
 	runEngine(t, engine, "rm", original)
 	foreign := runEngine(t, engine, "run", "-d", "--name", stack+"_app", alphaPreparedImage, "sleep", "300")
-	t.Cleanup(func() { _, _ = runEngineRaw(t, engine, "rm", "-f", foreign) })
+	t.Cleanup(func() { alphaCleanupResource(t, engine, "container", foreign) })
 	before := alphaResourceSnapshot(t, engine)
 	since := time.Now().UTC().Format(time.RFC3339Nano)
 	if _, err := input.Write([]byte("yes\n")); err != nil {
@@ -459,8 +458,12 @@ func alphaRemovalNameReuse(t *testing.T, engine, bin, root, stack string) {
 	finished = true
 	until := time.Now().UTC().Format(time.RFC3339Nano)
 	result, decodeErr := decodeAlphaOperation(stdout.Bytes())
-	if waitErr == nil || decodeErr != nil || result.Outcome != "failed" || result.Effects != "none" {
-		t.Fatal("same-name replacement was not rejected with no effects")
+	var exited *exec.ExitError
+	if !errors.As(waitErr, &exited) || exited.ExitCode() != 1 || decodeErr != nil || result.Outcome != "failed" || result.Effects != "none" {
+		t.Fatal("same-name replacement was not rejected with exact exit 1 and no effects")
+	}
+	if len(result.Errors) != 1 || result.Errors[0].Code != "OPERATION_FAILED" || result.Errors[0].Message != "Operation failed. Inspect the target before retrying if effects are uncertain." {
+		t.Fatal("same-name replacement did not preserve the fixed failure contract")
 	}
 	captured := false
 	for _, resource := range result.Resources {

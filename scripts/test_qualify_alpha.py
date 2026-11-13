@@ -161,14 +161,18 @@ print('private-empty-auth-only')
 
     def test_cleanup_error_cannot_mask_primary_cancellation(self):
         from unittest.mock import MagicMock
-        proc = MagicMock()
-        proc.communicate.side_effect = KeyboardInterrupt()
-        recorder = q.Recorder({})
-        with patch.object(q.subprocess, "Popen", return_value=proc), patch.object(q, "stop_process_group", side_effect=PermissionError()):
-            with self.assertRaises(KeyboardInterrupt):
-                recorder.run(["synthetic-interrupted-candidate"])
-        self.assertFalse(recorder.commands[0]["passed"])
-        self.assertEqual(recorder.commands[0]["cleanupFailure"], "PermissionError")
+        for cleanup_error in (PermissionError(), ValueError(), RuntimeError(), q.subprocess.TimeoutExpired("synthetic", 1), SystemExit(0), KeyboardInterrupt()):
+            with self.subTest(cleanup=type(cleanup_error).__name__):
+                primary = KeyboardInterrupt()
+                proc = MagicMock()
+                proc.communicate.side_effect = primary
+                recorder = q.Recorder({})
+                with patch.object(q.subprocess, "Popen", return_value=proc), patch.object(q, "stop_process_group", side_effect=cleanup_error):
+                    with self.assertRaises(KeyboardInterrupt) as caught:
+                        recorder.run(["synthetic-interrupted-candidate"])
+                self.assertIs(caught.exception, primary)
+                self.assertFalse(recorder.commands[0]["passed"])
+                self.assertEqual(recorder.commands[0]["cleanupFailure"], type(cleanup_error).__name__)
 
     def test_sigterm_runner_cleans_real_child_process_group(self):
         import signal

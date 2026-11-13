@@ -267,11 +267,12 @@ class Recorder:
                 # Stop the complete make/go/candidate process group, not just make.
                 try:
                     stop_process_group(proc)
-                except (OSError, subprocess.TimeoutExpired) as cleanup_error:
-                    # A cleanup error (including a terminal process-group race)
-                    # must not mask cancellation as an ordinary command error.
+                except BaseException as cleanup_error:
+                    # Preserve the already-active cancellation/timeout even if
+                    # cleanup fails or is interrupted (including SystemExit(0)).
+                    # Never let a cleanup failure turn cancellation into success.
                     # The run still fails; retain only a bounded error class.
-                    record.update(passed=False, cleanupFailure=type(cleanup_error).__name__)
+                    record.update(passed=False, cleanupFailure=type(cleanup_error).__name__[:64])
                 raise
             record.update(exit=proc.returncode, stdoutSha256=hashlib.sha256(stdout).hexdigest(),
                           stderrSha256=hashlib.sha256(stderr).hexdigest(),
