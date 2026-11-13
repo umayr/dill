@@ -140,7 +140,7 @@ func runUpConfig(ctx context.Context, opts commandOptions, cfg *config.DillConfi
 	}
 	var pullMu sync.Mutex
 	mkSink := newMakePullSink(isTTY, &pullMu)
-	if safe {
+	if safe || opts.operation != nil {
 		mkSink = secretPullSink
 	}
 
@@ -188,8 +188,11 @@ func runUpConfig(ctx context.Context, opts commandOptions, cfg *config.DillConfi
 		}
 	}
 
+	if opts.operation != nil {
+		opts.operation.planned(p, sn)
+	}
 	if opts.DryRun {
-		plan.Render(p, os.Stdout)
+		plan.Render(p, opts.output())
 		return nil
 	}
 

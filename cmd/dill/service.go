@@ -53,7 +53,7 @@ func runStop(ctx context.Context, opts commandOptions, services []string) error 
 		}
 		if len(names) == 0 {
 			if !opts.Quiet {
-				fmt.Printf("no containers found for stack %s\n", sn)
+				fmt.Fprintf(opts.output(), "no containers found for stack %s\n", sn)
 			}
 			return nil
 		}
@@ -62,7 +62,7 @@ func runStop(ctx context.Context, opts commandOptions, services []string) error 
 	var errs []error
 	for _, name := range names {
 		if opts.DryRun {
-			fmt.Printf("would stop %s\n", name)
+			fmt.Fprintf(opts.output(), "would stop %s\n", name)
 			continue
 		}
 		if !opts.Quiet {
@@ -156,7 +156,7 @@ func runDirectStart(ctx context.Context, opts commandOptions, args []string, res
 	}
 	if opts.DryRun {
 		for service := range selected {
-			fmt.Printf("would %s %s\n", name, service)
+			fmt.Fprintf(opts.output(), "would %s %s\n", name, service)
 		}
 		return nil
 	}
