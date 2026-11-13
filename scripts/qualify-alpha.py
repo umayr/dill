@@ -228,7 +228,13 @@ class Recorder:
                 stdout, stderr = proc.communicate(timeout=timeout)
             except (subprocess.TimeoutExpired, KeyboardInterrupt):
                 # Stop the complete make/go/candidate process group, not just make.
-                stop_process_group(proc)
+                try:
+                    stop_process_group(proc)
+                except (OSError, subprocess.TimeoutExpired) as cleanup_error:
+                    # A cleanup error (including a terminal process-group race)
+                    # must not mask cancellation as an ordinary command error.
+                    # The run still fails; retain only a bounded error class.
+                    record.update(passed=False, cleanupFailure=type(cleanup_error).__name__)
                 raise
             record.update(exit=proc.returncode, stdoutSha256=hashlib.sha256(stdout).hexdigest(),
                           stderrSha256=hashlib.sha256(stderr).hexdigest(),

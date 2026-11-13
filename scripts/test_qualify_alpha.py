@@ -132,6 +132,17 @@ print('private-empty-auth-only')
             for key in inherited:
                 self.assertNotEqual(env[key], inherited[key])
 
+    def test_cleanup_error_cannot_mask_primary_cancellation(self):
+        from unittest.mock import MagicMock
+        proc = MagicMock()
+        proc.communicate.side_effect = KeyboardInterrupt()
+        recorder = q.Recorder({})
+        with patch.object(q.subprocess, "Popen", return_value=proc), patch.object(q, "stop_process_group", side_effect=PermissionError()):
+            with self.assertRaises(KeyboardInterrupt):
+                recorder.run(["synthetic-interrupted-candidate"])
+        self.assertFalse(recorder.commands[0]["passed"])
+        self.assertEqual(recorder.commands[0]["cleanupFailure"], "PermissionError")
+
     def test_sigterm_runner_cleans_real_child_process_group(self):
         import signal
         import subprocess
@@ -167,7 +178,7 @@ print('private-empty-auth-only')
                 self.assertTrue(not state or state.startswith("Z"), "SIGTERM left a live candidate descendant")
                 evidence = json.loads((root / "evidence/evidence.json").read_text())
                 self.assertFalse(evidence["baselinePassed"])
-                self.assertEqual(evidence["error"], "KeyboardInterrupt")
+                self.assertEqual(evidence["error"], "KeyboardInterrupt", json.dumps(evidence["commands"]))
             finally:
                 if proc.poll() is None:
                     proc.kill()
