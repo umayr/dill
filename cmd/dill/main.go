@@ -85,6 +85,14 @@ func exitCodeFor(err error) int {
 }
 
 func run(args []string) (retErr error) {
+	// The executable operation namespace has its own fixed diagnostics and
+	// negotiation. Keep it outside legacy secret/protocol result rewriting.
+	if len(args) > 0 && args[0] == "operation" {
+		return runOperation(context.Background(), args[1:])
+	}
+	if len(args) > 0 && args[0] == "operation-capabilities" {
+		return runOperationCapabilities(args[1:])
+	}
 	safe := secretInvocation(args)
 	check := secretCheckInvocation(args)
 	diagnostics := &secretDiagnostics{}
@@ -163,6 +171,8 @@ Commands:
   caps      Show known adapter limitations as JSON
   secret-capabilities  Discover the Alpha file-secret contract as JSON
   secrets check        Check authorized local secret sources without mutation
+  operation-capabilities  Discover the bounded local operation contract
+  operation Execute an attended local operation (--contract dill.operation/1)
   protocol  Discover the experimental metadata-only operation protocol
   rm        Remove stopped containers in the stack
   wait      Wait for services to become ready

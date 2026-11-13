@@ -1,0 +1,36 @@
+{
+  "runtime": "evaluator-failure",
+  "args": [
+    "validate",
+    "--contract",
+    "dill.operation/1",
+    "--engine",
+    "docker",
+    "--engine-socket",
+    "/synthetic/engine.sock",
+    "-p",
+    "app"
+  ],
+  "expectedExit": 1,
+  "expected": {
+    "version": "dill.operation/1",
+    "operationId": "op_00000000000000000000000000000000",
+    "operation": "validate",
+    "target": {
+      "engine": "docker",
+      "endpointDigest": "sha256:58f08ef6ea5b5a9ffaba4a894cb18d3965a7148d8a903ebd9bda565b6eb3fef6"
+    },
+    "stack": "app",
+    "outcome": "failed",
+    "effects": "none",
+    "changesDetected": false,
+    "resources": [],
+    "resourcesTruncated": false,
+    "errors": [
+      {
+        "code": "OPERATION_FAILED",
+        "message": "Operation failed. Inspect the target before retrying if effects are uncertain."
+      }
+    ]
+  }
+}

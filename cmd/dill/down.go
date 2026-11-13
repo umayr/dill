@@ -48,7 +48,7 @@ func runDown(ctx context.Context, opts commandOptions, args []string) error {
 		for _, svc := range args {
 			containerName := serviceContainerName(sn, svc, cfg.Services[svc])
 			if opts.DryRun {
-				fmt.Printf("would stop and remove %s\n", svc)
+				fmt.Fprintf(opts.output(), "would stop and remove %s\n", svc)
 				continue
 			}
 			if !opts.Quiet {
@@ -75,7 +75,7 @@ func runDown(ctx context.Context, opts commandOptions, args []string) error {
 			return fmt.Errorf("listing stack: %w", err)
 		}
 		for _, name := range names {
-			fmt.Printf("would remove %s\n", name)
+			fmt.Fprintf(opts.output(), "would remove %s\n", name)
 		}
 		return nil
 	}
@@ -129,9 +129,9 @@ func runTeardown(ctx context.Context, opts commandOptions, args []string) error 
 	}
 
 	if opts.DryRun {
-		fmt.Printf("would remove stack %s containers and images and %s\n", sn, networkAction)
+		fmt.Fprintf(opts.output(), "would remove stack %s containers and images and %s\n", sn, networkAction)
 		if len(vols) > 0 {
-			fmt.Printf("would retain volumes: %s\n", strings.Join(vols, ", "))
+			fmt.Fprintf(opts.output(), "would retain volumes: %s\n", strings.Join(vols, ", "))
 		}
 		return listErr
 	}

@@ -7,6 +7,7 @@ import (
 
 	"github.com/umayr/dill/internal/config"
 	"github.com/umayr/dill/internal/log"
+	"github.com/umayr/dill/internal/operation"
 	"github.com/umayr/dill/internal/orchestrator"
 )
 
@@ -15,7 +16,22 @@ func newEngine(ctx context.Context, engineName string, opts commandOptions) (orc
 	if err != nil {
 		return nil, err
 	}
-	return engineFactory(ctx, engineName, endpoint)
+	if opts.operation != nil && opts.operation.engine != nil {
+		if opts.operation.engine.Adapter != engineName || opts.operation.endpoint != endpoint {
+			return nil, usageError{"operation target changed"}
+		}
+		return opts.operation.engine, nil
+	}
+	engine, err := engineFactory(ctx, engineName, endpoint)
+	if err != nil {
+		return nil, err
+	}
+	if opts.operation != nil {
+		opts.operation.engine = &operation.Engine{Engine: engine, Recorder: opts.operation.recorder, Adapter: engineName, Borrowed: true}
+		opts.operation.endpoint = endpoint
+		return opts.operation.engine, nil
+	}
+	return engine, nil
 }
 
 var engineFactory = defaultEngineFactory
@@ -75,6 +91,9 @@ func engineCommand(e orchestrator.Engine, args ...string) (string, []string) {
 }
 
 func engineBinary(e orchestrator.Engine) string {
+	if named, ok := e.(interface{ EngineName() string }); ok {
+		return named.EngineName()
+	}
 	switch e.(type) {
 	case *orchestrator.DockerEngine:
 		return "docker"
