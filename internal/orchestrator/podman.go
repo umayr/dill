@@ -36,9 +36,15 @@ func podmanNotFound(err error) bool {
 }
 
 type PodmanEngine struct {
-	conn   context.Context
-	socket string
+	conn       context.Context
+	socket     string
+	disposable bool
 }
+
+func (p *PodmanEngine) EngineName() string { return "podman" }
+
+// EnforceDisposableVolumes is configured before concurrent deployment begins.
+func (p *PodmanEngine) EnforceDisposableVolumes() error { p.disposable = true; return nil }
 
 func NewPodmanEngine(ctx context.Context, socket string) (*PodmanEngine, error) {
 	conn, err := bindings.NewConnection(ctx, socket)
@@ -708,6 +714,30 @@ func (p *PodmanEngine) RemoveImage(ctx context.Context, image string, force bool
 // EnsureVolume creates a stack-owned volume with dill labels if it does not
 // exist. Existing volumes (including Compose-created ones) are left untouched.
 func (p *PodmanEngine) EnsureVolume(ctx context.Context, name, stackName string) error {
+	if p.disposable {
+		if stackName == "" || name == "" {
+			return ErrDisposableOwnership
+		}
+		live, err := podmanvolumes.Inspect(p.operationContext(ctx), name, nil)
+		if err == nil {
+			if live == nil || live.Name != name {
+				return ErrDisposableUnavailable
+			}
+			return checkDisposableSettings(stackName, "local", disposableSettings{live.Driver, live.Options, live.Labels})
+		}
+		if !podmanNotFound(err) {
+			return ErrDisposableUnavailable
+		}
+		created, err := podmanvolumes.Create(p.operationContext(ctx), entitiesTypes.VolumeCreateOptions{
+			Name:           name,
+			Labels:         map[string]string{"dill.managed": "true", "dill.stack": stackName},
+			IgnoreIfExists: false,
+		}, nil)
+		if err != nil || created == nil || created.Name != name {
+			return ErrDisposableUnavailable
+		}
+		return checkDisposableSettings(stackName, "local", disposableSettings{created.Driver, created.Options, created.Labels})
+	}
 	exists, err := podmanvolumes.Exists(p.operationContext(ctx), name, nil)
 	if err != nil {
 		return err

@@ -275,8 +275,23 @@ func runRm(ctx context.Context, opts commandOptions, args []string) error {
 		}
 		return nil
 	}
+	targets := make([]orchestrator.RemovalTarget, 0, len(names))
+	for _, name := range names {
+		service := ""
+		for _, svc := range args {
+			if serviceContainerName(sn, svc, st.Config.Services[svc]) == name {
+				service = svc
+				break
+			}
+		}
+		targets = append(targets, orchestrator.RemovalTarget{Name: name, Service: service})
+	}
+	intent, err := orchestrator.CaptureRemovalIntent(ctx, engine, sn, targets)
+	if err != nil {
+		return err
+	}
 	if !opts.DryRun {
-		ok, err := confirmDestructive(fmt.Sprintf("This will remove stopped containers for stack %s", sn), opts)
+		ok, err := confirmDestructive(fmt.Sprintf("This will remove stopped containers for stack %s: %s", sn, removalSummary(intent)), opts)
 		if err != nil {
 			return fmt.Errorf("reading confirmation: %w", err)
 		}
@@ -288,20 +303,14 @@ func runRm(ctx context.Context, opts commandOptions, args []string) error {
 		}
 	}
 	var errs []error
-	for _, name := range names {
-		service := ""
-		for _, svc := range args {
-			if serviceContainerName(sn, svc, st.Config.Services[svc]) == name {
-				service = svc
-				break
-			}
-		}
-		id, err := orchestrator.OwnedID(ctx, engine, name, sn, service)
+	for _, resource := range intent.Resources {
+		name, id := resource.Name, resource.ID
+		ok, err := intent.Revalidate(ctx, engine, resource)
 		if err != nil {
 			errs = append(errs, err)
 			continue
 		}
-		if id == "" {
+		if !ok {
 			continue
 		}
 		cs, err := engine.ServiceStatus(ctx, id)
@@ -324,6 +333,14 @@ func runRm(ctx context.Context, opts commandOptions, args []string) error {
 		}
 		if !opts.Quiet {
 			printProgress(name, "removing")
+		}
+		ok, err = intent.Revalidate(ctx, engine, resource)
+		if err != nil {
+			errs = append(errs, err)
+			continue
+		}
+		if !ok {
+			continue
 		}
 		if err := engine.RemoveService(ctx, id); err != nil && !errors.Is(err, orchestrator.ErrNotFound) {
 			errs = append(errs, &orchestrator.ResourceError{Operation: "remove (resource may be retained)", Resource: name, ID: id, Err: err})

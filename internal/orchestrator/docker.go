@@ -27,8 +27,14 @@ import (
 )
 
 type DockerEngine struct {
-	cli *client.Client
+	cli        *client.Client
+	disposable bool
 }
+
+func (d *DockerEngine) EngineName() string { return "docker" }
+
+// EnforceDisposableVolumes is configured before concurrent deployment begins.
+func (d *DockerEngine) EnforceDisposableVolumes() error { d.disposable = true; return nil }
 
 func NewDockerEngine() (*DockerEngine, error) {
 	cli, err := client.NewClientWithOpts(client.FromEnv, client.WithAPIVersionNegotiation())
@@ -671,14 +677,26 @@ func (d *DockerEngine) RemoveImage(ctx context.Context, image string, force bool
 // EnsureVolume creates a stack-owned volume with dill labels if it does not
 // exist. Existing volumes (including Compose-created ones) are left untouched.
 func (d *DockerEngine) EnsureVolume(ctx context.Context, name, stackName string) error {
-	_, err := d.cli.VolumeInspect(ctx, name)
+	if d.disposable && (stackName == "" || name == "") {
+		return ErrDisposableOwnership
+	}
+	live, err := d.cli.VolumeInspect(ctx, name)
 	if err == nil {
+		if d.disposable {
+			if live.Name != name {
+				return ErrDisposableUnavailable
+			}
+			return checkDisposableSettings(stackName, "local", disposableSettings{live.Driver, live.Options, live.Labels})
+		}
 		return nil
 	}
 	if !client.IsErrNotFound(err) {
+		if d.disposable {
+			return ErrDisposableUnavailable
+		}
 		return err
 	}
-	_, err = d.cli.VolumeCreate(ctx, volumetypes.CreateOptions{
+	live, err = d.cli.VolumeCreate(ctx, volumetypes.CreateOptions{
 		Name: name,
 		Labels: map[string]string{
 			"dill.managed": "true",
@@ -686,7 +704,18 @@ func (d *DockerEngine) EnsureVolume(ctx context.Context, name, stackName string)
 		},
 	})
 	if err != nil {
+		if d.disposable {
+			return ErrDisposableUnavailable
+		}
 		return fmt.Errorf("creating volume %s: %w", name, err)
+	}
+	if d.disposable {
+		if live.Name != name {
+			return ErrDisposableUnavailable
+		}
+		if err := checkDisposableSettings(stackName, "local", disposableSettings{live.Driver, live.Options, live.Labels}); err != nil {
+			return err
+		}
 	}
 	logger.Debug("volume created", "name", name, "stack", stackName)
 	return nil

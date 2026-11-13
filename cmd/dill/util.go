@@ -36,6 +36,8 @@ type commandOptions struct {
 	DryRun                                               bool
 	Yes                                                  bool
 	ForceRecreate                                        bool
+	NoPrune                                              bool
+	AlphaDisposable                                      bool
 }
 
 // printProgress writes a clean, fixed-width progress line to stdout.
