@@ -19,7 +19,10 @@ It does not provision or verify a sandbox, and it does not grant approval to run
 
 The runner uses the candidate binary directly for offline valid/invalid graph
 fixtures and the existing `DILL_BINARY` integration override for seven selected
-real-engine tests. No core handlers or legacy exit/prompt contracts are changed.
+legacy real-engine tests. With `--operations`, it also requires explicit
+`operation-capabilities` discovery of `dill.operation/1` and runs the executable
+operation-envelope consumer. No core handlers or legacy exit/prompt contracts
+are changed.
 
 | Baseline | What the selected existing tests establish when actually run |
 | --- | --- |
@@ -35,6 +38,17 @@ These legacy engine tests are a baseline, **not** evidence of the qualified
 operation/coordinator/disposable-profile APIs. Their Go sources are pinned by the
 candidate commit and included in the downloadable artifact. Versioned offline
 fixtures and the acceptance inventory are in `test/qualification/v1/`.
+
+The prepared `TestAlphaOperationEnvelopeConformance` consumes only subprocess
+JSON, not `internal/operation` types or mocked engines. It asserts complete
+single-document envelopes, operation-ID uniqueness, explicit target digests,
+plan versus diff exits, repeated/no-op container identity, changed-config recreate,
+stop/start/restart, declined rm/teardown, explicit rm, retained-network failure,
+invalid graph/no observed effects, failed-create unknown effects and post-create
+readiness cancellation. It rejects leaked synthetic config/paths and null or
+truncated observations. These are **prepared runtime assertions**, not recorded
+runtime evidence until actually executed against the pinned candidate. They do
+not establish complete foreign-resource preservation or coordinated recovery.
 
 ### Still required on combined final heads
 
@@ -119,14 +133,27 @@ python3 scripts/qualify-alpha.py \
   --engine docker --socket /approved-disposable/engine.sock --disposable
 ```
 
-Podman uses `--engine podman` with its explicitly approved service socket. The
+Podman uses `--engine podman` with its explicitly approved service socket. Add
+`--operations` only when deliberately qualifying the known operation contract;
+unsupported/malformed discovery fails before any integration-test mutation.
+Without that opt-in, the prepared operation case remains explicitly blocked. The
 runner clears ambient engine selectors and credentials, uses a private HOME,
 and pins both Dill SDK and direct engine CLI operations to the same endpoint.
-It runs `make integration-test DILL_TEST_RUN='^(...)$'` with `DILL_BINARY` and
-records every required top-level test; missing tests and skipped subtests fail
-the baseline. Commands have deadlines; timeout terminates the process group.
-A timeout can still leave resources needing manual inspection. No automatic
-prune or broad destructive cleanup is performed by the runner.
+Ambient `XDG_RUNTIME_DIR` is not inherited: private runtime/config directories,
+an explicit empty `REGISTRY_AUTH_FILE` and private empty Docker config cover the
+client auth-file fallback paths. Files are 0600 and directories 0700. This
+isolates **client configuration**; the separately provisioned disposable daemon/
+service must also have no operator credentials. A synthetic real-child regression
+examines the client fallback paths with ambient credential sentinels present.
+The runner invokes `make integration-test` with `DILL_BINARY` and a shell-safe
+anchored selector assignment, and records every required top-level test; missing
+tests and skipped subtests fail the baseline. Deadlines and runner SIGINT/SIGTERM
+stop the active process group with TERM then unconditional KILL escalation, even
+when the leader exited or a descendant closed its captured output. Interrupted
+evidence is non-passing where it can be written. SIGKILL cannot be handled by
+Python, and daemon-side actions or independently detached processes can outlive
+any client. A timeout/crash can still leave resources needing manual inspection.
+No automatic prune or broad destructive cleanup is performed by the runner.
 
 The **Disposable Alpha baseline** workflow runs automatically on each pull
 request's exact head SHA (not GitHub's synthetic merge commit), exclusively on
@@ -137,6 +164,12 @@ The new workflow can collect PR evidence before it exists on the default branch.
 It checks out and verifies that SHA, installs checksum-verified pinned Pkl,
 builds/tests/vets/validates, then runs the selected cases in separate Ubuntu 24.04
 hosted Docker and rootless Podman jobs. Every job's whole VM/engine is disposable.
+Candidates carrying `internal/operation/testdata/manifest.json` automatically
+select `--operations` in this workflow, and must pass discovery plus the executable
+consumer; an old/malformed candidate cannot silently fall back to legacy tests.
+The runner safely quotes the anchored test regex through both Make expansion and
+the recipe shell. A regression executes the real Makefile with a harmless fake
+Go executable to verify exactly one `-run` argument, including its dollar anchor.
 The actual engine client/server version response is recorded; distro/SDK
 versions alone are not evidence. These jobs have **not** been run merely because
 the workflow file exists. The baseline matrix is not qualified profile support

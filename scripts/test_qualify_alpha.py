@@ -23,6 +23,119 @@ class QualificationTests(unittest.TestCase):
             path.write_bytes(b"abc")
             self.assertEqual(q.sha256(path), "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad")
 
+    def test_private_auth_overrides_ambient_credentials_in_real_child(self):
+        import subprocess
+        import sys
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            ambient = root / "ambient"
+            for subpath in ("containers/auth.json", ".docker/config.json", "config/containers/auth.json"):
+                path = ambient / subpath
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_text('{"auths":{"registry.invalid":{"auth":"SYNTHETIC_OPERATOR_CREDENTIAL"}}}')
+            output = root / "output"
+            output.mkdir()
+            inherited = dict(HOME=str(ambient), XDG_RUNTIME_DIR=str(ambient), XDG_CONFIG_HOME=str(ambient / "config"),
+                             REGISTRY_AUTH_FILE=str(ambient / "containers/auth.json"), DOCKER_CONFIG=str(ambient / ".docker"))
+            with patch.dict(os.environ, inherited):
+                env = q.private_env(output, Path(sys.executable))
+            # A real subprocess examines each documented client fallback path.
+            probe = '''import json, os
+from pathlib import Path
+paths = [Path(os.environ['REGISTRY_AUTH_FILE']), Path(os.environ['XDG_RUNTIME_DIR'])/'containers/auth.json', Path(os.environ['XDG_CONFIG_HOME'])/'containers/auth.json', Path(os.environ['DOCKER_CONFIG'])/'config.json', Path(os.environ['HOME'])/'.docker/config.json']
+for path in paths:
+ assert json.loads(path.read_text()) == {'auths': {}}, 'ambient credential fallback reached'
+print('private-empty-auth-only')
+'''
+            proc = subprocess.run([sys.executable, "-c", probe], env=env, capture_output=True, timeout=10)
+            self.assertEqual(proc.returncode, 0, proc.stderr.decode())
+            self.assertEqual(proc.stdout.strip(), b"private-empty-auth-only")
+            for key in inherited:
+                self.assertNotEqual(env[key], inherited[key])
+
+    def test_sigterm_runner_cleans_real_child_process_group(self):
+        import signal
+        import subprocess
+        import sys
+        import time
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            pidfile = root / "child.pid"
+            binary = root / "candidate"
+            binary.write_text('#!/bin/sh\nsleep 60 &\necho "$!" > "' + str(pidfile) + '"\nwait\n')
+            binary.chmod(0o700)
+            commit = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=q.ROOT, text=True).strip()
+            command = [sys.executable, str(q.ROOT / "scripts/qualify-alpha.py"),
+                       "--expected-commit", commit, "--binary", str(binary), "--binary-sha256", q.sha256(binary),
+                       "--pkl", sys.executable, "--output", str(root / "evidence"), "--allow-dirty"]
+            proc = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+            child = None
+            try:
+                deadline = time.monotonic() + 10
+                while not pidfile.exists() and proc.poll() is None and time.monotonic() < deadline:
+                    time.sleep(0.02)
+                self.assertTrue(pidfile.exists(), "candidate never reached running child")
+                child = int(pidfile.read_text().strip())
+                proc.send_signal(signal.SIGTERM)
+                proc.communicate(timeout=10)
+                self.assertNotEqual(proc.returncode, 0)
+                deadline = time.monotonic() + 2
+                while time.monotonic() < deadline:
+                    state = subprocess.run(["ps", "-p", str(child), "-o", "stat="], capture_output=True, text=True).stdout.strip()
+                    if not state or state.startswith("Z"):
+                        break
+                    time.sleep(0.02)
+                self.assertTrue(not state or state.startswith("Z"), "SIGTERM left a live candidate descendant")
+                evidence = json.loads((root / "evidence/evidence.json").read_text())
+                self.assertFalse(evidence["baselinePassed"])
+                self.assertEqual(evidence["error"], "KeyboardInterrupt")
+            finally:
+                if proc.poll() is None:
+                    proc.kill()
+                    proc.communicate()
+                if child is not None:
+                    try:
+                        os.kill(child, signal.SIGKILL)
+                    except ProcessLookupError:
+                        pass
+
+    def test_timeout_kills_term_resistant_descendant_with_closed_output(self):
+        import shlex
+        import signal
+        import subprocess
+        import sys
+        import time
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            pidfile = root / "resistant.pid"
+            child_code = ("import os,signal,time; from pathlib import Path; "
+                          "signal.signal(signal.SIGTERM,signal.SIG_IGN); os.close(1); os.close(2); "
+                          "Path(" + repr(str(pidfile)) + ").write_text(str(os.getpid())); time.sleep(60)")
+            leader = root / "leader"
+            leader.write_text("#!/bin/sh\n" + shlex.quote(sys.executable) + " -c " + shlex.quote(child_code) + " &\nwait\n")
+            leader.chmod(0o700)
+            child = None
+            try:
+                recorder = q.Recorder(q.clean_env())
+                _, passed = recorder.run([str(leader)], timeout=1)
+                self.assertFalse(passed)
+                self.assertEqual(recorder.commands[-1]["failure"], "TimeoutExpired")
+                self.assertTrue(pidfile.exists(), "resistant child never reached ready state")
+                child = int(pidfile.read_text().strip())
+                deadline = time.monotonic() + 2
+                while time.monotonic() < deadline:
+                    state = subprocess.run(["ps", "-p", str(child), "-o", "stat="], capture_output=True, text=True).stdout.strip()
+                    if not state or state.startswith("Z"):
+                        break
+                    time.sleep(0.02)
+                self.assertTrue(not state or state.startswith("Z"), "closed output/leader exit hid a live descendant")
+            finally:
+                if child is not None:
+                    try:
+                        os.kill(child, signal.SIGKILL)
+                    except ProcessLookupError:
+                        pass
+
     def test_no_ambient_targets_or_credentials(self):
         with patch.dict(os.environ, {key: "untrusted" for key in q.SELECTORS}, clear=True):
             os.environ.update(PATH="/usr/bin", HOME="/credential-home", TOKEN="private", DOCKER_CONFIG="/auth")
@@ -87,7 +200,7 @@ class QualificationTests(unittest.TestCase):
         return argparse.Namespace(expected_commit=COMMIT, binary=str(root / "dill"),
                                   binary_sha256=q.sha256(root / "dill"), pkl=str(root / "pkl"),
                                   output=str(root / "evidence"), allow_dirty=False,
-                                  engine=None, socket=None, disposable=False)
+                                  engine=None, socket=None, disposable=False, operations=False)
 
     def fake_recorder(self, revision=COMMIT, modified="false", dirty=False, pkl_version="Pkl 0.31.1 (Linux)"):
         class Fake(q.Recorder):
@@ -144,6 +257,27 @@ class QualificationTests(unittest.TestCase):
                 q.collect(args)
             self.assertFalse(Path(args.output).exists())
 
+    def test_real_make_recipe_preserves_single_anchored_regex_argument(self):
+        # Execute the real Makefile, but a harmless fake go captures argv and
+        # returns immediately. No engine, Go compiler or workload is invoked.
+        import subprocess
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            fake = root / "go"
+            fake.write_text('#!/bin/sh\nprintf "%s\\n" "$@" > "$CAPTURE"\n')
+            fake.chmod(0o700)
+            capture = root / "argv"
+            env = dict(os.environ, PATH=str(root) + os.pathsep + os.environ.get("PATH", ""), CAPTURE=str(capture))
+            proc = subprocess.run(["make", "integration-test", q.make_test_selector(["TestAlpha", "TestBeta"])],
+                                  cwd=q.ROOT, env=env, capture_output=True, timeout=10)
+            self.assertEqual(proc.returncode, 0, proc.stderr.decode())
+            argv = capture.read_text().splitlines()
+            self.assertEqual(argv[argv.index("-run") + 1:], ["^(TestAlpha|TestBeta)$"])
+            self.assertIn("./test/integration", argv)
+            self.assertIn("-count=1", argv)
+        with self.assertRaises(ValueError):
+            q.make_test_selector(["TestBad;touch marker"])
+
     def test_timeout_is_recorded_as_failure(self):
         import sys
         recorder = q.Recorder(q.clean_env())
@@ -174,7 +308,7 @@ class QualificationTests(unittest.TestCase):
                         if str(argv[0]) == "make":
                             outer.assertEqual(env["DILL_BINARY"], str(Path(args.binary).resolve()))
                             outer.assertEqual(env["DILL_ENGINE_SOCKET"], env["DOCKER_HOST"])
-                            outer.assertEqual(argv[-1], "DILL_TEST_RUN=^(TestSynthetic)$")
+                            outer.assertEqual(argv[-1], q.make_test_selector(["TestSynthetic"]))
                             return test_output, True
                         return super().run(argv, timeout, expected, env)
                 with socket.socket(socket.AF_UNIX) as sock:
@@ -184,6 +318,28 @@ class QualificationTests(unittest.TestCase):
                 evidence = json.loads((Path(args.output) / "evidence.json").read_text())
                 self.assertEqual(evidence["qualification"], "incomplete")
                 self.assertEqual(evidence["baselinePassed"], expected == 0)
+
+    def test_operation_discovery_rejection_precedes_engine_or_make(self):
+        for document in ([], {}, {"version": "dill.operation/999"},
+                         {"version": "dill.operation/1", "operations": None, "engines": ["docker"]}):
+            with self.subTest(document=document), tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp)
+                args = self.fake_candidate(root)
+                args.engine, args.disposable, args.operations = "docker", True, True
+                args.socket = str(root / "engine.sock")
+                outer = self
+                class InvalidDiscovery(self.fake_recorder()):
+                    def run(self, argv, timeout=120, expected=0, env=None):
+                        if "operation-capabilities" in argv:
+                            return json.dumps(document).encode(), True
+                        outer.assertNotIn(str(argv[0]), {"docker", "make"})
+                        return super().run(argv, timeout, expected, env)
+                with socket.socket(socket.AF_UNIX) as sock:
+                    sock.bind(args.socket)
+                    with patch.object(q, "ROOT", root), patch.object(q, "FIXTURES", root / "test/qualification/v1"), patch.object(q, "Recorder", InvalidDiscovery):
+                        self.assertEqual(q.collect(args), 1)
+                evidence = json.loads((Path(args.output) / "evidence.json").read_text())
+                self.assertFalse(evidence["baselinePassed"])
 
     def test_workflow_qualifies_exact_pr_head_and_dispatch_sha(self):
         workflow = (q.ROOT / ".github/workflows/alpha-qualification.yml").read_text()
@@ -208,7 +364,7 @@ class QualificationTests(unittest.TestCase):
         self.assertEqual(len(ids), len(set(ids)))
         source = "\n".join(p.read_text() for p in (q.ROOT / "test/integration").glob("*_test.go"))
         for case in manifest["cases"]:
-            if case["mode"] == "engine":
+            if case["mode"] in {"engine", "operation-engine"}:
                 self.assertRegex(case["test"], r"^Test[A-Za-z0-9]+$")
                 self.assertIn("func " + case["test"] + "(", source)
 

@@ -76,13 +76,19 @@ jobs:
           else
             socket="$RUNNER_TEMP/alpha-podman.sock"
           fi
+          operations=()
+          # A candidate carrying the known operation fixture contract must also
+          # satisfy discovery and the executable envelope consumer (no fallback).
+          if [ -f internal/operation/testdata/manifest.json ]; then
+            operations=(--operations)
+          fi
           python3 scripts/qualify-alpha.py \
             --expected-commit "$CANDIDATE_SHA" \
             --binary "$PWD/bin/dill" \
             --binary-sha256 "$(sha256sum bin/dill | cut -d ' ' -f 1)" \
             --pkl "$RUNNER_TEMP/pkl" \
             --output "$PWD/bin/alpha-evidence-$ENGINE" \
-            --engine "$ENGINE" --socket "$socket" --disposable
+            --engine "$ENGINE" --socket "$socket" --disposable "${operations[@]}"
       - name: Publish exact candidate and bounded evidence for inspection/Brine
         if: always()
         uses: actions/upload-artifact@v4
@@ -95,6 +101,7 @@ jobs:
             bin/alpha-evidence-*/evidence.json
             dill.pkl
             internal/loader/pkl-toolchain.json
+            internal/operation/testdata
             test/qualification/v1
             test/integration
             scripts/qualify-alpha.py
