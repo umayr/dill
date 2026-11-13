@@ -76,6 +76,15 @@ attachment atomic with ownership checks. External mutation/name reuse in that
 window remains a qualification risk; do not claim cross-process coordination
 without the separate mutation coordinator.
 
+The attended operation adapter accepts the same up-only flags without changing
+its result schema:
+
+```sh
+dill operation up --contract dill.operation/1 --engine docker \\
+  --engine-socket /absolute/disposable.sock -p alpha-fixture \\
+  --alpha-disposable --pull never
+```
+
 ## Destructive intent and retained data
 
 `rm` and `teardown` retain their prompts and `--yes` behavior. Container names,
@@ -85,6 +94,16 @@ does not authorize later same-name replacement resources. Ownership and identity
 are revalidated immediately before mutations, which target the captured
 container ID rather than the name. Teardown additionally retains a retagged
 image rather than deleting a new image selected after confirmation.
+
+Machine-operation receipts preserve captured resource intents even on dry-run
+or declined confirmation, using existing kind/identityDigest/action/effect fields.
+Handler captures replace provisional census entries before any mutation. Actions
+are prefixed `intent.` and have effect `none`; rm reports
+`intent.removeStoppedCandidate` until it has checked stopped state, while retained
+networks/volumes use `intent.retain`. These are intentions, not performed actions
+or persisted authorization. The fixed machine prompt shows only the resource
+intent count and aggregate digest; incomplete inventories fail confirmation,
+including `--yes`. No second stdout JSON document or raw resource ID is emitted.
 
 `down` retains its legacy non-prompting contract. Full-stack down captures all
 identities before writes, keeps best-effort cleanup of independently owned
