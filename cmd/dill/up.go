@@ -36,6 +36,8 @@ func runUp(ctx context.Context, opts commandOptions, args []string) (retErr erro
 	addActionFlags(fs, &opts)
 	addTimeoutFlag(fs, &opts)
 	fs.BoolVar(&opts.ForceRecreate, "force-recreate", opts.ForceRecreate, "force recreate containers even if nothing changed")
+	fs.BoolVar(&opts.NoPrune, "no-prune", opts.NoPrune, "retain omitted services during full-stack up")
+	fs.BoolVar(&opts.AlphaDisposable, "alpha-disposable", opts.AlphaDisposable, "restrict up to the isolated disposable-volume Alpha profile (implies no-prune)")
 	noDeps := fs.Bool("no-deps", false, "do not include service dependencies when selecting services")
 	pullPolicy := fs.String("pull", "", "temporarily override pull policy: always, missing, or never")
 	if err := fs.Parse(args); err != nil {
@@ -76,6 +78,13 @@ func runUpConfig(ctx context.Context, opts commandOptions, cfg *config.DillConfi
 		return err
 	}
 
+	if opts.AlphaDisposable {
+		if err := validateDisposableTarget(opts, cfg); err != nil {
+			return err
+		}
+		opts.NoPrune = true
+	}
+
 	logger.Debug("loaded config", "engine", cfg.Engine, "services", len(cfg.Services))
 
 	// The plan is always computed against the full config so a partial `up`
@@ -100,6 +109,13 @@ func runUpConfig(ctx context.Context, opts commandOptions, cfg *config.DillConfi
 		}
 	}
 
+	var disposableCfg *config.DillConfig
+	if opts.AlphaDisposable {
+		disposableCfg, err = effectiveDisposableConfig(cfg, selected)
+		if err != nil {
+			return err
+		}
+	}
 	if err := orchestrator.ValidateCapabilities(cfg.Engine, selected); err != nil {
 		return fmt.Errorf("capability preflight: %w", err)
 	}
@@ -123,6 +139,13 @@ func runUpConfig(ctx context.Context, opts commandOptions, cfg *config.DillConfi
 		return fmt.Errorf("initialising engine: %w", err)
 	}
 	defer engine.Close()
+
+	if opts.AlphaDisposable {
+		engine, err = orchestrator.WithDisposableGuardrails(ctx, engine, disposableCfg, resolveStackNameWithOptions(cfg, opts))
+		if err != nil {
+			return err
+		}
+	}
 
 	if secret {
 		engine, err = secretEngineWrap(engine, req, evidence)
@@ -155,8 +178,10 @@ func runUpConfig(ctx context.Context, opts commandOptions, cfg *config.DillConfi
 	if err != nil {
 		return fmt.Errorf("computing plan: %w", err)
 	}
-	if !subset {
-		if err := preflightOrphans(ctx, engine, p, sn); err != nil {
+	orphanIntent := &orchestrator.RemovalIntent{Stack: sn}
+	if !subset && !opts.NoPrune {
+		orphanIntent, err = preflightOrphans(ctx, engine, p, sn)
+		if err != nil {
 			return err
 		}
 	}
@@ -177,7 +202,7 @@ func runUpConfig(ctx context.Context, opts commandOptions, cfg *config.DillConfi
 	}
 	// A partial up only applies changes for the selected services. Orphan
 	// removal remains a full-stack operation.
-	p = filterPlan(p, selected, !subset)
+	p = filterPlan(p, selected, !subset && !opts.NoPrune)
 
 	// --force-recreate upgrades unchanged containers to recreate.
 	if opts.ForceRecreate {
@@ -199,39 +224,13 @@ func runUpConfig(ctx context.Context, opts commandOptions, cfg *config.DillConfi
 	// Remove orphaned containers first. Do not proceed with deployment if any
 	// orphan operation fails, but attempt other independent orphans.
 	var orphanErrors []error
-	for _, ch := range p.Changes {
-		if ch.Kind != plan.KindRemove {
-			continue
-		}
-		live, err := engine.InspectConfig(ctx, ch.Service)
-		if errors.Is(err, orchestrator.ErrNotFound) {
-			continue
-		}
-		if err != nil {
-			orphanErrors = append(orphanErrors, fmt.Errorf("inspect orphan %q: %w", ch.Service, err))
-			continue
-		}
-		if live == nil {
-			orphanErrors = append(orphanErrors, fmt.Errorf("inspect orphan %q: empty configuration", ch.Service))
-			continue
-		}
-		if err := orchestrator.CheckOwnership(ch.Service, sn, live.SystemLabels["dill.service"], live); err != nil {
-			orphanErrors = append(orphanErrors, err)
-			continue
-		}
-		if live.ID == "" {
-			orphanErrors = append(orphanErrors, fmt.Errorf("inspect orphan %q: empty container ID", ch.Service))
-			continue
-		}
-		display := strings.TrimPrefix(ch.Service, sn+"_")
+	for _, resource := range orphanIntent.Resources {
+		display := strings.TrimPrefix(resource.Name, sn+"_")
 		if !opts.Quiet {
 			printProgress(display, "removing orphan")
 		}
-		if err := engine.StopService(ctx, live.ID); err != nil {
-			orphanErrors = append(orphanErrors, fmt.Errorf("stop orphan %q (%s): %w", ch.Service, live.ID, err))
-		}
-		if err := engine.RemoveService(ctx, live.ID); err != nil {
-			orphanErrors = append(orphanErrors, fmt.Errorf("remove orphan %q (%s): %w", ch.Service, live.ID, err))
+		if err := orphanIntent.Remove(ctx, engine, resource); err != nil {
+			orphanErrors = append(orphanErrors, err)
 		}
 	}
 	if err := errors.Join(orphanErrors...); err != nil {
@@ -340,26 +339,14 @@ func filterServices(all map[string]*config.Service, names []string) map[string]*
 	return out
 }
 
-func preflightOrphans(ctx context.Context, e orchestrator.Engine, p *plan.Plan, stack string) error {
+func preflightOrphans(ctx context.Context, e orchestrator.Engine, p *plan.Plan, stack string) (*orchestrator.RemovalIntent, error) {
+	targets := []orchestrator.RemovalTarget{}
 	for _, ch := range p.Changes {
-		if ch.Kind != plan.KindRemove {
-			continue
-		}
-		live, err := e.InspectConfig(ctx, ch.Service)
-		if errors.Is(err, orchestrator.ErrNotFound) {
-			continue
-		}
-		if err != nil {
-			return err
-		}
-		if live == nil || live.ID == "" {
-			return config.ErrSecretUnavailable
-		}
-		if err := orchestrator.CheckOwnership(ch.Service, stack, live.SystemLabels["dill.service"], live); err != nil {
-			return err
+		if ch.Kind == plan.KindRemove {
+			targets = append(targets, orchestrator.RemovalTarget{Name: ch.Service})
 		}
 	}
-	return nil
+	return orchestrator.CaptureRemovalIntent(ctx, e, stack, targets)
 }
 
 var secretPlanCompute = plan.ComputeChecked

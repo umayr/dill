@@ -272,25 +272,37 @@ func Down(ctx context.Context, engine orchestrator.Engine, stackName string, pro
 	if err != nil {
 		return fmt.Errorf("listing stack %q: %w", stackName, err)
 	}
+	intent := &orchestrator.RemovalIntent{Stack: stackName}
 	var errs []error
 	for _, name := range names {
-		id, err := orchestrator.OwnedID(ctx, engine, name, stackName, "")
+		captured, err := orchestrator.CaptureRemovalIntent(ctx, engine, stackName, []orchestrator.RemovalTarget{{Name: name}})
 		if err != nil {
 			errs = append(errs, err)
 			continue
 		}
-		if id == "" {
-			continue
-		}
+		intent.Resources = append(intent.Resources, captured.Resources...)
+	}
+	// Preserve legacy best-effort independent cleanup while never authorizing a
+	// failed ownership target. All identities are captured before any mutation.
+	errs = append(errs, DownIntent(ctx, engine, intent, prog))
+	return errors.Join(errs...)
+}
+
+// DownIntent applies only identities captured before the caller confirmed.
+// Network removal retains the existing conservative adapter behavior.
+func DownIntent(ctx context.Context, engine orchestrator.Engine, intent *orchestrator.RemovalIntent, prog Progress) error {
+	var errs []error
+	for _, resource := range intent.Resources {
+		name := resource.Name
 		if prog != nil {
 			prog(name, "removing")
 		}
-		if err := orchestrator.RemoveContainer(ctx, engine, name, id); err != nil {
+		if err := intent.Remove(ctx, engine, resource); err != nil {
 			errs = append(errs, err)
 		}
 	}
-	if err := engine.RemoveNetwork(ctx, stackName); err != nil {
-		errs = append(errs, &orchestrator.ResourceError{Operation: "remove network (resource may be retained)", Resource: stackName, Err: err})
+	if err := engine.RemoveNetwork(ctx, intent.Stack); err != nil {
+		errs = append(errs, &orchestrator.ResourceError{Operation: "remove network (resource may be retained)", Resource: intent.Stack, Err: err})
 	}
 	return errors.Join(errs...)
 }

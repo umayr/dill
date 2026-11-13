@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/umayr/dill/internal/dag"
+	"github.com/umayr/dill/internal/operation"
 	"github.com/umayr/dill/internal/orchestrator"
 )
 
@@ -44,31 +45,56 @@ func runDown(ctx context.Context, opts commandOptions, args []string) error {
 		if _, err := selectServices(cfg.Services, args, false); err != nil {
 			return err
 		}
-		var errs []error
+		targets := make([]orchestrator.RemovalTarget, 0, len(args))
 		for _, svc := range args {
-			containerName := serviceContainerName(sn, svc, cfg.Services[svc])
-			if opts.DryRun {
-				fmt.Fprintf(opts.output(), "would stop and remove %s\n", svc)
-				continue
-			}
-			if !opts.Quiet {
-				printProgress(svc, "stopping")
-			}
-			id, err := orchestrator.OwnedID(ctx, engine, containerName, sn, svc)
-			if err != nil {
-				errs = append(errs, err)
-				continue
-			}
-			if id == "" {
-				continue
-			}
-			if err := orchestrator.RemoveContainer(ctx, engine, containerName, id); err != nil {
-				errs = append(errs, err)
-			}
+			targets = append(targets, orchestrator.RemovalTarget{Name: serviceContainerName(sn, svc, cfg.Services[svc]), Service: svc})
 		}
-		return errors.Join(errs...)
+		intent, err := orchestrator.CaptureRemovalIntent(ctx, engine, sn, targets)
+		if err != nil {
+			return err
+		}
+		if err := opts.replaceRemovalIntent(intent, "remove", nil); err != nil {
+			return err
+		}
+		if !opts.DryRun {
+			var errs []error
+			for _, resource := range intent.Resources {
+				if !opts.Quiet {
+					printProgress(resource.Service, "stopping")
+				}
+				if err := intent.Remove(ctx, engine, resource); err != nil {
+					errs = append(errs, err)
+				}
+			}
+			return errors.Join(errs...)
+		}
+		for _, svc := range args {
+			fmt.Fprintf(opts.output(), "would stop and remove %s\n", svc)
+		}
+		return nil
 	}
 
+	if opts.operation != nil {
+		names, err := engine.ListStack(ctx, sn)
+		if err != nil {
+			return err
+		}
+		targets := make([]orchestrator.RemovalTarget, 0, len(names))
+		for _, name := range names {
+			targets = append(targets, orchestrator.RemovalTarget{Name: name})
+		}
+		intent, err := orchestrator.CaptureRemovalIntent(ctx, engine, sn, targets)
+		if err != nil {
+			return err
+		}
+		if err := opts.replaceRemovalIntent(intent, "remove", []operation.Intent{{Kind: "network", Identity: sn, Action: "retain"}}); err != nil {
+			return err
+		}
+		if opts.DryRun {
+			return nil
+		}
+		return dag.DownIntent(ctx, engine, intent, opts.downProgress(sn))
+	}
 	if opts.DryRun {
 		names, err := engine.ListStack(ctx, sn)
 		if err != nil {
@@ -108,11 +134,66 @@ func runTeardown(ctx context.Context, opts commandOptions, args []string) error 
 	vols, listErr := engine.ListStackVolumes(ctx, sn)
 	if listErr != nil {
 		listErr = fmt.Errorf("list volumes for stack %q: %w", sn, listErr)
+		if opts.operation != nil {
+			return listErr
+		}
 	}
 
+	names, err := engine.ListStack(ctx, sn)
+	if err != nil {
+		return fmt.Errorf("listing stack: %w", err)
+	}
+	targets := make([]orchestrator.RemovalTarget, 0, len(names))
+	for _, name := range names {
+		targets = append(targets, orchestrator.RemovalTarget{Name: name})
+	}
+	intent, err := orchestrator.CaptureRemovalIntent(ctx, engine, sn, targets)
+	if err != nil {
+		return err
+	}
+	imageIDs := map[string]string{}
+	var imageErrors []error
+	if !opts.DryRun || opts.operation != nil {
+		for _, svc := range cfg.Services {
+			if svc.Image == "" {
+				continue
+			}
+			if _, seen := imageIDs[svc.Image]; seen {
+				continue
+			}
+			id, err := engine.LocalImageID(ctx, svc.Image)
+			if err != nil {
+				id = ""
+			}
+			imageIDs[svc.Image] = id
+			if err != nil {
+				imageErrors = append(imageErrors, &orchestrator.ResourceError{Operation: "inspect image", Resource: svc.Image, Err: err})
+			}
+		}
+	}
+	if opts.operation != nil && len(imageErrors) > 0 {
+		return errors.Join(imageErrors...)
+	}
+	extraIntents := []operation.Intent{{Kind: "network", Identity: sn, Action: "retain"}}
+	for _, id := range imageIDs {
+		if id != "" {
+			extraIntents = append(extraIntents, operation.Intent{Kind: "image", Identity: id, Action: "remove"})
+		}
+	}
+	for _, volume := range vols {
+		extraIntents = append(extraIntents, operation.Intent{Kind: "volume", Identity: volume, Action: "retain"})
+	}
+	if err := opts.replaceRemovalIntent(intent, "remove", extraIntents); err != nil {
+		return err
+	}
 	networkAction := "retain the network"
 	if !opts.DryRun {
-		msg := fmt.Sprintf("This will remove containers and images and %s for stack %s", networkAction, sn)
+		msg := fmt.Sprintf("This will remove containers and images and %s for stack %s\nContainers: %s", networkAction, sn, removalSummary(intent))
+		for image, id := range imageIDs {
+			if id != "" {
+				msg += fmt.Sprintf("\nImage: %s (id %s)", image, id)
+			}
+		}
 		if len(vols) > 0 {
 			msg += fmt.Sprintf("\n%d named volume(s) will be retained: %s", len(vols), strings.Join(vols, ", "))
 		}
@@ -136,7 +217,8 @@ func runTeardown(ctx context.Context, opts commandOptions, args []string) error 
 		return listErr
 	}
 
-	errs := []error{listErr, dag.Down(ctx, engine, sn, opts.downProgress(sn))}
+	errs := []error{listErr, dag.DownIntent(ctx, engine, intent, opts.downProgress(sn))}
+	errs = append(errs, imageErrors...)
 
 	for _, name := range vols {
 		if !opts.Quiet {
@@ -156,12 +238,17 @@ func runTeardown(ctx context.Context, opts commandOptions, args []string) error 
 		if !opts.Quiet {
 			printProgress(svc.Image, "removing image")
 		}
-		id, err := engine.LocalImageID(ctx, svc.Image)
+		id := imageIDs[svc.Image]
+		if id == "" {
+			continue
+		}
+		currentID, err := engine.LocalImageID(ctx, svc.Image)
 		if err != nil {
 			errs = append(errs, &orchestrator.ResourceError{Operation: "inspect image", Resource: svc.Image, Err: err})
 			continue
 		}
-		if id == "" {
+		if currentID != id {
+			errs = append(errs, &orchestrator.ResourceError{Operation: "image changed since removal intent; retained", Resource: svc.Image, ID: id, Err: orchestrator.ErrOwnershipConflict})
 			continue
 		}
 		if err := engine.RemoveImage(ctx, id, *force); err != nil {

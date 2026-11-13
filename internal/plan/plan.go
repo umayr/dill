@@ -188,9 +188,12 @@ func diffConfigs(name string, svc *config.Service, live *orchestrator.LiveConfig
 func diffConfigsChecked(name string, svc *config.Service, live *orchestrator.LiveConfig, localImageID, stackName, target string, secrets []config.ResolvedSecret) ([]FieldDiff, error) {
 	var diffs []FieldDiff
 
-	if wantHash, err := config.SecretServiceConfigHash(stackName, name, svc, target, secrets); err != nil {
+	wantHash, err := config.SecretServiceConfigHash(stackName, name, svc, target, secrets)
+	if err != nil {
 		return nil, fmt.Errorf("hashing desired config: %w", err)
-	} else if gotHash := live.SystemLabels["dill.config-hash"]; (gotHash != "" || len(svc.Secrets) > 0) && gotHash != wantHash {
+	}
+	gotHash := live.SystemLabels["dill.config-hash"]
+	if (gotHash != "" || len(svc.Secrets) > 0) && gotHash != wantHash {
 		if len(svc.Secrets) > 0 {
 			diffs = append(diffs, FieldDiff{Field: "secret_references", Before: "previous", After: "changed"})
 			for _, r := range secrets {
@@ -201,8 +204,15 @@ func diffConfigsChecked(name string, svc *config.Service, live *orchestrator.Liv
 		}
 	}
 
-	// image
-	if svc.Image != live.Image {
+	// Guarded creates use a metadata-checked immutable ID, but the desired
+	// hash deliberately retains the original image reference. Accept that
+	// representation only with matching desired provenance, an actual pinned
+	// live content ID, and known desired content. Reference/config changes
+	// must not be hidden merely because two tags resolve to the same image.
+	pinnedReference := gotHash != "" && gotHash == wantHash &&
+		immutableImageID(live.Image) && immutableImageID(live.ImageID) && immutableImageID(localImageID) &&
+		normalizeImageID(live.Image) == normalizeImageID(live.ImageID)
+	if svc.Image != live.Image && !pinnedReference {
 		diffs = append(diffs, FieldDiff{Field: "image", Before: live.Image, After: svc.Image})
 	} else if want, got := normalizeImageID(localImageID), normalizeImageID(live.ImageID); want != "" && got != "" && want != got {
 		// Same tag, different local image: the registry tag moved or the image
@@ -428,6 +438,21 @@ func normalizeNetworkMode(m string) string {
 // normalizeImageID strips the algorithm prefix so Docker and Podman IDs compare.
 func normalizeImageID(id string) string {
 	return strings.TrimPrefix(id, "sha256:")
+}
+
+// immutableImageID distinguishes a full engine content ID from a tag, short
+// prefix or missing evidence. Both adapters use SHA-256 content identities.
+func immutableImageID(id string) bool {
+	id = normalizeImageID(id)
+	if len(id) != 64 {
+		return false
+	}
+	for _, c := range id {
+		if (c < '0' || c > '9') && (c < 'a' || c > 'f') {
+			return false
+		}
+	}
+	return true
 }
 
 // shortImageID returns the first 12 hex characters of an image ID for display.

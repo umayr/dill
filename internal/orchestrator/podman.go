@@ -36,9 +36,15 @@ func podmanNotFound(err error) bool {
 }
 
 type PodmanEngine struct {
-	conn   context.Context
-	socket string
+	conn       context.Context
+	socket     string
+	disposable bool
 }
+
+func (p *PodmanEngine) EngineName() string { return "podman" }
+
+// EnforceDisposableVolumes is configured before concurrent deployment begins.
+func (p *PodmanEngine) EnforceDisposableVolumes() error { p.disposable = true; return nil }
 
 func NewPodmanEngine(ctx context.Context, socket string) (*PodmanEngine, error) {
 	conn, err := bindings.NewConnection(ctx, socket)
@@ -69,6 +75,9 @@ func (p *PodmanEngine) operationContext(ctx context.Context) context.Context {
 }
 
 func (p *PodmanEngine) PullImage(ctx context.Context, img string, w io.Writer) error {
+	if p.disposable {
+		return ErrDisposableUnsupported
+	}
 	logger.Debug("pulling image", "image", img)
 	_, err := images.Pull(p.operationContext(ctx), img, nil)
 	// The SDK can end a cancelled pull stream without returning an error.
@@ -104,6 +113,20 @@ func (p *PodmanEngine) LocalImageID(ctx context.Context, img string) (string, er
 	return data.ID, nil
 }
 
+// DisposableImage rejects missing metadata instead of assuming no implicit volumes.
+func (p *PodmanEngine) DisposableImage(ctx context.Context, image string) (string, []string, error) {
+	data, err := images.GetImage(p.operationContext(ctx), image, nil)
+	if err != nil || data == nil || data.ImageData == nil || data.ID == "" || data.Config == nil {
+		return "", nil, ErrDisposableUnavailable
+	}
+	volumes := make([]string, 0, len(data.Config.Volumes))
+	for target := range data.Config.Volumes {
+		volumes = append(volumes, target)
+	}
+	sort.Strings(volumes)
+	return data.ID, volumes, nil
+}
+
 func (p *PodmanEngine) StartService(ctx context.Context, name string, svc *config.Service, stackName string) (string, error) {
 	if svc == nil || len(svc.Secrets) > 0 {
 		return "", config.ErrSecretUnavailable
@@ -125,6 +148,20 @@ func (p *PodmanEngine) StartServiceChecked(ctx context.Context, name string, svc
 }
 
 func (p *PodmanEngine) startService(ctx context.Context, name string, svc *config.Service, stackName string, secrets []config.ResolvedSecret, target string) (string, error) {
+	image := svc.Image
+	if p.disposable {
+		if err := ValidateDisposableConfig(&config.DillConfig{Services: map[string]*config.Service{name: svc}}); err != nil {
+			return "", err
+		}
+		id, volumes, err := p.DisposableImage(ctx, image)
+		if err != nil {
+			return "", err
+		}
+		if len(volumes) > 0 {
+			return "", ErrDisposableUnsupported
+		}
+		image = id // pin metadata-checked immutable content, never a moving tag
+	}
 	for key := range svc.Labels {
 		if strings.HasPrefix(key, config.SystemLabelPrefix) {
 			return "", config.ErrSecretUnavailable
@@ -149,7 +186,7 @@ func (p *PodmanEngine) startService(ctx context.Context, name string, svc *confi
 		return "", fmt.Errorf("service %s: %w", name, err)
 	}
 
-	s := specgen.NewSpecGenerator(svc.Image, false)
+	s := specgen.NewSpecGenerator(image, false)
 
 	containerName := svc.ContainerName
 	if containerName == "" {
@@ -708,6 +745,30 @@ func (p *PodmanEngine) RemoveImage(ctx context.Context, image string, force bool
 // EnsureVolume creates a stack-owned volume with dill labels if it does not
 // exist. Existing volumes (including Compose-created ones) are left untouched.
 func (p *PodmanEngine) EnsureVolume(ctx context.Context, name, stackName string) error {
+	if p.disposable {
+		if stackName == "" || name == "" {
+			return ErrDisposableOwnership
+		}
+		live, err := podmanvolumes.Inspect(p.operationContext(ctx), name, nil)
+		if err == nil {
+			if live == nil || live.Name != name {
+				return ErrDisposableUnavailable
+			}
+			return checkDisposableSettings(stackName, "local", disposableSettings{live.Driver, live.Options, live.Labels})
+		}
+		if !podmanNotFound(err) {
+			return ErrDisposableUnavailable
+		}
+		created, err := podmanvolumes.Create(p.operationContext(ctx), entitiesTypes.VolumeCreateOptions{
+			Name:           name,
+			Labels:         map[string]string{"dill.managed": "true", "dill.stack": stackName},
+			IgnoreIfExists: false,
+		}, nil)
+		if err != nil || created == nil || created.Name != name {
+			return ErrDisposableUnavailable
+		}
+		return checkDisposableSettings(stackName, "local", disposableSettings{created.Driver, created.Options, created.Labels})
+	}
 	exists, err := podmanvolumes.Exists(p.operationContext(ctx), name, nil)
 	if err != nil {
 		return err
