@@ -262,6 +262,50 @@ func TestOperationFailuresCancellationAndDeclinedPrompt(t *testing.T) {
 	}
 }
 
+func TestOperationDestructiveIntentDryAndDeclined(t *testing.T) {
+	for _, adapter := range []string{"docker", "podman"} {
+		for _, name := range []string{"down", "rm", "teardown"} {
+			for _, dry := range []bool{false, true} {
+				if !dry && name == "down" {
+					continue
+				} // Legacy down has no prompt; do not add one.
+				f := &failingLifecycleEngine{fakeEngine: newFakeEngine(), failure: errors.New("MUTATION_SENTINEL")}
+				f.statuses["app_web"] = &orchestrator.ContainerStatus{Name: "app_web", State: "exited"}
+				withTestRuntime(t, f, testConfig(), func() {
+					extra := []string{}
+					if dry {
+						extra = append(extra, "--dry-run")
+					}
+					result, code, stderr := captureOperation(t, "n\n", operationArgs(name, adapter, extra...))
+					want := "cancelled"
+					if dry {
+						want = "succeeded"
+					}
+					if code != 0 || result.Outcome != want || result.Effects != "none" || len(result.Resources) == 0 || len(f.calls) > 0 || len(f.removed) > 0 {
+						t.Fatalf("%s dry=%v %+v calls=%v", name, dry, result, f.calls)
+					}
+					for _, resource := range result.Resources {
+						if !strings.HasPrefix(resource.Action, "intent.") || resource.Effect != "none" {
+							t.Fatalf("intent claimed performed effect: %+v", resource)
+						}
+					}
+					if !dry && (!strings.Contains(stderr, "resource intents") || !strings.Contains(stderr, "sha256:") || !strings.Contains(stderr, "inventoryComplete=true") || !strings.Contains(stderr, "not saved-plan authorization")) {
+						t.Fatalf("prompt missing bounded intent: %q", stderr)
+					}
+				})
+			}
+		}
+	}
+	state := &operationState{recorder: &operation.Recorder{}}
+	for i := 0; i < 4097; i++ {
+		state.recorder.Intent("container", "id", "remove")
+	}
+	confirmed, err := confirmDestructive("untrusted", commandOptions{operation: state, Yes: true})
+	if err == nil || confirmed {
+		t.Fatal("incomplete intent accepted even with --yes")
+	}
+}
+
 func TestOperationRejectsSecrets(t *testing.T) {
 	f := newFakeEngine()
 	withTestRuntime(t, f, testConfig(), func() {

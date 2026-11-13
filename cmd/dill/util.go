@@ -117,7 +117,11 @@ func addTimeoutFlag(fs *flag.FlagSet, opts *commandOptions) {
 
 func confirmDestructive(action string, opts commandOptions) (bool, error) {
 	if opts.operation != nil {
-		action = "Confirm destructive operation"
+		count, digest, complete := opts.operation.recorder.IntentSummary()
+		if !complete {
+			return false, fmt.Errorf("operation intent inventory incomplete")
+		}
+		action = fmt.Sprintf("Confirm destructive operation (%d resource intents; %s; inventoryComplete=true; not saved-plan authorization)", count, digest)
 	}
 	if opts.Yes {
 		return true, nil
