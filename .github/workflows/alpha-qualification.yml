@@ -92,8 +92,13 @@ jobs:
         run: |
           python3 scripts/install-pkl.py "$RUNNER_TEMP/pkl"
           echo "$RUNNER_TEMP" >> "$GITHUB_PATH"
+      - name: Provision protected synthetic secret fixtures
+        # Match common CI: Linux secretfile tests must remain outside the
+        # untrusted checkout/runner temporary ancestry. Never relax that policy.
+        run: sudo install -d -m 0700 -o "$(id -u)" -g "$(id -g)" /srv/dill-secretfile-tests
       - name: Build and baseline checks on exact candidate
         env:
+          DILL_TEST_SECRET_DIR: /srv/dill-secretfile-tests
           PKL: ${{ runner.temp }}/pkl
           DILL_PKL_PATH: ${{ runner.temp }}/pkl
           DB_USER: test
