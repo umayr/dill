@@ -361,7 +361,7 @@ func TestAlphaQualifiedHandlers(t *testing.T) {
 	}
 	before := alphaResourceSnapshot(t, "docker")
 	since := time.Now().UTC().Format(time.RFC3339Nano)
-	result, code := f.run(t, "rm", "cli", "n\n", "--attended")
+	result, code := f.run(t, "rm", "cli", "n\n")
 	until := time.Now().UTC().Format(time.RFC3339Nano)
 	alphaQualifiedAxes(t, result, code, 0, "cancelled", "none")
 	if after := alphaResourceSnapshot(t, "docker"); after != before || runEngine(t, "docker", "events", "--since", since, "--until", until, "--format", "{{json .}}") != "" {
