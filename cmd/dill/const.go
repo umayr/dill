@@ -25,6 +25,7 @@ const (
 	cmdSecretCapabilities    = "secret-capabilities"
 	cmdSecrets               = "secrets"
 	cmdProtocol              = "protocol"
+	cmdCoordination          = "coordination"
 	cmdOperation             = "operation"
 	cmdOperationCapabilities = "operation-capabilities"
 	cmdDiff                  = "diff"

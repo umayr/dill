@@ -130,6 +130,15 @@ deletions. Errors in those checks still fail the handler.
 
 `endpointDigest` is SHA-256 of the normalized explicit Unix URI and is only a
 **selector digest**, not a canonical lock key or authenticated daemon identity.
+Qualified mode additionally emits OPTIONAL `target.qualifiedIdentityDigest`
+(`sha256:<64 lowercase hex>`) only after same-connection daemon qualification.
+It is absent on unqualified and early-rejected requests. Discovery negotiates
+this addition through feature `optInQualifiedLocalCoordination` and the optional
+`qualifiedCoordinationOperations`, `qualifiedCoordinationEngines`, and
+`qualifiedCoordinationLayouts` arrays. The identity digest is directly accepted
+by offline `dill coordination inspect --target-id`; it does not change the
+meaning of `endpointDigest`. See the [qualified coordination boundary](local-mutation-coordination-design.md).
+
 Resource identity digests use SHA-256 of
 `"dill.resource/1\u0000" + kind + "\u0000" + identity`. Container actions reuse
 immutable IDs supplied by existing handlers when available. Action is a
@@ -151,9 +160,12 @@ Do not use this path to bypass the existing Alpha
 secret authorization, preflight, or lifecycle restrictions; legacy secret-aware
 handlers remain independently supported and unchanged.
 
-This adapter alone does not implement qualified daemon identity, cross-process
-coordination, a durable mutation journal, bounded disposable-storage policy,
-atomic whole-operation preflight, saved-plan authorization, or recovery. Every advertised lifecycle operation first performs a full declared-container
+Unqualified use of this adapter alone does not implement qualified daemon
+identity, cross-process coordination or a durable mutation journal/recovery.
+Explicit qualified mode adds a bounded Docker-only implementation; it is NOT
+universal protection for ordinary CLI/Brine/external-client workflows. The
+separate disposable profile remains explicit; no atomic whole-operation
+transaction or saved-plan authorization is claimed. Every advertised lifecycle operation first performs a full declared-container
 and stack-listed container ownership census using the same invocation-owned
 engine as its handler. A known foreign later target therefore rejects before
 any earlier target can be mutated, including cleanup/image teardown. Operation
@@ -162,7 +174,7 @@ handler ownership revalidation and no-pull checks remain in place. External
 changes after census may still produce partial or unknown effects; the census
 is not an atomic engine transaction or an all-resources safety claim. This is
 not a production deployment interface. #78/#79 integration and #80 real
-engine qualification are separate gates. Container/image operations remain
+engine qualification remain separate gates; #78 is not complete. Container/image operations remain
 non-transactional. No real-engine parity is inferred from mocked unit tests.
 
 ## Consumer fixtures
@@ -172,8 +184,11 @@ versions the shared success, evaluator failure, unsupported-contract, and
 unsupported-operation fixtures. The fixture `runtime` names describe synthetic
 test environments, not an execution payload. Consumers must validate the unique
 operation ID shape before normalizing it for golden comparisons. Dill tests
-compare complete result envelopes and exit codes. These files are available for
-Brine consumers; no cross-repository consumer qualification is claimed.
+compare complete result envelopes and exit codes. The separate manifest
+`qualifiedFixtures` list adds `qualified-success.json`, exercised against the
+real Docker SDK over a synthetic qualified Unix socket, not a live daemon.
+These files are available for Brine consumers; no cross-repository consumer
+qualification is claimed.
 
 ## Integration seam
 
@@ -201,10 +216,24 @@ with `dill.intent/1`, independent of capture order. More than 4096 intent entrie
 explicitly reports incomplete rather than presenting a bounded prefix as full
 approval. Final wire resources still carry their existing truncation flag.
 
-Coordination integration must qualify and retain the same connected engine for
-this entire handler scope, begin durable intent before any delegate mutation,
-use the same operation ID, and durably finish **before** emitting the final
-result. A durable finish failure must not yield a succeeded receipt. The selector
+Production opt-in qualification is advertised/accepted only on Linux; unsupported
+OS reject before config, socket or state access. Legacy operations/discovery
+remain supported. Linux alone does not prove native host/namespace placement:
+trusted operator provisioning is required, and macOS Desktop/Colima/VM/proxy
+layouts are excluded. Test-only Darwin simulations are not deployment evidence.
+
+Explicit opt-in coordination qualifies and retains the same connected engine
+for this entire handler scope, begins durable intent before any delegate
+mutation, uses the same operation ID (including failed-start records), and
+finishes durably **before** emitting the final result. A durable finish failure must not yield a succeeded receipt. SDK/transport
+close is classified while locks remain held BEFORE durable finish. Post-commit
+local lock/directory cleanup failure preserves the recorded engine outcome and
+effects, emits fixed `COORDINATION_RELEASE_FAILED`, and returns exit 1; it does
+not rewrite stdout-only unknown axes after recording success. Consumers MUST
+honor process exit status and fixed errors, not treat `outcome = "succeeded"`
+alone as overall invocation success. The shared
+`qualified-cleanup-failure.json` fixture captures exit 1 with known
+`succeeded/complete` engine axes and `COORDINATION_RELEASE_FAILED`. The selector
 digest cannot stand in for daemon attestation. Guardrails should forward explicit
 supported flags to existing handlers rather than introduce a second lifecycle
 implementation.

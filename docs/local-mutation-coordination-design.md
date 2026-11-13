@@ -1,88 +1,237 @@
-# Local mutation coordination: draft foundations
+# Qualified local mutation coordination (bounded Alpha)
 
-This is a design note, not an implemented safety guarantee. `internal/stacklock`
-is not wired into any command or protocol. Dill currently does **not** serialize
-mutations or persist crash outcomes. Issue #78 remains blocked on #77.
+Issue #78 is **not complete**. This slice protects only the explicit opt-in
+operation mode described here, subject to independent review and disposable-host
+qualification. Ordinary Dill commands, unqualified `dill operation`, the existing
+metadata-only protocol, external engine clients and non-native deployments are
+NOT protected. Do not mix those mutation paths into a qualified CLI/Brine layout
+or claim global serialization. There is no distributed locking guarantee.
 
-## Proposed identity and qualification
+## Supported invocation and trust boundary
 
-The logical scope is a versioned, unambiguously encoded pair of the **actual
-local engine target** and the exact resolved stack label used by the engine,
-not the config filename or raw command-line arguments. The CLI already resolves
-stack overrides before config names and path-derived names. Thus two config
-paths yielding the same label must contend, while distinct labels on one target
-can proceed independently. The identity must be established after the actual
-target and label are resolved, and before any engine mutation, including pulls
-or orphan removal. Do not lowercase or otherwise transform engine labels.
+The initial layout is native CLI and native Brine co-located on one disposable
+**Linux Docker host**, under one dedicated operator account, sharing one pre-existing
+absolute mode-0700 operator-owned state directory. The filesystem's cross-process
+flock, file/directory sync and atomic local link behavior must be independently
+qualified. `--coordination-layout native-local-docker-v1` explicitly attests those
+facts; a pathname, owner/mode check or layout string alone does not prove them.
+Unqualified namespaces, containers, separate state mounts, remote transports,
+Podman and ambiguous filesystem semantics are unsupported. macOS Docker Desktop,
+Colima, VM/proxy sockets and containerized Brine are not native Docker-host
+layouts. Production qualified requests on non-Linux OS reject BEFORE config,
+socket or state access; qualification is not advertised there. Legacy operations
+and metadata discovery remain available. There is NO production environment or
+flag bypass. Linux is necessary, NOT proof of co-location or a shared namespace:
+trusted explicit operator provisioning is still required. Darwin library and
+fake-SDK tests explicitly simulate a supported host; they are not deployment
+qualification. No production use.
 
-For the first qualified layout, both callers must run on the same host and
-operator account with one configured, trusted local state directory and an
-explicit local Docker socket. Candidate normalization includes resolving dot
-components and symlinks of the existing socket path, with socket type checks;
-using path spelling alone is insufficient. This does not prove two different
-bind mounts, hard links, proxies, or separate sockets lead to different daemons.
-A qualification procedure must resolve those cases or reject them; canonical
-paths alone are not a proof of target identity. The endpoint used for engine
-operations must remain bound to the qualified identity throughout the operation;
-replacement/retargeting races need an explicit solution. Unsupported engines,
-remote transports, ambiguous aliases and unqualified namespace/container
-layouts must fail before mutation, not silently fall back to an unlocked path.
-The lock directory must be on a filesystem whose cross-process flock semantics
-and crash durability have been qualified, with permissions and ownership checked.
-All entry points, including independently launched CLI and Brine operations,
-must cooperate; a lock cannot protect against external engine clients.
+Use only prepared local images and disposable/synthetic data. An operator must
+independently establish the expected Docker daemon ID during provisioning; this
+assertion is not authorization. Do not derive the expected ID from the same
+untrusted endpoint immediately before accepting it as evidence.
 
-A per-stack lock alone cannot serialize operations on shared global engine
-resources (for example explicit container names or shared resources across
-stacks). Before integration, audit each mutation for cross-stack conflicts and
-establish additional coordination or reject unsupported cases. Define lock order
-before introducing multiple locks.
+Example **shape**, not a command to run against an existing workload:
 
-## Lock primitive
+```sh
+dill operation up --contract dill.operation/1 \
+  --engine docker --engine-socket /absolute/disposable/docker.sock -p alpha-test \
+  --coordination-state-dir /absolute/private/alpha-state \
+  --coordination-layout native-local-docker-v1 \
+  --coordination-daemon-id EXPECTED_DISPOSABLE_DAEMON_ID \
+  --coordination-source cli --pull never --timeout 30s
+```
 
-The new primitive accepts an opaque 32-byte key and a trusted, existing absolute
-directory; it deliberately specifies neither identity encoding nor directory
-selection. It requires a context deadline, polls a nonblocking OS advisory lock,
-and never unlinks the file. Keeping the inode prevents a waiter from locking an
-obsolete file after a release. Kernel locks normally release when the last
-reference to the locked open file description closes; a forked child retaining a descriptor can prolong a lock
-after the original process dies (the descriptor is close-on-exec). This does
-not update an operation record. Deadlines bound contention polling, not open,
-stat, flock, close, or other filesystem calls, which can block; a qualified
-local filesystem remains essential. The primitive rejects symlinks only at the
-final path component and does not prevent hard links or replacement. Its
-contract assumes no untrusted directory writers or lock file replacement; it does not establish those assumptions. Do not expose it as
-an operational guarantee without qualification and integration.
+Brine uses the exact same invocation/state/target/stack and selects
+`--coordination-source brine`. The source is a closed caller assertion, not an
+identity/authentication system. All coordination selector flags are required;
+partial or explicitly empty flags fail rather than falling back to an unlocked
+operation. State initialization/journal writes are local metadata effects,
+separate from the receipt's engine `effects` axis.
 
-## Proposed crash-outcome persistence
+Qualified mutation operations: `up`, `down`, `stop`, `start`, `restart`, `rm`.
+The normal destructive prompt remains in place for `rm`; `--yes` is explicit.
+`teardown` is rejected before engine access because shared image deletion is not
+qualified. There is no qualified `pull`, `exec`, `cp` or generic RPC operation.
+Read-only validate/plan/diff can use their existing operation contracts, but do
+not accept coordination flags or acquire a mutation session in this slice.
 
-While holding the lock and before the first possible mutation, durably create a
-versioned operation record with a unique operation ID and a redacted, bounded
-source identity, canonical target identity, resolved stack, and known affected
-resource identities. An in-progress record found after acquiring the lock is
-unknown/partial, never evidence that no effects happened and never a replay
-instruction. Record a terminal outcome only when supported by the operation's
-actual result; cancellation and failures may still have partial effects.
-Unknown state must be surfaced for operator inspection before subsequent
-mutation, with explicit resolution semantics rather than automatic deletion.
+Additional conservative restrictions:
 
-Persistence needs a restrictive trusted directory, schema/version validation,
-atomic replacement via a same-directory temporary file, file sync and directory
-sync at defined commit points, and recovery tests for each interruption window.
-Malformed, truncated, unsupported, or ambiguous records must fail closed. Do not
-store configuration, environment, credentials, arbitrary diagnostics, or raw
-engine responses. Define limits and redaction for resource/source identifiers;
-a hash is not automatically non-sensitive. Handling a failed durable write
-before mutation differs from a failed terminal write after effects: the latter
-must remain unknown, not success. Record retention, explicit acknowledgement,
-and how to associate later discovered resources remain open.
+- `up` requires effective `pullPolicy = "never"` for every service, or an explicit
+  `--pull never`. The guard refuses every attempted pull even if a future handler
+  accidentally reaches one. Local image metadata must be available before writes.
+- The complete locked census validates ACTUAL existing workloads, not just safe
+  desired config or labels: actual host config must be known, with no added
+  capabilities, privileged mode, device mappings/requests/grants, explicit tmpfs,
+  user-namespace modes/ID maps, or special PID/IPC/UTS/cgroup namespace modes.
+  Ordinary empty/private namespace defaults are allowed. Actual ordinary mount
+  evidence also rejects tmpfs; engine-internal `/dev/shm` is not invented as a
+  user mount. Both adapters expose native inspection evidence; enforcement stays
+  opt-in qualified only, with no legacy behavior or desired IR/schema change.
+- Image-declared `VOLUME` destinations are all unsupported initially. Otherwise
+  Docker can create anonymous storage not present in the declared inventory.
+  The shared disposable image preflight/strict adapter pins the inspected local
+  immutable image ID at create time rather than trusting a mutable tag.
+  This ALSO checks every existing container's ACTUAL immutable `live.ImageID`
+  through that same canonical read-only inspector before ANY handler write;
+  desired new image metadata does not attest an older workload. Missing, malformed
+  or ID-mismatched actual image evidence fails closed, and any VOLUME rejects even
+  if an owned declared mount covers its destination. This is bounded pilot
+  validation, not a new provenance/hash-equality system: safe older images remain
+  valid for direct lifecycle operations.
+- The canonical #79 disposable static boundary applies automatically, without
+  requiring a separate profile flag: bind/external/anonymous/explicit-engine-name
+  volumes, tmpfs, special network modes, devices and added capabilities reject
+  before socket access. Declared stack-scoped named volumes and explicit
+  container names are inventoried and target-wide locked. Whole-resource
+  read-only network/volume/image ownership preflight runs under those locks
+  BEFORE any handler write; shared strict guardrails revalidate before create.
+  The full inventory budget (at most 256 resource identities) is checked before
+  opening a target or creating state metadata.
+  Explicit `--alpha-disposable` may compose with this automatic qualified guard.
+  This does not replace destructive intent enforcement or actual host qualification.
+- The whole declared inventory is locked even for a subset operation. Live
+  ownership/mount/network census runs while holding those same locks, before
+  every handler. Actual attached-network metadata must be known and contain
+  exactly the declared stack network; Docker default `bridge`/`default` host
+  mode aliases are not themselves evidence of which networks are attached. Undeclared containers/orphans and uninventoried live storage
+  fail closed, never get pruned. Existing ownership and immutable-ID checks in
+  handlers still apply; a stale preflight is not a deletion authorization.
 
-## Integration gates
+## Target and lock identity
 
-Agree with #77 on operation boundaries, target and stack identifiers, resource
-identities, terminal and unknown/partial semantics, and the protocol representation.
-Then cover all mutation entry points end-to-end with the same lock and journal,
-including CLI/Brine concurrent processes, timeouts and cancellation, alias and
-unsupported-layout tests, injected filesystem failures, killed processes, stale
-and corrupt records, and engine-backed tests on a disposable target. No partial
-wiring: one unprotected mutation path invalidates the coordination guarantee.
+`internal/coordination.Qualify` resolves/checks an existing Unix socket, opens ONE
+connection and reads Docker `/info` on it. The returned client is injected into
+the Docker SDK and retained for the entire operation, including ping/API version
+negotiation, preflight, handler execution and cleanup. It imports no ambient
+Docker context, proxy, host, TLS or API-version selection. Redirects and EVERY
+second dial are forbidden. Socket replacement cannot retarget that connection;
+connection loss fails closed rather than transparently reopening by path.
+Streaming/hijack use, idle daemon disconnects and concurrency can reduce
+availability. There is deliberately no automatic reconnect/replay.
+
+The lock domain uses the actual qualified daemon ID fingerprint and exact
+resolved engine stack label, not config filename, requested socket spelling or
+lowercased names. Symlink/dot-path aliases and different qualified sockets for
+the same daemon converge. A daemon clone/proxy that falsely reuses the qualified
+identity is outside the independently provisioned uniqueness assumption.
+
+The operation result's existing `target.endpointDigest` remains only a requested
+selector digest, NOT canonical daemon identity. After successful same-connection
+qualification only, optional `target.qualifiedIdentityDigest` is emitted as
+`sha256:` plus the journal's actual-daemon target fingerprint. It is absent on
+unqualified/early-rejected paths; consumers negotiate this additive field using
+`optInQualifiedLocalCoordination` discovery. Discovery additionally lists the
+qualified operations, engines (`docker`) and layout (`native-local-docker-v1`). The same random `op_<32 hex>` operation ID appears in
+journal and result once a session exists. Requests rejected before acquiring a
+session retain their independent receipt ID and no mutation journal entry.
+
+Stack and resource keys are domain-separated keyed fingerprints derived using a
+private persisted random HMAC key. Each container/network/volume reference has a
+target-wide lock, allowing distinct stacks to proceed independently except when
+they explicitly share resources. The library also supports image-pull references,
+but qualified CLI mode deliberately prohibits pulling until image aliases/global
+mutation semantics receive separate qualification.
+
+All locks share one sorted order. Lock files remain persistent (never unlinked),
+are regular single-link operator-owned mode-0600 files, and use kernel advisory
+flock. Acquisition requires a deadline and honors cancellation. Filesystem
+calls themselves are not deadline-bounded: the qualified local filesystem
+assumption matters. PID ages/timeouts never authorize stealing an active lock.
+
+## Durable reservations and terminal results
+
+See `internal/coordination/README.md` for library APIs and exact invariants.
+
+The canonical bounded `dill.coordination/1` record contains:
+`version`, `operationId`, closed `source`, actual `target`, keyed `stack`,
+`resources[{kind,id,action}]`, `state`, `outcome`, `effects`. It never contains
+config/environment/credentials/paths/arbitrary diagnostics/raw engine responses.
+Fingerprints are private correlatable metadata, not public anonymization.
+
+`Begin` holds the full stack/resource lock set, checks ALL prior reservation
+heads (including those from different stacks), writes a durable in-progress
+stack head first, then every durable resource reservation. Only after all
+file+directory syncs succeed may any engine mutation occur. Interrupted installs
+can conservatively block operations even if no effects were started.
+
+Heads are never replaced with success during completion. `Finish` first saves an
+independently durable immutable `<operationId>.result`. Only after its file AND
+directory syncs succeed does a final atomic local link publish a `.commit` alias.
+No fallible write/checkpoint/sync follows that last link. Readers require the
+exact two-link result/commit inode pair and matching head metadata; other files
+continue to reject hard links. Persistent terminal sync failure leaves the
+original head unresolved even if terminal bytes happen to be visible. A failed
+`Finish` becomes an unknown receipt, not success, and blocks later mutations.
+
+The SDK and qualified transport close while stack/resource locks remain held,
+BEFORE finalizing axes and publishing a terminal result. A transport-close error
+therefore becomes the SAME durable unknown outcome shown in the receipt and
+blocks subsequent mutation. A later lock/directory cleanup error cannot invent
+stdout-only unknown effects after a known commit: it preserves recorded axes,
+adds fixed `COORDINATION_RELEASE_FAILED`, and exits 1 for local cleanup failure.
+Consumers must honor process exit/errors, not interpret a succeeded engine axis
+alone as overall invocation success.
+
+The publication link itself is intentionally not separately dir-synced. If lost
+after crash, independently durable result bytes remain but recovery treats the
+operation as unknown: conservative inspection, never invented success. This
+protocol requires qualified LOCAL link syscalls whose failure creates no link;
+filesystems with ambiguous outcomes are unsupported. There is no best-effort
+rollback of a visible terminal head pretending to establish durability.
+
+Malformed, truncated, unsupported, mismatched or unsafe-inode records fail
+closed. A missing identity key in any populated/ambiguous state directory is
+corruption, not permission to re-key: only a proven fresh directory containing
+the known bootstrap lock can initialize a key. Existing unknown records cannot
+become invisible by accidental key loss.
+
+## Offline inspection and explicit acknowledgement
+
+Recovery has no Pkl/config evaluation, engine, secret source or socket access:
+
+```sh
+dill coordination inspect --state-dir /absolute/private/alpha-state \
+  --daemon-id EXPECTED_DISPOSABLE_DAEMON_ID --stack alpha-test --timeout 5s
+
+dill coordination acknowledge --state-dir /absolute/private/alpha-state \
+  --daemon-id EXPECTED_DISPOSABLE_DAEMON_ID --stack alpha-test \
+  --operation-id op_EXACT_INSPECTED_ID --inspected --timeout 5s
+```
+
+`--daemon-id` derives the SAME fingerprint offline; alternatively supply the
+emitted `target.qualifiedIdentityDigest` directly with `--target-id` (never both).
+Both `sha256:<64 hex>` and the raw recorded hex token are accepted. The optional
+attested field does not repurpose the requested endpoint selector digest. For cross-stack resource reservations,
+replace `--stack` with `--resource-kind container --resource-name EXACT_NAME`;
+volume/network/image namespaces are likewise bounded by the library inventory.
+
+Inspect the actual disposable target/effects independently BEFORE passing
+`--inspected`. In-progress, failed, cancelled, partial and unknown outcomes never
+imply rollback or no effects. An acknowledgement takes the exact operation ID,
+locks its full RECORDED inventory in the same order and revalidates under locks.
+It publishes a separate durable acknowledgement result/commit pair, retaining
+original evidence and coherently resolving only that one operation. Active,
+changed, corrupt or wrong-ID state cannot be cleared. There is no blind replay,
+force unlock, delete-record, automatic retry or repair command.
+
+Records/results/acknowledgements remain indefinitely; automatic retention GC is
+not implemented. Orphan `.pending-*` files are not replayed. Never delete/replace
+state, key or lock files while ANY caller runs. Corrupt state requires stopping
+all callers and forensic repair, not acknowledging guesses about engine effects.
+
+## Evidence and remaining gates
+
+Synthetic tests cover actual Docker SDK use over the qualified Unix transport,
+all six supported handlers, aliases/socket replacement, redirects/proxy/reconnect
+refusal, parallel reads, CLI/Brine process contention, deadline/cancellation,
+process death, interrupted installs/writes, persistent terminal write failures,
+shared-resource crash blockers, key loss, inode/link checks and offline recovery
+routing (including stack label `protocol`). Mocks are NOT live engine evidence.
+
+Still required: independent final-head review, combined #77/#79 verification,
+opt-in disposable Docker engine and actual native Brine qualification, host/state
+filesystem evidence, and bypass-path exclusion/enforcement for the chosen
+operator workflow. Containerized Brine, Podman-qualified coordination, global
+image deletion, distributed callers and global legacy CLI safety are NOT claimed.

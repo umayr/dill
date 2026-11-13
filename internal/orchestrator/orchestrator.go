@@ -22,6 +22,16 @@ var ErrNotFound = errors.New("container not found")
 // LiveConfig holds the effective configuration of a running or stopped container,
 // extracted from the engine for comparison against desired state.
 type LiveConfig struct {
+	// Actual inspect facts, never inferred from desired config or ownership labels.
+	HostConfigKnown bool
+	HasDevices      bool // native host device mappings/requests/grants
+	HasTmpfs        bool // explicit user tmpfs mounts, not engine-internal filesystems
+	Privileged      bool
+	PIDMode         string
+	IPCMode         string
+	UTSMode         string
+	CgroupNSMode    string
+
 	UserNSMode     string
 	UIDMap, GIDMap []string
 	MountsKnown    bool   // adapter exposes ordinary mount type/source/destination/RW metadata
@@ -35,6 +45,8 @@ type LiveConfig struct {
 	UserLabels     map[string]string // excludes dill.* system labels
 	SystemLabels   map[string]string // dill.* system labels
 	NetworkMode    string
+	NetworksKnown  bool     // adapter exposed attached-network metadata (not inferred from mode)
+	Networks       []string // sorted exact engine network names; qualified callers reject unknown/extra attachments
 	User           string
 	HealthTest     []string
 	Command        []string

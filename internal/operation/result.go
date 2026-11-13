@@ -16,8 +16,9 @@ const Version = "dill.operation/1"
 var Operations = []string{"validate", "plan", "diff", "up", "down", "stop", "start", "restart", "rm", "teardown"}
 
 type Target struct {
-	Engine         string `json:"engine"`
-	EndpointDigest string `json:"endpointDigest"`
+	Engine                  string `json:"engine"`
+	EndpointDigest          string `json:"endpointDigest"`
+	QualifiedIdentityDigest string `json:"qualifiedIdentityDigest,omitempty"`
 }
 
 // Intent is a pre-mutation candidate or retention statement, never a result.
