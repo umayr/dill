@@ -14,6 +14,16 @@ import (
 
 func guardrailAdapter(t *testing.T, adapter string, transport contextTransport) Engine {
 	t.Helper()
+	return guardrailAdapterRaw(t, adapter, contextTransport(func(r *http.Request) (*http.Response, error) {
+		if strings.Contains(r.URL.Path, "/images/") {
+			return contextResponse(r, 200, `{"Id":"prepared-image","Config":{}}`), nil
+		}
+		return transport(r)
+	}))
+}
+
+func guardrailAdapterRaw(t *testing.T, adapter string, transport contextTransport) Engine {
+	t.Helper()
 	if adapter == "podman" {
 		p, conn := newContextTestEngine(t, context.Background())
 		conn.Client.Transport = transport
@@ -27,7 +37,7 @@ func guardrailAdapter(t *testing.T, adapter string, transport contextTransport) 
 	return &DockerEngine{cli: cli}
 }
 func volumeOnlyConfig() *config.DillConfig {
-	return &config.DillConfig{Services: map[string]*config.Service{"app": {Image: "synthetic", Volumes: []json.RawMessage{json.RawMessage(`"data:/data"`)}}}}
+	return &config.DillConfig{Services: map[string]*config.Service{"app": {Image: "synthetic", PullPolicy: "never", Volumes: []json.RawMessage{json.RawMessage(`"data:/data"`)}}}}
 }
 
 func TestDisposableUnsupportedMountsAndCapabilities(t *testing.T) {

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"sort"
 
 	"github.com/umayr/dill/internal/config"
@@ -25,7 +26,7 @@ func ValidateDisposableConfig(cfg *config.DillConfig) error {
 		return ErrDisposableUnsupported
 	}
 	for _, svc := range cfg.Services {
-		if svc == nil || len(svc.Secrets) > 0 || svc.NetworkMode != "" || len(svc.Devices) > 0 || len(svc.CapAdd) > 0 {
+		if svc == nil || svc.PullPolicy != "never" || len(svc.Secrets) > 0 || svc.NetworkMode != "" || len(svc.Devices) > 0 || len(svc.CapAdd) > 0 {
 			return ErrDisposableUnsupported
 		}
 		mounts, err := config.NormalizeVolumes(svc.Volumes, svc.BaseDir)
@@ -75,12 +76,40 @@ func checkDisposableSettings(stack, driver string, settings disposableSettings) 
 	return nil
 }
 
+// DisposableImageInspector reports prepared local image metadata, never pulling.
+// Missing image/config/ID must fail; empty destinations means known no VOLUME.
+type DisposableImageInspector interface {
+	DisposableImage(context.Context, string) (string, []string, error)
+}
+
+func checkDisposableImages(ctx context.Context, engine Engine, cfg *config.DillConfig) error {
+	inspector, ok := engine.(DisposableImageInspector)
+	if !ok {
+		return ErrDisposableUnavailable
+	}
+	for _, svc := range cfg.Services {
+		id, volumes, err := inspector.DisposableImage(ctx, svc.Image)
+		if err != nil || id == "" {
+			return ErrDisposableUnavailable
+		}
+		// The first pilot does not qualify images with implicit storage, even
+		// when a declared mount might cover an image VOLUME destination.
+		if len(volumes) > 0 {
+			return ErrDisposableUnsupported
+		}
+	}
+	return ctx.Err()
+}
+
 // PreflightDisposableResources reads adapter evidence only. It never creates a
 // network, volume or image. Missing or malformed evidence fails closed. A local
 // volume driver without options is a bounded check, not NAS/mount identity proof.
 func PreflightDisposableResources(ctx context.Context, engine Engine, cfg *config.DillConfig, stack string) error {
 	names, err := disposableVolumes(cfg, stack)
 	if err != nil {
+		return err
+	}
+	if err := checkDisposableImages(ctx, engine, cfg); err != nil {
 		return err
 	}
 	inspector, ok := engine.(PreviewResourceInspector)
@@ -180,6 +209,13 @@ func (e *disposableEngine) StartService(ctx context.Context, name string, svc *c
 		return "", err
 	}
 	return e.Engine.StartService(ctx, name, svc, stack)
+}
+
+func (e *disposableEngine) PullImage(context.Context, string, io.Writer) error {
+	return ErrDisposableUnsupported
+}
+func (e *disposableEngine) DisposableImage(ctx context.Context, image string) (string, []string, error) {
+	return e.Engine.(DisposableImageInspector).DisposableImage(ctx, image)
 }
 
 // Preserve read-only evidence and endpoint delegation through the wrapper.

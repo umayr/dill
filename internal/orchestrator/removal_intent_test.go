@@ -82,6 +82,9 @@ type guardrailDecorator struct{ Engine }
 func (e *guardrailDecorator) PreviewResources(ctx context.Context, stack string, names []string) ([]PreviewResource, error) {
 	return e.Engine.(PreviewResourceInspector).PreviewResources(ctx, stack, names)
 }
+func (e *guardrailDecorator) DisposableImage(ctx context.Context, image string) (string, []string, error) {
+	return e.Engine.(DisposableImageInspector).DisposableImage(ctx, image)
+}
 func (e *guardrailDecorator) EnforceDisposableVolumes() error {
 	enforcer, ok := e.Engine.(DisposableVolumeEnforcer)
 	if !ok {
@@ -95,6 +98,9 @@ func (e *guardrailDecorator) EngineName() string {
 
 type readOnlyGuardrailDecorator struct{ Engine }
 
+func (e *readOnlyGuardrailDecorator) DisposableImage(ctx context.Context, image string) (string, []string, error) {
+	return e.Engine.(DisposableImageInspector).DisposableImage(ctx, image)
+}
 func (e *readOnlyGuardrailDecorator) PreviewResources(ctx context.Context, stack string, names []string) ([]PreviewResource, error) {
 	return e.Engine.(PreviewResourceInspector).PreviewResources(ctx, stack, names)
 }

@@ -83,9 +83,6 @@ func runUpConfig(ctx context.Context, opts commandOptions, cfg *config.DillConfi
 			return err
 		}
 		opts.NoPrune = true
-		if err := orchestrator.ValidateDisposableConfig(cfg); err != nil {
-			return err
-		}
 	}
 
 	logger.Debug("loaded config", "engine", cfg.Engine, "services", len(cfg.Services))
@@ -112,6 +109,13 @@ func runUpConfig(ctx context.Context, opts commandOptions, cfg *config.DillConfi
 		}
 	}
 
+	var disposableCfg *config.DillConfig
+	if opts.AlphaDisposable {
+		disposableCfg, err = effectiveDisposableConfig(cfg, selected)
+		if err != nil {
+			return err
+		}
+	}
 	if err := orchestrator.ValidateCapabilities(cfg.Engine, selected); err != nil {
 		return fmt.Errorf("capability preflight: %w", err)
 	}
@@ -137,7 +141,7 @@ func runUpConfig(ctx context.Context, opts commandOptions, cfg *config.DillConfi
 	defer engine.Close()
 
 	if opts.AlphaDisposable {
-		engine, err = orchestrator.WithDisposableGuardrails(ctx, engine, cfg, resolveStackNameWithOptions(cfg, opts))
+		engine, err = orchestrator.WithDisposableGuardrails(ctx, engine, disposableCfg, resolveStackNameWithOptions(cfg, opts))
 		if err != nil {
 			return err
 		}

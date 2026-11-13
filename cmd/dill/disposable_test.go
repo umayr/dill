@@ -19,6 +19,9 @@ type disposableUpEngine struct {
 }
 
 func (e *disposableUpEngine) EnforceDisposableVolumes() error { return nil }
+func (e *disposableUpEngine) DisposableImage(context.Context, string) (string, []string, error) {
+	return "prepared-image", nil, nil
+}
 func (e *disposableUpEngine) PreviewResources(context.Context, string, []string) ([]orchestrator.PreviewResource, error) {
 	return e.facts, e.failure
 }
@@ -26,7 +29,7 @@ func disposableOptions() commandOptions {
 	return commandOptions{Engine: "docker", EngineSocket: "/synthetic/disposable.sock", EngineSocketSet: true, StackName: "test", StackNameSet: true, AlphaDisposable: true, Quiet: true, Timeout: time.Second}
 }
 func disposableConfig() *config.DillConfig {
-	return &config.DillConfig{Name: "test", Engine: "docker", Services: map[string]*config.Service{"app": {Image: "synthetic", PullPolicy: "always", Volumes: []json.RawMessage{json.RawMessage(`"data:/data"`)}}}}
+	return &config.DillConfig{Name: "test", Engine: "docker", Services: map[string]*config.Service{"app": {Image: "synthetic", PullPolicy: "never", Volumes: []json.RawMessage{json.RawMessage(`"data:/data"`)}}}}
 }
 func newDisposableUpEngine() *disposableUpEngine {
 	return &disposableUpEngine{preMutationEngine: &preMutationEngine{recordingUpEngine: &recordingUpEngine{fakeEngine: newFakeEngine()}, live: map[string]*orchestrator.LiveConfig{"test_orphan": ownedPreMutationOrphan()}}, facts: []orchestrator.PreviewResource{{Kind: "network", Name: "test"}, {Kind: "volume", Name: "test_data"}}}
@@ -113,6 +116,34 @@ func TestDisposableConfigFailureBeforeEngineOpen(t *testing.T) {
 					t.Fatalf("error=%v engine opened=%t", err, opened)
 				}
 			})
+		}
+	}
+}
+
+func TestDisposablePullNeverOverrideSupportsServiceCopies(t *testing.T) {
+	for _, args := range [][]string{{"--alpha-disposable", "--pull", "never"}, {"--alpha-disposable", "--pull", "never", "--no-deps", "app"}} {
+		e := newDisposableUpEngine()
+		cfg := disposableConfig()
+		cfg.Services["app"].PullPolicy = "always"
+		withTestRuntime(t, e, cfg, func() {
+			if err := runUp(context.Background(), disposableOptions(), args); err != nil {
+				t.Fatal(err)
+			}
+			for _, event := range e.events {
+				if strings.HasPrefix(event, "pull:") {
+					t.Fatalf("prepared profile pulled: %v", e.events)
+				}
+			}
+		})
+	}
+}
+
+func TestDisposablePullOverrideRejectedBeforeEngine(t *testing.T) {
+	for _, policy := range []string{"always", "missing"} {
+		opened := false
+		err := runUpConfig(context.Background(), disposableOptions(), disposableConfig(), nil, true, policy, func(context.Context, *config.DillConfig) (orchestrator.Engine, error) { opened = true; return nil, nil })
+		if !errors.Is(err, orchestrator.ErrDisposableUnsupported) || opened {
+			t.Fatalf("policy=%s error=%v opened=%t", policy, err, opened)
 		}
 	}
 }

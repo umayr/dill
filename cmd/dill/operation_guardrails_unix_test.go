@@ -14,6 +14,44 @@ import (
 	"github.com/umayr/dill/internal/operation"
 )
 
+func TestOperationDisposableSDKRejectsImplicitOrUnknownImageStorage(t *testing.T) {
+	for _, imageConfig := range []string{`{"Id":"prepared-image","Config":{"Volumes":{"/implicit-data":{}}}}`, `{"Id":"prepared-image"}`} {
+		var imageReads, writes atomic.Int32
+		endpoint := fakeUnixEngine(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			if r.Method != http.MethodGet && r.Method != http.MethodHead {
+				writes.Add(1)
+				w.WriteHeader(500)
+				return
+			}
+			switch {
+			case strings.HasSuffix(r.URL.Path, "/_ping"):
+				w.Header().Set("API-Version", "1.43")
+				fmt.Fprint(w, "OK")
+			case strings.Contains(r.URL.Path, "/images/synthetic/"):
+				imageReads.Add(1)
+				fmt.Fprint(w, imageConfig)
+			case strings.HasSuffix(r.URL.Path, "/containers/json"):
+				fmt.Fprint(w, `[]`)
+			case strings.HasSuffix(r.URL.Path, "/containers/test_app/json"):
+				w.WriteHeader(404)
+				fmt.Fprint(w, `{"message":"missing"}`)
+			default:
+				t.Errorf("unexpected read before image preflight: %s", r.URL.Path)
+				w.WriteHeader(500)
+			}
+		}))
+		oldLoader, oldFactory := configLoader, engineFactory
+		configLoader = func(context.Context, string) (*config.DillConfig, error) { return disposableConfig(), nil }
+		engineFactory = defaultEngineFactory
+		result, code, stderr := captureOperation(t, "", []string{"up", "--contract", operation.Version, "--engine", "docker", "--engine-socket", endpoint, "-p", "test", "--alpha-disposable"})
+		configLoader, engineFactory = oldLoader, oldFactory
+		if code != 1 || result.Effects != "none" || stderr != "" || imageReads.Load() == 0 || writes.Load() != 0 {
+			t.Fatalf("result=%+v code=%d stderr=%q imageReads=%d writes=%d", result, code, stderr, imageReads.Load(), writes.Load())
+		}
+	}
+}
+
 // Exercises the actual operation decorator + SDK + disposable adapter, not a
 // mock enforcer. The Unix endpoint is a disposable HTTP fake, never an engine.
 func TestOperationDisposableSDKRejectsForeignVolumeAtCreation(t *testing.T) {
@@ -44,7 +82,7 @@ func TestOperationDisposableSDKRejectsForeignVolumeAtCreation(t *testing.T) {
 		case strings.HasSuffix(r.URL.Path, "/containers/json"):
 			fmt.Fprint(w, `[]`)
 		case strings.HasSuffix(r.URL.Path, "/images/synthetic/json"):
-			fmt.Fprint(w, `{"Id":"image-id"}`)
+			fmt.Fprint(w, `{"Id":"image-id","Config":{}}`)
 		case strings.HasSuffix(r.URL.Path, "/containers/test_app/json"):
 			w.WriteHeader(404)
 			fmt.Fprint(w, `{"message":"missing"}`)

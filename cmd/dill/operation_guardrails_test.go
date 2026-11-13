@@ -51,6 +51,9 @@ func TestOperationDisposableForeignResourceHasNoEffects(t *testing.T) {
 
 type noEnforcerEngine struct{ *preMutationEngine }
 
+func (e *noEnforcerEngine) DisposableImage(context.Context, string) (string, []string, error) {
+	return "prepared-image", nil, nil
+}
 func (e *noEnforcerEngine) PreviewResources(context.Context, string, []string) ([]orchestrator.PreviewResource, error) {
 	return []orchestrator.PreviewResource{{Kind: "network", Name: "test"}, {Kind: "volume", Name: "test_data"}}, nil
 }

@@ -25,6 +25,17 @@ dill --engine docker --engine-socket /absolute/disposable.sock --stack-name alph
   up --alpha-disposable
 ```
 
+Selected services must have effective `pullPolicy = "never"` (set it in the
+config or pass `up --pull never`), and declared images must already be present
+on the disposable target. Pulls are unsupported, including an `--pull always`
+override. This is a prepared-image pilot.
+
+Read-only local image metadata must include an immutable image ID and Config.
+Every image-declared `VOLUME` is currently unsupported, even if a named mount
+might cover that destination; missing metadata is not treated as empty storage.
+Adapters inspect again before creation and pin create to the checked image ID
+so retagging cannot substitute unqualified image storage after that check.
+
 The profile implies no-prune even with `--no-prune=false`. Engine, local socket
 and stack must be explicit; ambient Docker contexts and environment socket
 selection alone are insufficient. Selecting a local socket is **not** proof of
@@ -55,7 +66,7 @@ Podman; the **CLI Alpha target remains explicit local Docker only**.
 The engine decorator rechecks evidence before network/container creation, and
 adapters check volumes again when ensuring them, including create responses.
 Decorators must explicitly forward `EnforceDisposableVolumes() error`,
-`PreviewResources`, `CLIEndpoint` and engine identity; unavailable enforcement
+`PreviewResources`, `DisposableImage`, `CLIEndpoint` and engine identity; unavailable enforcement
 fails closed. Enforcement must be configured before concurrent engine use.
 
 This is not NAS, mount identity, driver security, production data classification

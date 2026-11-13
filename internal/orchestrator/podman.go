@@ -75,6 +75,9 @@ func (p *PodmanEngine) operationContext(ctx context.Context) context.Context {
 }
 
 func (p *PodmanEngine) PullImage(ctx context.Context, img string, w io.Writer) error {
+	if p.disposable {
+		return ErrDisposableUnsupported
+	}
 	logger.Debug("pulling image", "image", img)
 	_, err := images.Pull(p.operationContext(ctx), img, nil)
 	// The SDK can end a cancelled pull stream without returning an error.
@@ -110,6 +113,20 @@ func (p *PodmanEngine) LocalImageID(ctx context.Context, img string) (string, er
 	return data.ID, nil
 }
 
+// DisposableImage rejects missing metadata instead of assuming no implicit volumes.
+func (p *PodmanEngine) DisposableImage(ctx context.Context, image string) (string, []string, error) {
+	data, err := images.GetImage(p.operationContext(ctx), image, nil)
+	if err != nil || data == nil || data.ImageData == nil || data.ID == "" || data.Config == nil {
+		return "", nil, ErrDisposableUnavailable
+	}
+	volumes := make([]string, 0, len(data.Config.Volumes))
+	for target := range data.Config.Volumes {
+		volumes = append(volumes, target)
+	}
+	sort.Strings(volumes)
+	return data.ID, volumes, nil
+}
+
 func (p *PodmanEngine) StartService(ctx context.Context, name string, svc *config.Service, stackName string) (string, error) {
 	if svc == nil || len(svc.Secrets) > 0 {
 		return "", config.ErrSecretUnavailable
@@ -131,6 +148,20 @@ func (p *PodmanEngine) StartServiceChecked(ctx context.Context, name string, svc
 }
 
 func (p *PodmanEngine) startService(ctx context.Context, name string, svc *config.Service, stackName string, secrets []config.ResolvedSecret, target string) (string, error) {
+	image := svc.Image
+	if p.disposable {
+		if err := ValidateDisposableConfig(&config.DillConfig{Services: map[string]*config.Service{name: svc}}); err != nil {
+			return "", err
+		}
+		id, volumes, err := p.DisposableImage(ctx, image)
+		if err != nil {
+			return "", err
+		}
+		if len(volumes) > 0 {
+			return "", ErrDisposableUnsupported
+		}
+		image = id // pin metadata-checked immutable content, never a moving tag
+	}
 	for key := range svc.Labels {
 		if strings.HasPrefix(key, config.SystemLabelPrefix) {
 			return "", config.ErrSecretUnavailable
@@ -155,7 +186,7 @@ func (p *PodmanEngine) startService(ctx context.Context, name string, svc *confi
 		return "", fmt.Errorf("service %s: %w", name, err)
 	}
 
-	s := specgen.NewSpecGenerator(svc.Image, false)
+	s := specgen.NewSpecGenerator(image, false)
 
 	containerName := svc.ContainerName
 	if containerName == "" {
