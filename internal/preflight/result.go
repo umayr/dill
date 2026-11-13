@@ -164,6 +164,7 @@ func (r *Result) Withdraw() {
 func CoverageFor(resources []Resource) (Coverage, error) {
 	c := EmptyCoverage()
 	seen := map[string]bool{}
+	seenImmutableIDs := map[string]bool{}
 	if len(resources) > MaxResources {
 		return c, errors.New("preflight resource limit")
 	}
@@ -173,6 +174,13 @@ func CoverageFor(resources []Resource) (Coverage, error) {
 			return EmptyCoverage(), errors.New("duplicate preflight resource")
 		}
 		seen[key] = true
+		if r.Presence == "present" && r.IdentityKind == "immutable-id" {
+			identity := r.Kind + "\x00" + r.Identity
+			if seenImmutableIDs[identity] {
+				return EmptyCoverage(), errors.New("aliased inspected identity")
+			}
+			seenImmutableIDs[identity] = true
+		}
 		var scope *Scope
 		switch r.Kind {
 		case "container":
