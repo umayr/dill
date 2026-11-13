@@ -55,8 +55,10 @@ provided. The machine adapter uses an identity-free stderr prompt with a
 resource-intent count and domain-separated digest of the full bounded intent
 set. The count includes retention statements, not only destructive actions.
 Incomplete intent inventories fail closed, even with `--yes`. This is not
-saved-plan authorization. Legacy prompts, retention behavior, and legacy stdout
-are unchanged.
+saved-plan authorization. The operation-only prompt polls stdin with its
+invocation context: deadline/SIGINT produces one cancelled result without
+requiring EOF, closing the caller's descriptor, or abandoning a reader goroutine.
+Legacy prompts, retention behavior, and legacy stdout are unchanged.
 
 All results have these fields (the operation ID is freshly generated):
 
@@ -141,7 +143,11 @@ Secret-enabled operation mode is deliberately **unsupported**. Identifiable
 secret selectors/policy reject before evaluation. Decoded secret grants reject
 before engine access with fixed `SECRET_UNAVAILABLE` and no target/stack/resource
 metadata. Evaluation is private from the start of this machine path, not only
-after grants are discovered. Do not use this path to bypass the existing Alpha
+after grants are discovered. Machine-private evaluation retains only closed,
+fixed typed invalid-input/evaluator-failure/cancellation categories; raw parser,
+filesystem, and subprocess errors are replaced, not wrapped. Existing secret
+private evaluation still masks all failure categories exactly as before.
+Do not use this path to bypass the existing Alpha
 secret authorization, preflight, or lifecycle restrictions; legacy secret-aware
 handlers remain independently supported and unchanged.
 

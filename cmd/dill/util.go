@@ -129,8 +129,14 @@ func confirmDestructive(action string, opts commandOptions) (bool, error) {
 		return true, nil
 	}
 	fmt.Fprintf(os.Stderr, "%s. Continue? [y/N] ", action)
-	reader := bufio.NewReader(os.Stdin)
-	answer, err := reader.ReadString('\n')
+	var answer string
+	var err error
+	if opts.operation != nil {
+		answer, err = readOperationConfirmation(opts.operation.ctx, os.Stdin)
+	} else {
+		reader := bufio.NewReader(os.Stdin)
+		answer, err = reader.ReadString('\n')
+	}
 	if err != nil && len(answer) == 0 {
 		return false, err
 	}
@@ -207,8 +213,10 @@ func loadConfig(ctx context.Context, opts commandOptions) (result *config.DillCo
 			return nil, fmt.Errorf("loading env file: %w", err)
 		}
 	}
-	if opts.secretMode() || opts.operation != nil {
+	if opts.secretMode() {
 		ctx = config.WithPrivateEvaluation(ctx)
+	} else if opts.operation != nil {
+		ctx = config.WithMachineEvaluation(ctx)
 	}
 	cfg, err := configLoader(ctx, opts.ConfigFile)
 	result = cfg
