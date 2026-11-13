@@ -59,6 +59,28 @@ func runStop(ctx context.Context, opts commandOptions, services []string) error 
 		}
 	}
 
+	serviceForName := func(name string) string {
+		for _, svc := range services {
+			if serviceContainerName(sn, svc, st.Config.Services[svc]) == name {
+				return svc
+			}
+		}
+		return ""
+	}
+	// Operation receipts require a whole-target ownership census before the
+	// first stop. Bind the intent to immutable IDs so a later name reuse cannot
+	// redirect it. Legacy stop retains independent best-effort behavior.
+	captured := map[string]string{}
+	if opts.operation != nil {
+		for _, name := range names {
+			id, err := orchestrator.OwnedID(ctx, engine, name, sn, serviceForName(name))
+			if err != nil {
+				return err
+			}
+			captured[name] = id
+		}
+	}
+
 	var errs []error
 	for _, name := range names {
 		if opts.DryRun {
@@ -69,19 +91,14 @@ func runStop(ctx context.Context, opts commandOptions, services []string) error 
 			display := strings.TrimPrefix(name, sn+"_")
 			printProgress(display, "stopping")
 		}
-		service := ""
-		if len(services) > 0 {
-			for _, svc := range services {
-				if serviceContainerName(sn, svc, st.Config.Services[svc]) == name {
-					service = svc
-					break
-				}
+		id := captured[name]
+		if opts.operation == nil {
+			var err error
+			id, err = orchestrator.OwnedID(ctx, engine, name, sn, serviceForName(name))
+			if err != nil {
+				errs = append(errs, err)
+				continue
 			}
-		}
-		id, err := orchestrator.OwnedID(ctx, engine, name, sn, service)
-		if err != nil {
-			errs = append(errs, err)
-			continue
 		}
 		if id == "" {
 			continue

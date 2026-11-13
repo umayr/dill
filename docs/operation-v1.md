@@ -137,9 +137,15 @@ handlers remain independently supported and unchanged.
 
 This adapter alone does not implement qualified daemon identity, cross-process
 coordination, a durable mutation journal, bounded disposable-storage policy,
-atomic whole-operation preflight, saved-plan authorization, or recovery. Existing
-ownership and no-pull checks are reused; this is not a production deployment
-interface or an all-resources safety claim. #78/#79 integration and #80 real
+atomic whole-operation preflight, saved-plan authorization, or recovery. Every advertised lifecycle operation first performs a full declared-container
+and stack-listed container ownership census using the same invocation-owned
+engine as its handler. A known foreign later target therefore rejects before
+any earlier target can be mutated, including cleanup/image teardown. Operation
+`stop` additionally captures immutable target IDs before its first stop. Existing
+handler ownership revalidation and no-pull checks remain in place. External
+changes after census may still produce partial or unknown effects; the census
+is not an atomic engine transaction or an all-resources safety claim. This is
+not a production deployment interface. #78/#79 integration and #80 real
 engine qualification are separate gates. Container/image operations remain
 non-transactional. No real-engine parity is inferred from mocked unit tests.
 
@@ -159,8 +165,13 @@ Brine consumers; no cross-repository consumer qualification is claimed.
 validated config caching, handler dispatch, and final output. The
 `commandOptions.operation` state has a thread-safe `operation.Recorder` and the
 already validated config. `loadConfig` only reuses this config for this adapter.
-`newEngine` decorates the pinned factory result with `operation.Engine` and
-preserves explicit adapter identity, CLI endpoint, and resource-preview access.
+`newEngine` decorates and retains the pinned factory result with
+`operation.Engine` for the full invocation; subsequent handler engine opens
+borrow that same decorator. Handler closes do not release a borrowed engine;
+the invocation releases it exactly once before terminal output. The decorator
+preserves explicit adapter identity, CLI endpoint, resource-preview access,
+and explicit disposable-volume enforcement forwarding (missing support fails
+closed).
 The decorator records attempts **before** delegating to the engine and never
 changes returned errors. `Recorder.Finish` snapshots bounded resources and
 conservative aggregate effects before stdout emission.
