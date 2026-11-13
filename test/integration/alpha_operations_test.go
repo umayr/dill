@@ -67,9 +67,38 @@ func decodeAlphaOperation(data []byte) (alphaOperationResult, error) {
 	if err := json.Unmarshal(data, &fields); err != nil {
 		return result, err
 	}
-	for _, key := range []string{"version", "operationId", "operation", "target", "stack", "outcome", "effects", "changesDetected", "resources", "resourcesTruncated", "errors"} {
-		if _, ok := fields[key]; !ok {
-			return result, fmt.Errorf("missing field %s", key)
+	if err := alphaRequiredFields(fields, "version", "operationId", "operation", "stack", "outcome", "effects", "changesDetected", "resources", "resourcesTruncated", "errors"); err != nil {
+		return result, err
+	}
+	target, present := fields["target"]
+	if !present {
+		return result, fmt.Errorf("missing target field")
+	}
+	if bytes.Equal(bytes.TrimSpace(target), []byte("null")) {
+		if (result.Outcome != "invalid_input" && result.Outcome != "failed") || result.Stack != "" || result.Effects != "none" || len(result.Resources) != 0 {
+			return result, fmt.Errorf("null target outside an early no-effect failure")
+		}
+	} else {
+		var targetFields map[string]json.RawMessage
+		if err := json.Unmarshal(target, &targetFields); err != nil {
+			return result, err
+		}
+		if err := alphaRequiredFields(targetFields, "engine", "endpointDigest"); err != nil {
+			return result, err
+		}
+	}
+	for name, required := range map[string][]string{
+		"resources": {"kind", "identityDigest", "action", "effect"},
+		"errors":    {"code", "message"},
+	} {
+		var entries []map[string]json.RawMessage
+		if err := json.Unmarshal(fields[name], &entries); err != nil {
+			return result, err
+		}
+		for _, entry := range entries {
+			if err := alphaRequiredFields(entry, required...); err != nil {
+				return result, err
+			}
 		}
 	}
 	if result.Version != "dill.operation/1" || !regexp.MustCompile(`^op_[0-9a-f]{32}$`).MatchString(result.OperationID) {
@@ -81,6 +110,16 @@ func decodeAlphaOperation(data []byte) (alphaOperationResult, error) {
 	return result, nil
 }
 
+func alphaRequiredFields(fields map[string]json.RawMessage, names ...string) error {
+	for _, name := range names {
+		value, present := fields[name]
+		if !present || bytes.Equal(bytes.TrimSpace(value), []byte("null")) {
+			return fmt.Errorf("missing or null required field %s", name)
+		}
+	}
+	return nil
+}
+
 func TestAlphaOperationEnvelopeDecoder(t *testing.T) {
 	valid := `{"version":"dill.operation/1","operationId":"op_0123456789abcdef0123456789abcdef","operation":"validate","target":null,"stack":"","outcome":"invalid_input","effects":"none","changesDetected":false,"resources":[],"resourcesTruncated":false,"errors":[]}`
 	if _, err := decodeAlphaOperation([]byte(valid)); err != nil {
@@ -90,6 +129,73 @@ func TestAlphaOperationEnvelopeDecoder(t *testing.T) {
 		if _, err := decodeAlphaOperation([]byte(bad)); err == nil {
 			t.Fatal("accepted malformed or incomplete terminal result")
 		}
+	}
+}
+
+func TestAlphaOperationEnvelopeDecoderNullFields(t *testing.T) {
+	base := map[string]any{
+		"version": "dill.operation/1", "operationId": "op_0123456789abcdef0123456789abcdef", "operation": "validate",
+		"target": map[string]any{"engine": "docker", "endpointDigest": alphaDigest("unix:///synthetic.sock")},
+		"stack":  "synthetic", "outcome": "succeeded", "effects": "none", "changesDetected": false,
+		"resources": []any{}, "resourcesTruncated": false, "errors": []any{},
+	}
+	assertRejected := func(t *testing.T, value map[string]any) {
+		t.Helper()
+		data, err := json.Marshal(value)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := decodeAlphaOperation(data); err == nil {
+			t.Fatal("accepted missing/null nonnullable contract field")
+		}
+	}
+	for field := range base {
+		t.Run("root/"+field, func(t *testing.T) {
+			value := make(map[string]any, len(base))
+			for key, item := range base {
+				value[key] = item
+			}
+			value[field] = nil
+			assertRejected(t, value)
+		})
+	}
+	for container, template := range map[string]map[string]any{
+		"target":    {"engine": "docker", "endpointDigest": alphaDigest("unix:///synthetic.sock")},
+		"resources": {"kind": "service", "identityDigest": alphaDigest("synthetic/app"), "action": "noop", "effect": "none"},
+		"errors":    {"code": "INVALID_INPUT", "message": "Invalid operation input."},
+	} {
+		for field := range template {
+			for _, missing := range []bool{false, true} {
+				t.Run(fmt.Sprintf("%s/%s/missing-%v", container, field, missing), func(t *testing.T) {
+					value := make(map[string]any, len(base))
+					for key, item := range base {
+						value[key] = item
+					}
+					entry := make(map[string]any, len(template))
+					for key, item := range template {
+						entry[key] = item
+					}
+					if missing {
+						delete(entry, field)
+					} else {
+						entry[field] = nil
+					}
+					value[container] = entry
+					if container != "target" {
+						value[container] = []any{entry}
+					}
+					assertRejected(t, value)
+				})
+			}
+		}
+	}
+	for _, field := range []string{"resources", "errors"} {
+		value := make(map[string]any, len(base))
+		for key, item := range base {
+			value[key] = item
+		}
+		value[field] = []any{nil}
+		assertRejected(t, value)
 	}
 }
 
