@@ -92,7 +92,13 @@ func runValidate(ctx context.Context, opts commandOptions, args []string) (retEr
 	if opts.secretMode() {
 		ctx = config.WithPrivateEvaluation(ctx)
 	}
-	cfg, validateErr := configLoader(ctx, target)
+	var cfg *config.DillConfig
+	var validateErr error
+	if opts.operation != nil && opts.operation.config != nil {
+		cfg = opts.operation.config
+	} else {
+		cfg, validateErr = configLoader(ctx, target)
+	}
 	if validateErr == nil {
 		validateErr = validateTrustedStack(opts, cfg)
 	}
@@ -153,7 +159,7 @@ func runValidate(ctx context.Context, opts commandOptions, args []string) (retEr
 	if validateErr != nil {
 		return validateErr
 	}
-	fmt.Printf("%s is valid\n", opts.ConfigFile)
+	fmt.Fprintf(opts.output(), "%s is valid\n", opts.ConfigFile)
 	return nil
 }
 

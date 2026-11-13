@@ -1,0 +1,27 @@
+{
+  "runtime": "must-not-access",
+  "args": [
+    "validate",
+    "--contract",
+    "dill.operation/999"
+  ],
+  "expectedExit": 2,
+  "expected": {
+    "version": "dill.operation/1",
+    "operationId": "op_00000000000000000000000000000000",
+    "operation": "validate",
+    "target": null,
+    "stack": "",
+    "outcome": "invalid_input",
+    "effects": "none",
+    "changesDetected": false,
+    "resources": [],
+    "resourcesTruncated": false,
+    "errors": [
+      {
+        "code": "UNSUPPORTED_CONTRACT",
+        "message": "Unsupported operation contract. Use operation-capabilities discovery."
+      }
+    ]
+  }
+}

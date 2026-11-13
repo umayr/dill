@@ -18,6 +18,7 @@ import (
 )
 
 type commandOptions struct {
+	operation                                            *operationState
 	secretDiagnostics                                    *secretDiagnostics
 	SecretBindings, SecretPolicy, SecretTarget           string
 	SecretBindingsSet, SafeSecrets, SecretPolicyCaptured bool
@@ -117,6 +118,9 @@ func addTimeoutFlag(fs *flag.FlagSet, opts *commandOptions) {
 }
 
 func confirmDestructive(action string, opts commandOptions) (bool, error) {
+	if opts.operation != nil {
+		action = "Confirm destructive operation"
+	}
 	if opts.Yes {
 		return true, nil
 	}
@@ -127,7 +131,11 @@ func confirmDestructive(action string, opts commandOptions) (bool, error) {
 		return false, err
 	}
 	answer = strings.TrimSpace(strings.ToLower(answer))
-	return answer == "y" || answer == "yes", nil
+	confirmed := answer == "y" || answer == "yes"
+	if opts.operation != nil && !confirmed {
+		opts.operation.declined = true
+	}
+	return confirmed, nil
 }
 
 // downProgress returns a Progress func that strips the stack name prefix
@@ -179,6 +187,9 @@ func resolveStackNameWithOptions(cfg *config.DillConfig, opts commandOptions) st
 }
 
 func loadConfig(ctx context.Context, opts commandOptions) (result *config.DillConfig, retErr error) {
+	if opts.operation != nil && opts.operation.config != nil {
+		return opts.operation.config, nil
+	}
 	captureSecretPolicy(&opts)
 	discovered := false
 	defer func() {
@@ -192,7 +203,7 @@ func loadConfig(ctx context.Context, opts commandOptions) (result *config.DillCo
 			return nil, fmt.Errorf("loading env file: %w", err)
 		}
 	}
-	if opts.secretMode() {
+	if opts.secretMode() || opts.operation != nil {
 		ctx = config.WithPrivateEvaluation(ctx)
 	}
 	cfg, err := configLoader(ctx, opts.ConfigFile)

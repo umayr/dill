@@ -328,7 +328,7 @@ func runRm(ctx context.Context, opts commandOptions, args []string) error {
 			continue
 		}
 		if opts.DryRun {
-			fmt.Printf("would remove %s\n", name)
+			fmt.Fprintf(opts.output(), "would remove %s\n", name)
 			continue
 		}
 		if !opts.Quiet {
