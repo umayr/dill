@@ -167,7 +167,7 @@ func alphaQualifiedContention(t *testing.T, aliases bool) {
 	f.seed(t)
 	alphaQualifiedSucceeded(t, f, "stop", "cli")
 	before := runEngine(t, "docker", "inspect", "--format", "{{.Id}}|{{.State.Status}}", f.stack+"_app")
-	first := startAlphaQualifiedProcess(t, f, "rm", "cli", "--attended")
+	first := startAlphaQualifiedProcess(t, f, "rm", "cli")
 	first.waitPrompt(t)
 
 	socket := f.socket
@@ -216,7 +216,7 @@ func TestAlphaQualifiedDifferentStackConcurrency(t *testing.T) {
 	other.seed(t)
 	alphaQualifiedSucceeded(t, first, "stop", "cli")
 	alphaQualifiedSucceeded(t, other, "stop", "brine")
-	actor := startAlphaQualifiedProcess(t, first, "rm", "cli", "--attended")
+	actor := startAlphaQualifiedProcess(t, first, "rm", "cli")
 	actor.waitPrompt(t)
 	alphaQualifiedSucceeded(t, other, "start", "brine")
 	actor.assertWaiting(t)
@@ -543,6 +543,38 @@ func TestAlphaQualifiedRecoveryDecoder(t *testing.T) {
 // Pure process/pipe verification. This does not opt in to a daemon or count as
 // runtime qualification, and may be run safely on developer machines.
 func TestAlphaQualifiedProcessHelpers(t *testing.T) {
+	t.Run("actual-attended-argument-contract", func(t *testing.T) {
+		root := t.TempDir()
+		f := &alphaQualifiedFixture{bin: dillBinary(t, root), cfg: filepath.Join(root, "absent.pkl"),
+			stack: "argument-contract", state: filepath.Join(root, "absent-state"), daemon: "synthetic-daemon"}
+		for _, tc := range []struct {
+			name, want string
+			extra      []string
+		}{
+			{"attended-is-default", "UNSUPPORTED_FORMAT", nil},
+			{"invented-flag-rejected", "INVALID_ARGUMENTS", []string{"--attended"}},
+		} {
+			t.Run(tc.name, func(t *testing.T) {
+				// A deliberately unsupported format is checked AFTER flag parsing
+				// but BEFORE config loading, coordination, socket or engine access.
+				// This exercises the actual candidate parser, not the shell helper.
+				args := f.argsAt(filepath.Join(root, "absent.sock"), "rm", "cli", tc.extra...)
+				args = append(args, "--format", "unsupported-test-sentinel")
+				data, err := exec.Command(f.bin, args...).Output()
+				exited, ok := err.(*exec.ExitError)
+				if !ok || exited.ExitCode() != 2 {
+					t.Fatal("offline argument-contract sentinel did not return exit 2")
+				}
+				result, err := decodeAlphaOperation(data)
+				if err != nil || result.Outcome != "invalid_input" || result.Effects != "none" || len(result.Errors) != 1 || result.Errors[0].Code != tc.want {
+					t.Fatal("actual attended argument-contract classification mismatch")
+				}
+			})
+		}
+		if _, err := os.Stat(f.state); !os.IsNotExist(err) {
+			t.Fatal("argument-contract sentinel touched private coordination state")
+		}
+	})
 	for _, kind := range []string{"decline", "kill"} {
 		t.Run(kind, func(t *testing.T) {
 			script := filepath.Join(t.TempDir(), "caller")
@@ -551,7 +583,7 @@ func TestAlphaQualifiedProcessHelpers(t *testing.T) {
 				t.Fatal(err)
 			}
 			f := &alphaQualifiedFixture{bin: script}
-			p := startAlphaQualifiedProcess(t, f, "rm", "cli", "--attended")
+			p := startAlphaQualifiedProcess(t, f, "rm", "cli")
 			p.waitPrompt(t)
 			p.assertWaiting(t)
 			if kind == "kill" {
