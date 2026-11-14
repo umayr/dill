@@ -3,48 +3,54 @@
 package integration
 
 import (
-	"context"
-	"encoding/json"
-	"os/exec"
+	"os"
 	"testing"
-	"time"
 
 	"github.com/umayr/dill/internal/preflight"
 )
 
-// This case is gated by the existing independently provisioned native fixture.
-// It must run only on the trusted disposable qualification host, never as a
-// substitute for actual Brine application/source-policy qualification.
+// Actual independently provisioned native fixture, never Brine/source proof.
 func (f *alphaQualifiedFixture) namedReview(t *testing.T, action string, extra ...string) preflight.Result {
 	t.Helper()
-	args := []string{"preflight", action, "--contract", preflight.Version, "--format", "json", "--engine", "docker", "--engine-socket", f.socket, "-p", f.stack, "-f", f.cfg, "--coordination-state-dir", f.state, "--coordination-layout", "native-local-docker-v1", "--coordination-daemon-id", f.daemon, "--coordination-source", "cli", "--timeout", "60s"}
-	args = append(args, extra...)
-	before := alphaResourceSnapshot(t, "docker")
-	since := time.Now().UTC().Format(time.RFC3339Nano)
-	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
-	defer cancel()
-	data, err := exec.CommandContext(ctx, f.bin, args...).Output()
-	until := time.Now().UTC().Format(time.RFC3339Nano)
-	if err != nil {
-		t.Fatalf("named review failed: %T", err)
+	result, code := f.namedAttempt(t, action, "60s", extra...)
+	if code != 0 || result.Outcome != "succeeded" || result.Target == nil || len(result.Resources) != 3 || result.SelectionDigest == nil {
+		t.Fatal("complete native named review unavailable")
 	}
-	var result preflight.Result
-	if json.Unmarshal(data, &result) != nil || result.Validate(0) != nil || result.Operation != action || result.Stack != f.stack || f.seen[result.OperationID] {
-		t.Fatal("invalid named review envelope")
+	expected := map[string]string{"container": f.stack + "_app", "network": f.stack, "volume": f.stack + "_data"}
+	for _, row := range result.Resources {
+		if expected[row.Kind] != row.Name {
+			t.Fatal("review did not expose the actual bounded fixture names")
+		}
+		delete(expected, row.Kind)
+		if row.Presence == "present" {
+			switch row.Kind {
+			case "container":
+				if runEngine(t, "docker", "inspect", "--format", "{{.Id}}", row.Name) != row.Identity {
+					t.Fatal("reviewed container identity not actual")
+				}
+			case "network":
+				if runEngine(t, "docker", "network", "inspect", "--format", "{{.Id}}", row.Name) != row.Identity {
+					t.Fatal("reviewed network identity not actual")
+				}
+			case "volume":
+				if runEngine(t, "docker", "volume", "inspect", "--format", "{{.Name}}", row.Name) != row.Identity {
+					t.Fatal("reviewed named volume identity not actual")
+				}
+			}
+		}
 	}
-	f.seen[result.OperationID] = true
-	if events := runEngine(t, "docker", "events", "--since", since, "--until", until, "--format", "{{json .}}"); events != "" {
-		t.Fatal("named review produced daemon mutation events")
+	if len(expected) != 0 {
+		t.Fatal("review omitted a declared fixture resource")
 	}
-	if after := alphaResourceSnapshot(t, "docker"); after != before {
-		t.Fatal("named review changed complete synthetic resource inventory/state")
-	}
-	f.assertForeign(t)
 	return result
 }
 
 func TestAlphaQualifiedNamedPreflightFiveRoutes(t *testing.T) {
 	f := newAlphaQualifiedFixture(t)
+	original, err := os.ReadFile(f.cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
 	for _, action := range []string{"up", "start", "restart", "stop", "down"} {
 		extra := []string{}
 		if action == "up" {
@@ -54,20 +60,70 @@ func TestAlphaQualifiedNamedPreflightFiveRoutes(t *testing.T) {
 		args := append(append([]string{}, extra...), "--preflight-contract", preflight.Version, "--expect-preflight", *review.SelectionDigest)
 		result, code := f.run(t, action, "cli", "", args...)
 		if action == "down" {
-			if code != 1 || result.Outcome != "failed" || result.Effects != "partial" {
-				t.Fatal("retained-network down axes changed")
-			}
-		} else if code != 0 || result.Outcome != "succeeded" {
-			t.Fatalf("bound %s failed with exit %d", action, code)
+			alphaQualifiedAxes(t, result, code, 1, "failed", "partial")
+		} else {
+			alphaQualifiedAxes(t, result, code, 0, "succeeded", "complete")
 		}
+		if action == "up" {
+			if image := runEngine(t, "docker", "inspect", "--format", "{{.Image}}|{{.Config.Image}}", f.stack+"_app"); image != f.imageID+"|"+f.imageID {
+				t.Fatal("bound creation did not consume exact inspected immutable content/reference")
+			}
+			runEngine(t, "docker", "exec", f.stack+"_app", "sh", "-c", "printf synthetic-named-v2 > /data/value")
+			repeat := f.namedReview(t, "up", extra...)
+			for _, row := range repeat.Resources {
+				if row.Kind == "container" && row.Action != "ensure-started" {
+					t.Fatal("prepared ID polluted original desired-reference hash/no-op provenance")
+				}
+			}
+		}
+		f.assertForeign(t)
 	}
+	after, err := os.ReadFile(f.cfg)
+	if err != nil || string(after) != string(original) {
+		t.Fatal("handler rewrote desired source provenance")
+	}
+	alphaNamedData(t, f)
 }
 
 func TestAlphaQualifiedNamedPreflightMismatchBeforeEnsure(t *testing.T) {
-	f := newAlphaQualifiedFixture(t)
-	review := f.namedReview(t, "up", "--no-prune", "--pull", "never")
-	result := f.rejectNoWrites(t, "up", 1, "failed", "--no-prune", "--pull", "never", "--force-recreate", "--preflight-contract", preflight.Version, "--expect-preflight", *review.SelectionDigest)
-	if len(result.Errors) != 1 || result.Errors[0].Code != "PREFLIGHT_MISMATCH" {
-		t.Fatal("changed effective input was not rejected before engine writes")
+	for _, kind := range []string{"force", "config", "container-id", "prepared-tag-content", "original-image-reference"} {
+		t.Run(kind, func(t *testing.T) {
+			f := newAlphaQualifiedFixture(t)
+			f.seed(t)
+			review := f.namedReview(t, "up", "--no-prune", "--pull", "never")
+			extra := []string{}
+			// Controlled fixture changes are OUTSIDE the measured checked-apply attempt.
+			switch kind {
+			case "force":
+				extra = []string{"--force-recreate"}
+			case "config":
+				f.write(t, f.image, "volumes = List(\"data:/data\")\nenvironment { [\"NAMED_VARIANT\"] = \"changed\" }", false)
+			case "container-id":
+				old := runEngine(t, "docker", "inspect", "--format", "{{.Id}}", f.stack+"_app")
+				runEngine(t, "docker", "rm", "-f", f.stack+"_app")
+				f.seed(t)
+				if runEngine(t, "docker", "inspect", "--format", "{{.Id}}", f.stack+"_app") == old {
+					t.Fatal("fixture did not replace actual container identity")
+				}
+			case "prepared-tag-content":
+				name := f.stack + "-image-preparer"
+				t.Cleanup(func() { alphaCleanupResource(t, "docker", "container", name) })
+				runEngine(t, "docker", "create", "--name", name, f.imageID)
+				runEngine(t, "docker", "commit", "--change", "LABEL dill.alpha.variant=named-v2", name, f.image)
+				runEngine(t, "docker", "rm", name)
+				if runEngine(t, "docker", "image", "inspect", "--format", "{{.Id}}", f.image) == f.imageID {
+					t.Fatal("fixture did not change prepared content")
+				}
+				if volumes := runEngine(t, "docker", "image", "inspect", "--format", "{{json .Config.Volumes}}", f.image); volumes != "null" && volumes != "{}" {
+					t.Fatal("prepared fixture gained image VOLUME")
+				}
+			case "original-image-reference":
+				alias := "localhost/" + f.stack + ":same-content"
+				t.Cleanup(func() { alphaCleanupResource(t, "docker", "image", alias) })
+				runEngine(t, "docker", "tag", f.imageID, alias)
+				f.write(t, alias, `volumes = List("data:/data")`, false)
+			}
+			alphaNamedMismatch(t, f, *review.SelectionDigest, extra...)
+		})
 	}
 }
