@@ -203,7 +203,7 @@ func (f *coordinatedDockerFixture) serve(w http.ResponseWriter, r *http.Request)
 		if f.unknownLiveHost {
 			hostConfig = nil
 		}
-		json.NewEncoder(w).Encode(map[string]any{"Id": strings.Repeat("a", 64), "Image": imageID, "Config": map[string]any{"Image": f.image, "Labels": f.labels}, "HostConfig": hostConfig, "NetworkSettings": settings, "State": map[string]any{"Running": f.running}, "Mounts": mounts})
+		json.NewEncoder(w).Encode(map[string]any{"Id": strings.Repeat("a", 64), "Name": "/app_web", "Image": imageID, "Config": map[string]any{"Image": f.image, "Labels": f.labels}, "HostConfig": hostConfig, "NetworkSettings": settings, "State": map[string]any{"Running": f.running}, "Mounts": mounts})
 	case path == "/networks":
 		list := []map[string]string{}
 		if f.networkExists {
@@ -220,7 +220,7 @@ func (f *coordinatedDockerFixture) serve(w http.ResponseWriter, r *http.Request)
 		if f.foreignNetwork {
 			owner = "foreign-stack"
 		}
-		json.NewEncoder(w).Encode(map[string]any{"Name": "app", "Id": strings.Repeat("e", 64), "Driver": "bridge", "Options": map[string]string{}, "Labels": map[string]string{"dill.managed": "true", "dill.stack": owner}})
+		json.NewEncoder(w).Encode(map[string]any{"Name": "app", "Id": strings.Repeat("e", 64), "Driver": "bridge", "IPAM": map[string]any{"Driver": "default"}, "Options": map[string]string{}, "Labels": map[string]string{"dill.managed": "true", "dill.stack": owner}})
 	case path == "/networks/create":
 		f.networkExists = true
 		w.WriteHeader(201)

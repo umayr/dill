@@ -67,6 +67,10 @@ type operationCoordination struct {
 	guard           *coordinatedEngine
 	operationID     string
 	transportClosed bool
+	// Named capture is opt-in and remains private until the complete qualified
+	// inspection succeeds. Ordinary qualified operations are unchanged.
+	collectNamed   bool
+	namedInventory *namedInventory
 }
 
 // prepare validates the complete DECLARED inventory before engine/state access.
@@ -172,6 +176,10 @@ func (c *operationCoordination) prepare(ctx context.Context, opts commandOptions
 			return usageError{"qualified operations cannot prune undeclared containers"}
 		}
 	}
+	var inventory *namedInventory
+	if c.collectNamed {
+		inventory = newNamedInventory(stack, listed)
+	}
 	actualImages, ok := c.guard.Engine.(orchestrator.DisposableImageInspector)
 	if !ok {
 		return orchestrator.ErrDisposableUnavailable
@@ -180,10 +188,18 @@ func (c *operationCoordination) prepare(ctx context.Context, opts commandOptions
 		container := serviceContainerName(stack, service, svc)
 		live, err := engine.InspectConfig(ctx, container)
 		if errors.Is(err, orchestrator.ErrNotFound) {
+			if inventory != nil {
+				inventory.containers[container] = nil
+			}
 			continue
 		}
 		if err != nil {
 			return err
+		}
+		if inventory != nil && live != nil {
+			if _, marked := live.SystemLabels[orchestrator.SecretEnabledLabel]; marked {
+				return config.ErrSecretUnavailable
+			}
 		}
 		if err = orchestrator.CheckOwnership(container, stack, service, live); err != nil {
 			return err
@@ -221,6 +237,9 @@ func (c *operationCoordination) prepare(ctx context.Context, opts commandOptions
 			}
 		}
 		c.guard.ids[live.ID] = true
+		if inventory != nil {
+			inventory.containers[container] = cloneNamedLive(live)
+		}
 	}
 	// Shared #79 whole-resource read-only preflight MUST precede every handler,
 	// not merely volume creation or a caller-selected --alpha-disposable flag.
@@ -236,6 +255,12 @@ func (c *operationCoordination) prepare(ctx context.Context, opts commandOptions
 		return err
 	}
 	c.guard.Engine = guarded
+	if inventory != nil {
+		if err := inventory.complete(ctx, guarded, &effective); err != nil {
+			return err
+		}
+		c.namedInventory = inventory
+	}
 	return nil
 }
 
