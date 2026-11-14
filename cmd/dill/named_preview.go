@@ -28,6 +28,17 @@ func finalizeNamedPreview(out io.Writer, r preflight.Result, state *operationSta
 	if c != nil && c.operationID != "" {
 		r.OperationID = c.operationID
 	}
+	cancelSuccess := func() {
+		if r.Outcome == "succeeded" && state.ctx != nil && state.ctx.Err() != nil {
+			r.Withdraw()
+			r.Outcome, code = "cancelled", 1
+			r.Errors = append(r.Errors, preflight.FixedError("CANCELLED"))
+		}
+	}
+	// Cancellation can already be known at entry or become known during a
+	// successful transport close. Only change a prospective success; never
+	// replace an earlier primary failure or rewrite a published terminal.
+	cancelSuccess()
 	var candidate []byte
 	if r.Outcome == "succeeded" {
 		if err := r.Validate(0); err != nil {
@@ -49,6 +60,7 @@ func finalizeNamedPreview(out io.Writer, r preflight.Result, state *operationSta
 	if c != nil {
 		closeErr = errors.Join(closeErr, c.closeTransport())
 	}
+	cancelSuccess()
 	if closeErr != nil {
 		r.Withdraw()
 		r.Outcome = "unknown"
@@ -60,6 +72,7 @@ func finalizeNamedPreview(out io.Writer, r preflight.Result, state *operationSta
 		r.Errors = append(r.Errors, preflight.FixedError("ENGINE_CLOSE_FAILED"))
 	}
 	if c != nil && c.session != nil {
+		cancelSuccess()
 		journalOutcome, journalEffects := r.Outcome, "none"
 		if journalOutcome == "unknown" {
 			journalEffects = "unknown"
