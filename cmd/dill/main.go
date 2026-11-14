@@ -41,9 +41,31 @@ func main() {
 	// Strict named argv must see raw tokens before global verbosity stripping.
 	// In particular, a value that resembles -v or a binding flag is still a value.
 	args := os.Args[1:]
-	if len(args) > 0 && (args[0] == "preflight" || args[0] == "preflight-capabilities" || (args[0] == cmdOperation && namedBindingIntent(args[1:]))) {
-		logger.Init(0)
-		os.Exit(exitCodeFor(run(args)))
+	leading := 0
+	for leading < len(args) {
+		_, rest := logger.ParseVerbosity([]string{args[leading]})
+		if len(rest) != 0 {
+			break
+		}
+		leading++
+	}
+	if leading < len(args) {
+		namespace := args[leading]
+		named := namespace == "preflight" || namespace == "preflight-capabilities" || (namespace == cmdOperation && namedBindingIntent(args[leading+1:]))
+		if named {
+			strict := append([]string{}, args[leading:]...)
+			if leading > 0 {
+				// Prefix verbosity is forbidden too. Put a flag in the strict
+				// namespace rather than silently stripping it as a global option.
+				at := 1
+				if namespace != "preflight-capabilities" && len(strict) > 1 {
+					at = 2
+				}
+				strict = append(strict[:at], append([]string{"-v"}, strict[at:]...)...)
+			}
+			logger.Init(0)
+			os.Exit(exitCodeFor(run(strict)))
+		}
 	}
 	if isProtocolInvocation(os.Args[1:]) && !secretInvocation(os.Args[1:]) {
 		os.Exit(runProtocol(os.Args[1:]))

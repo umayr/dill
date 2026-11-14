@@ -20,6 +20,16 @@ func TestOperationMainHelper(t *testing.T) {
 		return
 	}
 	os.Unsetenv("DILL_SECRET_POLICY")
+	if os.Getenv("DILL_OPERATION_MAIN_RUNTIME") == "preview-cancel" {
+		qualifiedNativeHost = func() bool { return true }
+		configLoader = func(ctx context.Context, _ string) (*config.DillConfig, error) {
+			if err := os.WriteFile(os.Getenv("DILL_OPERATION_MUTATION_MARKER"), []byte("ready"), 0600); err != nil {
+				return nil, err
+			}
+			<-ctx.Done()
+			return nil, ctx.Err()
+		}
+	}
 	if os.Getenv("DILL_OPERATION_MAIN_RUNTIME") == "prompt" {
 		configLoader = func(context.Context, string) (*config.DillConfig, error) { return testConfig(), nil }
 		f := &operationPromptMarkerEngine{fakeEngine: newFakeEngine(), marker: os.Getenv("DILL_OPERATION_MUTATION_MARKER")}

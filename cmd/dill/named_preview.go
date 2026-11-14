@@ -6,6 +6,9 @@ import (
 	"encoding/hex"
 	"errors"
 	"io"
+	"os"
+	"os/signal"
+	"syscall"
 
 	"github.com/umayr/dill/internal/config"
 	"github.com/umayr/dill/internal/coordination"
@@ -132,6 +135,8 @@ func runNamedPreview(ctx context.Context, args []string, out io.Writer) error {
 		return fail(2, "invalid_input", "INVALID_TARGET")
 	}
 	opts.EngineSocket = endpoint
+	ctx, stop := signal.NotifyContext(ctx, os.Interrupt, syscall.SIGTERM)
+	defer stop()
 	ctx, cancel := context.WithTimeout(ctx, inv.Timeout)
 	defer cancel()
 	state.ctx = ctx
