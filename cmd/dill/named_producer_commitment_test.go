@@ -52,4 +52,16 @@ func TestNamedProducerCommitmentsBindSnapshotAndForce(t *testing.T) {
 	if err != nil || cd == digest {
 		t.Fatal("identity not bound", err)
 	}
+	// Restore the same actual ID, then change only the original desired
+	// reference while retaining the separately prepared content ID.
+	n.containers["app_web"].ID = strings.Repeat("a", 64)
+	cfg.Services["web"].Image = "another-reference:same-content"
+	_, changed, err = produceNamedCapture(context.Background(), inv, cfg, n, target, strings.Repeat("e", 64))
+	if err != nil {
+		t.Fatal(err)
+	}
+	cd, err = changed.Digest()
+	if err != nil || cd == digest {
+		t.Fatal("desired reference provenance not bound", err)
+	}
 }
