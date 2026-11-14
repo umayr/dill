@@ -31,7 +31,12 @@ func namedProducerFixture(present bool) (*namedInventory, *inventoryEvidence) {
 	} else {
 		n.containers["app_web"] = nil
 	}
-	return n, &inventoryEvidence{image: "sha256:" + strings.Repeat("b", 64), facts: []orchestrator.PreviewResource{{Kind: "network", Name: "app"}}}
+	network := orchestrator.PreviewResource{Kind: "network", Name: "app"}
+	if present {
+		network.Exists, network.ActualName, network.ID = true, "app", strings.Repeat("e", 64)
+		network.Settings = []byte(`{"Driver":"bridge","Scope":"local","Internal":false,"IPv6":false,"Attachable":false,"Ingress":false,"IPAM":{"Driver":"default"},"Options":null,"Labels":{"dill.managed":"true","dill.stack":"app"}}`)
+	}
+	return n, &inventoryEvidence{image: "sha256:" + strings.Repeat("b", 64), facts: []orchestrator.PreviewResource{network}}
 }
 func TestNamedInventoryAndProducerFiveRoutes(t *testing.T) {
 	for _, action := range []string{"up", "start", "restart", "stop", "down"} {
@@ -84,6 +89,9 @@ func TestNamedInventoryRejectsIncompleteAndCopiesSnapshot(t *testing.T) {
 		func(n *namedInventory, e *inventoryEvidence) { e.image = "short" },
 		func(n *namedInventory, e *inventoryEvidence) { e.volumes = []string{"/hidden"} },
 		func(n *namedInventory, e *inventoryEvidence) { e.facts = nil },
+		func(n *namedInventory, e *inventoryEvidence) {
+			e.facts[0] = orchestrator.PreviewResource{Kind: "network", Name: "app"}
+		},
 	} {
 		n, e := namedProducerFixture(true)
 		mutate(n, e)

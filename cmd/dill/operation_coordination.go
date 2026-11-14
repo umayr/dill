@@ -69,8 +69,10 @@ type operationCoordination struct {
 	transportClosed bool
 	// Named capture is opt-in and remains private until the complete qualified
 	// inspection succeeds. Ordinary qualified operations are unchanged.
-	collectNamed   bool
-	namedInventory *namedInventory
+	collectNamed        bool
+	namedReadOnly       bool
+	namedInventory      *namedInventory
+	namedStateAttempted bool
 }
 
 // prepare validates the complete DECLARED inventory before engine/state access.
@@ -145,6 +147,9 @@ func (c *operationCoordination) prepare(ctx context.Context, opts commandOptions
 		return errors.New("qualified target unavailable")
 	}
 	c.target = target
+	if c.collectNamed {
+		c.namedStateAttempted = true
+	}
 	state, err := coordination.Open(ctx, c.options.directory)
 	if err != nil {
 		return errors.New("trusted coordination state unavailable")

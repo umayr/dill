@@ -38,6 +38,13 @@ type usageError struct{ msg string }
 func (e usageError) Error() string { return e.msg }
 
 func main() {
+	// Strict named argv must see raw tokens before global verbosity stripping.
+	// In particular, a value that resembles -v or a binding flag is still a value.
+	args := os.Args[1:]
+	if len(args) > 0 && (args[0] == "preflight" || args[0] == "preflight-capabilities" || (args[0] == cmdOperation && namedBindingIntent(args[1:]))) {
+		logger.Init(0)
+		os.Exit(exitCodeFor(run(args)))
+	}
 	if isProtocolInvocation(os.Args[1:]) && !secretInvocation(os.Args[1:]) {
 		os.Exit(runProtocol(os.Args[1:]))
 	}
@@ -85,6 +92,12 @@ func exitCodeFor(err error) int {
 }
 
 func run(args []string) (retErr error) {
+	if len(args) > 0 && args[0] == "preflight" {
+		return runNamedPreview(context.Background(), args[1:], os.Stdout)
+	}
+	if len(args) > 0 && args[0] == "preflight-capabilities" {
+		return runPreflightCapabilities(args[1:], os.Stdout)
+	}
 	// The executable operation namespace has its own fixed diagnostics and
 	// negotiation. Keep it outside legacy secret/protocol result rewriting.
 	if len(args) > 0 && args[0] == cmdOperation {

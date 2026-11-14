@@ -37,7 +37,8 @@ type coordinatedDockerFixture struct {
 	image                                                string
 	liveHost                                             map[string]any
 	liveMountType                                        string
-	liveImageID, liveImageStatus                         string
+	liveImageID, liveImageStatus, preparedImageID        string
+	liveContainerID                                      string
 	writes, connections                                  int
 	uncoordinatedWrite, failTerminal                     bool
 	redirectList, blockReads                             bool
@@ -45,6 +46,7 @@ type coordinatedDockerFixture struct {
 	unknownNetworks, extraNetwork                        bool
 	unknownLiveHost                                      bool
 	networkExists, foreignNetwork, foreignVolume         bool
+	liveNamedVolume, missingVolume                       bool
 	writeStarted                                         chan struct{}
 }
 
@@ -141,7 +143,11 @@ func (f *coordinatedDockerFixture) serve(w http.ResponseWriter, r *http.Request)
 			if f.running {
 				state = "running"
 			}
-			list = append(list, map[string]any{"Id": strings.Repeat("a", 64), "Names": []string{"/app_web"}, "Labels": f.labels, "State": state, "Image": "synthetic:v1"})
+			id := f.liveContainerID
+			if id == "" {
+				id = strings.Repeat("a", 64)
+			}
+			list = append(list, map[string]any{"Id": id, "Names": []string{"/app_web"}, "Labels": f.labels, "State": state, "Image": "synthetic:v1"})
 		}
 		if f.orphan {
 			list = append(list, map[string]any{"Id": strings.Repeat("d", 64), "Names": []string{"/app_orphan"}})
@@ -153,6 +159,9 @@ func (f *coordinatedDockerFixture) serve(w http.ResponseWriter, r *http.Request)
 			volumes["/implicit-private"] = struct{}{}
 		}
 		id := "sha256:" + strings.Repeat("c", 64)
+		if f.preparedImageID != "" {
+			id = f.preparedImageID
+		}
 		var imageConfig any = map[string]any{"Volumes": volumes}
 		if f.liveImageID != "" && strings.TrimSuffix(strings.TrimPrefix(path, "/images/"), "/json") == f.liveImageID {
 			id = f.liveImageID
@@ -193,7 +202,7 @@ func (f *coordinatedDockerFixture) serve(w http.ResponseWriter, r *http.Request)
 			imageID = "sha256:" + strings.Repeat("c", 64)
 		}
 		mounts := []any{}
-		if f.liveImageStatus == "volumes" {
+		if f.liveImageStatus == "volumes" || f.liveNamedVolume {
 			mounts = append(mounts, map[string]any{"Type": "volume", "Name": "app_data", "Source": "/private/engine/path", "Destination": "/data", "RW": true})
 		}
 		if f.liveMountType != "" {
@@ -203,7 +212,11 @@ func (f *coordinatedDockerFixture) serve(w http.ResponseWriter, r *http.Request)
 		if f.unknownLiveHost {
 			hostConfig = nil
 		}
-		json.NewEncoder(w).Encode(map[string]any{"Id": strings.Repeat("a", 64), "Name": "/app_web", "Image": imageID, "Config": map[string]any{"Image": f.image, "Labels": f.labels}, "HostConfig": hostConfig, "NetworkSettings": settings, "State": map[string]any{"Running": f.running}, "Mounts": mounts})
+		containerID := f.liveContainerID
+		if containerID == "" {
+			containerID = strings.Repeat("a", 64)
+		}
+		json.NewEncoder(w).Encode(map[string]any{"Id": containerID, "Name": "/app_web", "Image": imageID, "Config": map[string]any{"Image": f.image, "Labels": f.labels}, "HostConfig": hostConfig, "NetworkSettings": settings, "State": map[string]any{"Running": f.running}, "Mounts": mounts})
 	case path == "/networks":
 		list := []map[string]string{}
 		if f.networkExists {
@@ -226,6 +239,11 @@ func (f *coordinatedDockerFixture) serve(w http.ResponseWriter, r *http.Request)
 		w.WriteHeader(201)
 		json.NewEncoder(w).Encode(map[string]any{"Id": strings.Repeat("e", 64), "Warning": ""})
 	case path == "/volumes/app_data":
+		if f.missingVolume {
+			w.WriteHeader(404)
+			io.WriteString(w, `{"message":"not found"}`)
+			return
+		}
 		owner := "app"
 		if f.foreignVolume {
 			owner = "foreign-stack"

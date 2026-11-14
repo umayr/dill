@@ -186,6 +186,12 @@ func produceNamedCapture(ctx context.Context, inv preflight.Invocation, cfg *con
 		}
 		selection.Resources = append(selection.Resources, row)
 	}
+	sort.Slice(selection.Resources, func(i, j int) bool {
+		if selection.Resources[i].Kind != selection.Resources[j].Kind {
+			return selection.Resources[i].Kind < selection.Resources[j].Kind
+		}
+		return selection.Resources[i].Name < selection.Resources[j].Name
+	})
 	selection.Coverage, err = preflight.CoverageFor(selection.Resources)
 	if err != nil {
 		return nil, zero, err

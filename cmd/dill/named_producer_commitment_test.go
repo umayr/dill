@@ -27,8 +27,8 @@ func TestNamedProducerCommitmentsBindSnapshotAndForce(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if capture.upPlan == nil {
-		t.Fatal("missing actual planner result")
+	if capture.upPlan == nil || capture.upPlan.Changes[0].Kind != plan.KindNoop {
+		t.Fatal("expected actual planner no-op")
 	}
 	inv.ForceRecreate = true
 	forced, fs, err := produceNamedCapture(context.Background(), inv, cfg, n, target, strings.Repeat("e", 64))

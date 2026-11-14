@@ -140,6 +140,24 @@ func (n *namedInventory) complete(ctx context.Context, engine orchestrator.Engin
 	if len(want) != 0 {
 		return bad
 	}
+	// The qualified raw guard requires each live container to be attached to
+	// exactly the stack network. An absent network or an absent mounted volume
+	// contradicts that observation; do not present a complete review.
+	network := n.resources["network\x00"+n.stack]
+	for _, live := range n.containers {
+		if live == nil {
+			continue
+		}
+		if !network.Exists {
+			return bad
+		}
+		for _, mount := range live.Volumes {
+			volume, exists := n.resources["volume\x00"+mount.Source]
+			if !exists || !volume.Exists {
+				return bad
+			}
+		}
+	}
 	return ctx.Err()
 }
 
