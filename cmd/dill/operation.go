@@ -326,14 +326,16 @@ func runOperation(ctx context.Context, args []string) error {
 			return emit(0, "", "")
 		}
 		return emit(1, "", "")
-	case errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) || ctx.Err() != nil:
-		result.Outcome = "cancelled"
-		return emit(1, "CANCELLED", "Operation cancelled or deadline exceeded.")
+	// A known secret refusal must clear identifying metadata even when the
+	// context is cancelled concurrently. Keep legacy classification unchanged.
 	case bound && errors.Is(err, config.ErrSecretUnavailable):
 		result.Target = nil
 		result.Stack = ""
 		result.Outcome = "failed"
 		return emit(1, "SECRET_UNAVAILABLE", "Secret configuration or source unavailable.")
+	case errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) || ctx.Err() != nil:
+		result.Outcome = "cancelled"
+		return emit(1, "CANCELLED", "Operation cancelled or deadline exceeded.")
 	case coordinationInspection(err):
 		result.Outcome = "failed"
 		return emit(1, "COORDINATION_INSPECTION_REQUIRED", "Unresolved coordination state. Inspect and explicitly acknowledge it before retrying.")
