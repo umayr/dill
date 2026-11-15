@@ -61,6 +61,12 @@ fail complete acceptance. Empty Start may ensure a network; no-op Up is not a
 zero-mutator promise. Down retention is honest, not qualified teardown success.
 The existing actual crash/recovery/concurrency/foreign baseline stays mandatory.
 
+The empty positive is a genuinely empty Pkl `services {}` graph with exactly
+one network review row, not a declared-but-absent service. The latter is a
+separate required negative within the same case. Review membership is prescribed
+by each fixture and independently checked against successful full native
+inventories, including actual absence/planned names and present immutable IDs.
+
 Qualified Docker additionally records the exact frozen supported
 `preflightCapabilities` object. Ordinary Podman has 11 baseline passes and 19
 qualified blocks when actually successful, and is explicitly unqualified.
@@ -303,7 +309,20 @@ The runner emits `evidence.json` with:
   actual engine version response when run, exact commands, exits and output hashes;
 - individual baseline case results plus unresolved prerequisite gaps.
 
-Only bounded version metadata and command arguments are persisted; raw Pkl,
+All nested public records are closed and typed before sealing: unknown
+stdout/stderr/env/log fields fail collection, including inside command arrays.
+Integer exit/byte/count fields reject booleans, null and coercion; diagnostic
+classes come only from the fixed reviewed catalog, including safe failure
+`error` classes. `engineVersion` is ONLY `{engine, clientVersion, serverVersion}`
+with both actual CLI version fields nonempty printable ASCII of at most 128
+bytes—no inference, defaults, trimming or raw Components/Details dictionaries.
+
+Command argv is a fixed, non-executable observation grammar: `<candidate>`,
+`<pkl>`, `<repo>/test/qualification/v1/...` and `<engine-socket>` replace physical
+operator executable/workspace/socket paths. Actual execution still receives the
+original explicit inputs; public placeholders are never executable authority.
+Sealed evidence is canonical sorted-key, two-space JSON with one final newline.
+Only bounded version metadata and redacted command arguments are persisted; raw Pkl,
 engine, workload or Go-test diagnostics are **not** copied into the evidence.
 Do not put secrets in arguments, socket/config paths, fixtures or environments.
 The private `home/` and raw daemon logs are not uploaded. This does not claim

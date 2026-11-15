@@ -35,7 +35,7 @@ class QualificationTests(unittest.TestCase):
                     "schema": {"sha256": "c" * 64}, "pkl": {"sha256": "d" * 64},
                     "checksumsAfter": {"binary": digest, "schema": "c" * 64, "pkl": "d" * 64},
                     "integrityVerified": True, "engine": "docker", "disposableAttested": True,
-                    "target": endpoint, "engineVersion": {"Server": {"Version": "synthetic"}},
+                    "target": endpoint, "engineVersion": {"engine": "docker", "clientVersion": "synthetic", "serverVersion": "synthetic"},
                     "baselinePassed": True, "commands": [{"passed": True}], "qualifiedRequested": True,
                     "qualifiedProvisioning": {"source": q.PROVISIONING_SOURCE, "layout": "native-local-docker-v1",
                         "expectedIdentityDigest": "sha256:" + "e" * 64, "privateStateRootVerified": True},
@@ -145,6 +145,27 @@ class QualificationTests(unittest.TestCase):
             self.assertTrue(evidence["baselinePassed"])
             self.assertEqual(evidence["qualification"], "incomplete")
             self.assertFalse(evidence["acceptance"]["complete"])
+
+    def test_version_projection_never_promotes_raw_cli_fields_or_infers_versions(self):
+        document = {"Client": {"Version": "actual-client", "stdout": "PRIVATE"},
+                    "Server": {"Version": "actual-server", "Details": {"raw": "PRIVATE"}}, "stderr": "PRIVATE"}
+        self.assertEqual(q.public_engine_version(document, "docker"),
+                         {"engine": "docker", "clientVersion": "actual-client", "serverVersion": "actual-server"})
+        for value in (None, True, 42, "", "bad\nline", "x" * 129):
+            with self.subTest(value=value), self.assertRaises(ValueError):
+                q.public_engine_version({"Client": {"Version": value}, "Server": {"Version": "actual"}}, "docker")
+        self.assertEqual(q.public_engine_version({"Client": {"Version": " actual "}, "Server": {"Version": " actual "}}, "docker")["clientVersion"], " actual ")
+        for value in ({}, {"Server": {"Version": "actual"}}, {"Client": {"APIVersion": "not-Version"}, "Server": {"Version": "actual"}}):
+            with self.assertRaises(ValueError):
+                q.public_engine_version(value, "docker")
+
+    def test_command_paths_are_redacted_without_changing_execution(self):
+        pkl = "/private/fixture-only/pkl"
+        actual = [str(q.ROOT / "bin/dill"), "-f", str(q.FIXTURES / "valid.pkl"), "validate"]
+        public = q.public_command_argv(actual, {"DILL_PKL_PATH": pkl})
+        self.assertEqual(public, ["<candidate>", "-f", "<repo>/test/qualification/v1/valid.pkl", "validate"])
+        self.assertEqual(actual[0], str(q.ROOT / "bin/dill"))
+        self.assertEqual(q.public_command_argv([pkl, "--version"], {"DILL_PKL_PATH": pkl}), ["<pkl>", "--version"])
 
     def test_named_discovery_is_exact_and_typed(self):
         from copy import deepcopy
@@ -397,7 +418,7 @@ print('private-empty-auth-only')
                             "qualifiedCoordinationOperations": ["up", "down", "stop", "start", "restart", "rm"],
                             "qualifiedCoordinationEngines": ["docker"], "qualifiedCoordinationLayouts": ["native-local-docker-v1"]}).encode(), True
                     if argv[0] == "docker":
-                        return b'{"Server":{"Version":"synthetic"}}', True
+                        return b'{"Client":{"Version":"synthetic"},"Server":{"Version":"synthetic"}}', True
                     if argv[0] == "make":
                         observed.append((argv, env.copy()))
                         return b"--- PASS: TestNativePrimary (0s)\n--- PASS: TestNativeExtra (0s)\n", True
@@ -645,7 +666,7 @@ print('private-empty-auth-only')
                                 "features": ["explicitLocalSelector", "attended", "redactedSummary", "conservativeEffects"],
                                 "operations": ["validate", "plan", "diff", "up", "down", "stop", "start", "restart", "rm", "teardown"]}).encode(), True
                         if str(argv[0]) == engine:
-                            return b'{"Server":{"Version":"synthetic"}}', True
+                            return b'{"Client":{"Version":"synthetic"},"Server":{"Version":"synthetic"}}', True
                         if str(argv[0]) == "make":
                             names = ["TestGuardrail"] + (["TestDockerProfile"] if engine == "docker" else [])
                             outer.assertEqual(argv[-1], q.make_test_selector(names))

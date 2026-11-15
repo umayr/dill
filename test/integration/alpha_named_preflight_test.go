@@ -12,35 +12,41 @@ import (
 // Actual independently provisioned native fixture, never Brine/source proof.
 func (f *alphaQualifiedFixture) namedReview(t *testing.T, action string, extra ...string) preflight.Result {
 	t.Helper()
+	return f.namedReviewResources(t, action, map[string]string{"container": f.stack + "_app", "network": f.stack, "volume": f.stack + "_data"}, extra...)
+}
+
+// Expected membership is prescribed by the fixture, NEVER candidate coverage.
+// Successful full inventories independently establish BOTH presence and absence.
+func (f *alphaQualifiedFixture) namedReviewResources(t *testing.T, action string, expected map[string]string, extra ...string) preflight.Result {
+	t.Helper()
 	result, code := f.namedAttempt(t, action, "60s", extra...)
-	if code != 0 || result.Outcome != "succeeded" || result.Target == nil || len(result.Resources) != 3 || result.SelectionDigest == nil {
+	if code != 0 || result.Outcome != "succeeded" || result.Target == nil || len(result.Resources) != len(expected) || result.SelectionDigest == nil {
 		t.Fatal("complete native named review unavailable")
 	}
-	expected := map[string]string{"container": f.stack + "_app", "network": f.stack, "volume": f.stack + "_data"}
+	actual := alphaNamedResourceInventory(t)
+	seen := map[string]bool{}
 	for _, row := range result.Resources {
-		if expected[row.Kind] != row.Name {
-			t.Fatal("review did not expose the actual bounded fixture names")
+		if expected[row.Kind] != row.Name || seen[row.Kind] {
+			t.Fatal("review membership differs from independently prescribed fixture")
 		}
-		delete(expected, row.Kind)
-		if row.Presence == "present" {
-			switch row.Kind {
-			case "container":
-				if runEngine(t, "docker", "inspect", "--format", "{{.Id}}", row.Name) != row.Identity {
-					t.Fatal("reviewed container identity not actual")
-				}
-			case "network":
-				if runEngine(t, "docker", "network", "inspect", "--format", "{{.Id}}", row.Name) != row.Identity {
-					t.Fatal("reviewed network identity not actual")
-				}
-			case "volume":
-				if runEngine(t, "docker", "volume", "inspect", "--format", "{{.Name}}", row.Name) != row.Identity {
-					t.Fatal("reviewed named volume identity not actual")
-				}
+		seen[row.Kind] = true
+		identity, present := actual[row.Kind][row.Name]
+		if !present {
+			if row.Presence != "absent" || row.IdentityKind != "planned-name" || row.Identity != row.Name {
+				t.Fatal("absent resource did not retain its actual planned name")
+			}
+		} else {
+			kind := "immutable-id"
+			if row.Kind == "volume" {
+				kind = "engine-name"
+			}
+			if row.Presence != "present" || row.IdentityKind != kind || row.Identity != identity {
+				t.Fatal("reviewed presence/identity differs from actual read-only inventory")
 			}
 		}
 	}
-	if len(expected) != 0 {
-		t.Fatal("review omitted a declared fixture resource")
+	if len(seen) != len(expected) {
+		t.Fatal("review omitted a prescribed fixture resource")
 	}
 	return result
 }

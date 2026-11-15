@@ -25,7 +25,11 @@ The `handoff.tar.gz` allowlist contains `bin/dill`, checksum-pinned `bin/pkl`,
 `dill.pkl`, `internal/loader/pkl-toolchain.json`, `test/qualification/v1/`, public
 `internal/operation/testdata/` goldens, all 15 unchanged public
 `internal/preflight/testdata/` goldens, `docs/named-preflight-v1.md`, this guide
-and `handoff.json`. The collector rejects extras/links and independently checks
+and `handoff.json`. All nested public evidence records are closed and typed;
+raw diagnostics are forbidden even inside command arrays. The only engine
+version fields are actual bounded `{engine, clientVersion, serverVersion}`.
+Public command argv uses fixed redacted placeholders, never executable authority.
+The collector rejects extras/links and independently checks
 all payloads, manifest bindings and canonical archive bytes before sealing one
 explicit upload directory; no wildcard upload reads private evidence roots.
 There is no
@@ -116,7 +120,8 @@ immutable prepared IDs and original-reference/no-op provenance; retained data;
 force/config/live-ID/prepared-content/original-reference mismatches before ALL
 mutators; same-inode state aliases versus socket spelling and valid copied-store
 bindings; actual held-lock cancellation using one native `--timeout 2s` flag;
-empty/orphan behavior; and actual unsafe state metadata refusal. Copies preserve
+genuine zero-service empty/orphan behavior (declared-but-absent Start stays a
+negative); and actual unsafe state metadata refusal. Copies preserve
 internal hardlinks but share none with the original, and a fresh successful
 destination preview proves metadata validity before testing stale comparison.
 Outer process death, a missing receipt or unit-injected close cancellation is

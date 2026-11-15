@@ -1,6 +1,9 @@
 """Pure closed collector tests. No candidate, Pkl, Docker or Brine execution."""
 import importlib.util
 import json
+import hashlib
+import argparse
+import socket
 from pathlib import Path
 import shutil
 import tempfile
@@ -19,13 +22,17 @@ class CollectorTests(unittest.TestCase):
             path = root / name
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_bytes(b"synthetic public bytes: " + name.encode())
+        catalog = Path(__file__).resolve().parent.parent / "test/qualification/v1/cases.json"
+        (root / "test/qualification/v1/cases.json").write_bytes(catalog.read_bytes())
+        (root / "internal/loader/pkl-toolchain.json").write_text(json.dumps({"version": "0.31.1", "sha256": {"synthetic": s.q.sha256(root / "bin/pkl")}}))
         output = root / "bin/alpha-evidence-docker"
         output.mkdir()
         (output / "home").mkdir()
         (output / "home/identity.key").write_text("PRIVATE-SENTINEL-NOT-FOR-UPLOAD")
         evidence = {"version": "dill.alpha-evidence/2", "engine": "docker", "qualification": "incomplete",
-                    "source": {"commit": COMMIT}, "binary": {"sha256": s.q.sha256(root / "bin/dill")},
-                    "qualifiedProvisioning": {"expectedIdentityDigest": "sha256:" + "b" * 64}}
+                    "source": {"commit": COMMIT, "dirty": False, "statusSha256": hashlib.sha256(b"").hexdigest()},
+                    "binary": {"sha256": s.q.sha256(root / "bin/dill"), "version": "synthetic", "goVersion": "go1.25.0", "goOS": "linux", "goArch": "amd64", "buildRevision": COMMIT, "buildModified": "false"},
+                    "qualifiedProvisioning": {"source": s.q.PROVISIONING_SOURCE, "layout": "native-local-docker-v1", "expectedIdentityDigest": "sha256:" + "b" * 64, "privateStateRootVerified": True}}
         if archive:
             bundle = output / "handoff"
             sources = s.q.handoff_sources(root / "bin/dill", root / "bin/pkl")
@@ -137,6 +144,85 @@ class CollectorTests(unittest.TestCase):
         paths = workflow.split("          path: |\n", 1)[1].strip().splitlines()
         self.assertEqual(paths, ["${{ runner.temp }}/dill-public-${{ matrix.engine }}/"])
         self.assertNotIn("*", paths[0])
+
+    def test_nested_diagnostics_and_typed_integers_fail_before_sealing(self):
+        valid = {"argv": ["git", "rev-parse", "HEAD"], "expectedExit": 0, "passed": True, "exit": 0,
+                 "stdoutSha256": "b" * 64, "stderrSha256": "c" * 64, "stdoutBytes": 40, "stderrBytes": 0}
+        variants = [("stdout", "PRIVATE"), ("stderr", "PRIVATE"), ("env", {"TOKEN": "PRIVATE"}),
+                    ("expectedExit", True), ("exit", None), ("stdoutBytes", True), ("stderrBytes", 1.5),
+                    ("failure", "PRIVATE-freeform"), ("cleanupFailure", "PRIVATE-freeform")]
+        for key, value in variants:
+            with self.subTest(key=key), tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp)
+                with patch.object(s.q, "ROOT", root), patch.object(s.q, "FIXTURES", root / "test/qualification/v1"):
+                    output, evidence = self.fixture(root)
+                    evidence["commands"] = [dict(valid, **{key: value})]
+                    (output / "evidence.json").write_text(json.dumps(evidence))
+                    with patch.object(s, "public_sources", return_value={"bin/dill": root / "bin/dill"}), self.assertRaises((ValueError, TypeError)):
+                        s.stage("docker", COMMIT, root / "bin/pkl", root / "sealed")
+                    self.assertFalse((root / "sealed").exists())
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            with patch.object(s.q, "ROOT", root), patch.object(s.q, "FIXTURES", root / "test/qualification/v1"):
+                output, evidence = self.fixture(root)
+                evidence.update(commands=[valid], error="ValueError")
+                (output / "evidence.json").write_text(json.dumps(evidence))
+                with patch.object(s, "public_sources", return_value={"bin/dill": root / "bin/dill"}):
+                    s.stage("docker", COMMIT, root / "bin/pkl", root / "sealed")
+
+    def test_nested_record_extensions_are_rejected_at_every_allowed_object(self):
+        for name in ("source", "binary", "pkl", "schema", "qualifiedProvisioning", "dillArtifactSupply", "engineVersion", "acceptance"):
+            with self.subTest(record=name), tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp)
+                with patch.object(s.q, "ROOT", root), patch.object(s.q, "FIXTURES", root / "test/qualification/v1"):
+                    output, evidence = self.fixture(root)
+                    value = dict(evidence.get(name, {}), stdout="PRIVATE-REJECT-AT-ANY-DEPTH")
+                    evidence[name] = value
+                    (output / "evidence.json").write_text(json.dumps(evidence))
+                    with patch.object(s, "public_sources", return_value={"bin/dill": root / "bin/dill"}), self.assertRaises((ValueError, TypeError)):
+                        s.stage("docker", COMMIT, root / "bin/pkl", root / "sealed")
+                    self.assertFalse((root / "sealed").exists())
+
+    def test_genuine_producer_metadata_collects_with_fake_transport_only(self):
+        # Real collect/Recorder/redaction/version projection and real stage.
+        # Popen is fake; no executable or daemon runs, and complete is FALSE.
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp).resolve()  # Actual ROOT is always __file__.resolve().
+            with patch.object(s.q, "ROOT", root), patch.object(s.q, "FIXTURES", root / "test/qualification/v1"):
+                output, _ = self.fixture(root)
+                shutil.rmtree(output)
+                for name in ("dill", "pkl"):
+                    (root / "bin" / name).chmod(0o500)
+                manifest = json.loads((s.q.FIXTURES / "cases.json").read_text())
+                names = [n for c in manifest["cases"] if c["mode"] == "engine" for n in s.q.runtime_tests(c)]
+                class FakeProcess:
+                    def __init__(self, argv, **kwargs):
+                        self.returncode = 0
+                        self.output = b""
+                        if argv[:3] == ["git", "rev-parse", "HEAD"]: self.output = COMMIT.encode()
+                        elif argv[:2] == ["go", "version"]:
+                            self.output = json.dumps({"GoVersion": "go1.25.0", "Settings": [{"Key": k, "Value": v} for k, v in {"GOOS": "linux", "GOARCH": "amd64", "vcs.revision": COMMIT, "vcs.modified": "false"}.items()]}).encode()
+                        elif argv[-1] == "--version": self.output = b"Pkl 0.31.1 (synthetic)"
+                        elif argv[-1] == "version": self.output = b"synthetic-version"
+                        elif argv[-1] == "validate": self.returncode = 2 if argv[-2].endswith("invalid-graph.pkl") else 0
+                        elif argv[0] == "docker": self.output = b'{"Client":{"Version":"synthetic-client"},"Server":{"Version":"synthetic-server","Details":{"private":"NOT-PUBLISHED"}}}'
+                        elif argv[0] == "make": self.output = "".join("--- PASS: " + name + " (0s)\n" for name in names).encode()
+                    def communicate(self, timeout=None): return self.output, b""
+                with socket.socket(socket.AF_UNIX) as sock:
+                    endpoint = root / "s"
+                    sock.bind(str(endpoint))
+                    args = argparse.Namespace(expected_commit=COMMIT, binary=str(root / "bin/dill"), binary_sha256=s.q.sha256(root / "bin/dill"), pkl=str(root / "bin/pkl"), output=str(output), allow_dirty=False, engine="docker", socket=str(endpoint), disposable=True, operations=False, profiles=False, require_complete=False, qualified=False, coordination_daemon_id=None, coordination_state_root=None, native_layout_provisioned=False, provisioning_source=None)
+                    with patch.object(s.q.subprocess, "Popen", FakeProcess):
+                        self.assertEqual(s.q.collect(args), 0)
+                evidence = json.loads((output / "evidence.json").read_text())
+                self.assertEqual(evidence["qualification"], "incomplete")
+                self.assertFalse(evidence["acceptance"]["complete"])
+                self.assertEqual(evidence["engineVersion"], {"engine": "docker", "clientVersion": "synthetic-client", "serverVersion": "synthetic-server"})
+                with patch.object(s, "public_sources", return_value={"bin/dill": root / "bin/dill"}):
+                    s.stage("docker", COMMIT, root / "bin/pkl", root / "sealed")
+                public = (root / "sealed/bin/alpha-evidence-docker/evidence.json").read_bytes()
+                self.assertNotIn(b"NOT-PUBLISHED", public)
+                self.assertNotIn(str(root).encode(), json.dumps(evidence["commands"]).encode())
 
     def test_strict_json(self):
         for data in (b'{"a":1,"a":2}', b'{"a":NaN}', b'{} {}', b'\xff', b'\xef\xbb\xbf{}'):

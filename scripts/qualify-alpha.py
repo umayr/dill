@@ -145,7 +145,12 @@ def final_acceptance(evidence, manifest):
         reasons.append("candidate-not-clean-and-pinned")
     if (evidence.get("engine") != "docker" or binary.get("goOS") != "linux" or evidence.get("disposableAttested") is not True
             or not str(evidence.get("target", "")).startswith("unix:///")
-            or not isinstance(evidence.get("engineVersion"), dict) or not evidence["engineVersion"]):
+            or not isinstance(evidence.get("engineVersion"), dict)
+            or set(evidence["engineVersion"]) != {"engine", "clientVersion", "serverVersion"}
+            or evidence["engineVersion"].get("engine") != "docker"
+            or any(not isinstance(evidence["engineVersion"].get(key), str)
+                   or not re.fullmatch(r"[ -~]{1,128}", evidence["engineVersion"][key])
+                   for key in ("clientVersion", "serverVersion"))):
         reasons.append("disposable-docker-runtime-missing")
     provisioning = evidence.get("qualifiedProvisioning") or {}
     if (evidence.get("qualifiedRequested") is not True or provisioning.get("source") != PROVISIONING_SOURCE
@@ -342,16 +347,50 @@ def test_results(output, names):
     return results
 
 
+def public_command_argv(argv, env):
+    """Keep fixed public grammar, never operator executable/workspace paths."""
+    paths = {str(ROOT / "bin/dill"): "<candidate>"}
+    if env.get("DILL_PKL_PATH"):
+        paths[env["DILL_PKL_PATH"]] = "<pkl>"
+    if env.get("DILL_ENGINE_SOCKET"):
+        paths[env["DILL_ENGINE_SOCKET"]] = "<engine-socket>"
+    result = []
+    for value in map(str, argv):
+        if value in paths:
+            result.append(paths[value])
+        elif value.startswith(str(ROOT) + os.sep):
+            result.append("<repo>/" + str(Path(value).relative_to(ROOT)))
+        elif value.startswith("/"):
+            result.append("<redacted-path>")
+        else:
+            result.append(value)
+    return result
+
+
+def public_engine_version(document, engine):
+    """Project only actual version fields, never arbitrary raw CLI dictionaries."""
+    values = []
+    for part in ("Client", "Server"):
+        if not isinstance(document, dict) or not isinstance(document.get(part), dict):
+            raise ValueError("actual client and server versions required")
+        value = document[part].get("Version")
+        if not isinstance(value, str) or not re.fullmatch(r"[ -~]{1,128}", value):
+            raise ValueError("actual client/server version outside bounded printable shape")
+        values.append(value)
+    return {"engine": engine, "clientVersion": values[0], "serverVersion": values[1]}
+
+
 class Recorder:
     def __init__(self, env):
         self.env = env
         self.commands = []
 
     def run(self, argv, timeout=120, expected=0, env=None):
-        record = {"argv": [str(x) for x in argv], "expectedExit": expected}
+        execution = [str(x) for x in argv]
+        record = {"argv": public_command_argv(execution, env or self.env), "expectedExit": expected}
         self.commands.append(record)
         try:
-            proc = subprocess.Popen(record["argv"], cwd=ROOT, env=env or self.env,
+            proc = subprocess.Popen(execution, cwd=ROOT, env=env or self.env,
                                     stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                                     start_new_session=True)
             try:
@@ -372,6 +411,9 @@ class Recorder:
                           stdoutBytes=len(stdout), stderrBytes=len(stderr))
             record["passed"] = proc.returncode == expected
             return stdout, record["passed"]
+        except KeyboardInterrupt:
+            record.update(passed=False, failure="KeyboardInterrupt")
+            raise
         except (OSError, subprocess.TimeoutExpired) as error:
             # Deliberately do not persist raw candidate/engine diagnostics.
             record.update(passed=False, failure=type(error).__name__)
@@ -639,7 +681,7 @@ def collect(args):
             # Only the version response, never engine info/inspect/config/environment.
             if len(engine_version) > 64 * 1024:
                 raise ValueError("unexpected engine version response size")
-            evidence["engineVersion"] = json.loads(engine_version)
+            evidence["engineVersion"] = public_engine_version(json.loads(engine_version), args.engine)
             tests = list(dict.fromkeys(name for case in runtime_cases if case["mode"] in modes for name in runtime_tests(case)))
             data, passed = recorder.run(["make", "integration-test", make_test_selector(tests)],
                                         timeout=1800, env=target_env)

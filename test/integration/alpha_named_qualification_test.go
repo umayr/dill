@@ -18,6 +18,24 @@ import (
 	"github.com/umayr/dill/internal/preflight"
 )
 
+func alphaNamedFields(data json.RawMessage, keys []string, nullable ...string) (map[string]json.RawMessage, error) {
+	var object map[string]json.RawMessage
+	if err := json.Unmarshal(data, &object); err != nil || len(object) != len(keys) {
+		return nil, fmt.Errorf("wrong required object membership")
+	}
+	allowedNull := map[string]bool{}
+	for _, key := range nullable {
+		allowedNull[key] = true
+	}
+	for _, key := range keys {
+		value, ok := object[key]
+		if !ok || (!allowedNull[key] && bytes.Equal(bytes.TrimSpace(value), []byte("null"))) {
+			return nil, fmt.Errorf("missing/null required field")
+		}
+	}
+	return object, nil
+}
+
 // Independently check exact object/row membership, duplicates, bounds and EOF.
 // Production validation is additional, never the only wire oracle.
 func decodeAlphaNamed(data []byte, code int) (preflight.Result, error) {
@@ -74,9 +92,37 @@ func decodeAlphaNamed(data []byte, code int) (preflight.Result, error) {
 	if _, err := tokens.Token(); err != io.EOF {
 		return result, fmt.Errorf("trailing JSON")
 	}
-	var root map[string]json.RawMessage
-	if err := json.Unmarshal(data, &root); err != nil || len(root) != 14 {
-		return result, fmt.Errorf("named root is not exactly 14 fields")
+	root, err := alphaNamedFields(data, []string{"version", "operationId", "operation", "target", "stack", "outcome", "engineEffects", "coordinationEffects", "inputDigest", "selectionDigest", "coverage", "resources", "resourcesTruncated", "errors"}, "target", "inputDigest", "selectionDigest")
+	if err != nil {
+		return result, err
+	}
+	if !bytes.Equal(bytes.TrimSpace(root["target"]), []byte("null")) {
+		if _, err := alphaNamedFields(root["target"], []string{"engine", "endpointDigest", "qualifiedIdentityDigest"}); err != nil {
+			return result, err
+		}
+	}
+	coverage, err := alphaNamedFields(root["coverage"], []string{"containers", "network", "volumes"})
+	if err != nil {
+		return result, err
+	}
+	for _, value := range coverage {
+		if _, err := alphaNamedFields(value, []string{"scope", "count", "presentCount", "complete"}); err != nil {
+			return result, err
+		}
+	}
+	for _, spec := range []struct {
+		name   string
+		fields []string
+	}{{"resources", []string{"kind", "name", "identity", "identityKind", "presence", "action", "retention"}}, {"errors", []string{"code", "message"}}} {
+		var rows []json.RawMessage
+		if err := json.Unmarshal(root[spec.name], &rows); err != nil {
+			return result, err
+		}
+		for _, row := range rows {
+			if _, err := alphaNamedFields(row, spec.fields); err != nil {
+				return result, err
+			}
+		}
 	}
 	decoder := json.NewDecoder(bytes.NewReader(data))
 	decoder.DisallowUnknownFields()
@@ -86,7 +132,7 @@ func decodeAlphaNamed(data []byte, code int) (preflight.Result, error) {
 	if err := result.Validate(code); err != nil {
 		return result, err
 	}
-	if result.Version != "dill.preflight/1" || result.EngineEffects != "none" || result.ResourcesTruncated || len(result.Resources) > 256 {
+	if result.Version != "dill.preflight/1" || result.EngineEffects != "none" || (code == 0 && result.ResourcesTruncated) || len(result.Resources) > 256 {
 		return result, fmt.Errorf("named frozen envelope mismatch")
 	}
 	var rows []map[string]json.RawMessage
@@ -284,19 +330,31 @@ func TestAlphaQualifiedNamedPreflightLockCancellation(t *testing.T) {
 }
 
 func TestAlphaQualifiedNamedPreflightEmptyAndOrphans(t *testing.T) {
+	t.Run("declared-but-absent", func(t *testing.T) {
+		f := newAlphaQualifiedFixture(t)
+		result, code := f.namedAttempt(t, "start", "60s")
+		if code != 1 || len(result.Errors) != 1 || result.Errors[0].Code != "PREFLIGHT_UNAVAILABLE" {
+			t.Fatal("absent declared service was incorrectly accepted as empty Start")
+		}
+	})
 	t.Run("empty", func(t *testing.T) {
 		f := newAlphaQualifiedFixture(t)
-		review := f.namedReview(t, "start")
+		alphaNamedEmptyConfig(t, f.cfg, f.root, f.stack)
+		expected := map[string]string{"network": f.stack}
+		review := f.namedReviewResources(t, "start", expected)
 		result, code := f.run(t, "start", "cli", "", "--preflight-contract", "dill.preflight/1", "--expect-preflight", *review.SelectionDigest)
 		alphaQualifiedAxes(t, result, code, 0, "succeeded", "complete")
 		if value := runEngine(t, "docker", "ps", "-aq", "--filter", "label=dill.stack="+f.stack); value != "" {
 			t.Fatal("empty start invented a container")
 		}
 		runEngine(t, "docker", "network", "inspect", f.stack)
-		down := f.namedReview(t, "down")
+		if value := runEngine(t, "docker", "volume", "ls", "-q", "--filter", "label=dill.stack="+f.stack); value != "" {
+			t.Fatal("empty start invented a volume")
+		}
+		down := f.namedReviewResources(t, "down", expected)
 		result, code = f.run(t, "down", "cli", "", "--preflight-contract", "dill.preflight/1", "--expect-preflight", *down.SelectionDigest)
 		alphaQualifiedAxes(t, result, code, 1, "failed", "none")
-		f.namedReview(t, "stop") // failed/none is NOT an inspection barrier.
+		f.namedReviewResources(t, "stop", expected) // failed/none is NOT an inspection barrier.
 	})
 	t.Run("orphan", func(t *testing.T) {
 		f := newAlphaQualifiedFixture(t)
@@ -350,6 +408,20 @@ func TestAlphaNamedQualificationDecoder(t *testing.T) {
 	}
 	if _, err := decodeAlphaNamed(fixture.Result, 0); err != nil {
 		t.Fatalf("frozen positive failed: %v", err)
+	}
+	for key := range map[string]bool{"version": true, "operationId": true, "operation": true, "stack": true, "outcome": true, "engineEffects": true, "coordinationEffects": true, "coverage": true, "resources": true, "resourcesTruncated": true, "errors": true} {
+		var object map[string]json.RawMessage
+		if err := json.Unmarshal(fixture.Result, &object); err != nil {
+			t.Fatal(err)
+		}
+		object[key] = json.RawMessage("null")
+		data, err := json.Marshal(object)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := decodeAlphaNamed(data, 0); err == nil {
+			t.Fatalf("required null accepted: %s", key)
+		}
 	}
 	bad := [][]byte{append(append([]byte{}, fixture.Result...), []byte(" {}")...), bytes.Replace(fixture.Result, []byte(`"version":`), []byte(`"version":"duplicate","version":`), 1)}
 	for _, data := range bad {
