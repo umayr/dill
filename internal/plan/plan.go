@@ -222,9 +222,12 @@ func diffConfigsChecked(name string, svc *config.Service, live *orchestrator.Liv
 
 	// env — only keys defined in desired config
 	for k, want := range svc.Environment {
-		got := live.Env[k]
-		if want != got {
+		got, exists := live.Env[k]
+		if !exists || want != got {
 			before, after := got, want
+			if !exists {
+				before = "[unset]"
+			}
 			if isSensitiveKey(k) {
 				before, after = redactValue(got), redactValue(want)
 			}
@@ -464,15 +467,6 @@ func shortImageID(id string) string {
 	return id
 }
 
-// normalizeHostIP treats the various "any interface" representations as equal
-// so that Docker's default "::" binding doesn't diff against an unset HostIP.
-func normalizeHostIP(ip string) string {
-	if ip == "" || ip == "0.0.0.0" || ip == "::" {
-		return ""
-	}
-	return ip
-}
-
 // diffPorts returns FieldDiff entries for port binding changes.
 func diffPorts(desired, live []config.PortBinding) []FieldDiff {
 	key := func(p config.PortBinding) string {
@@ -483,41 +477,90 @@ func diffPorts(desired, live []config.PortBinding) []FieldDiff {
 		return fmt.Sprintf("%s/%s", p.Target, proto)
 	}
 
-	// normPortStr is used for semantic comparison only (not display).
-	// It normalises HostIP so that "" / "0.0.0.0" / "::" are treated the same.
-	normPortStr := func(p config.PortBinding) string {
-		p.HostIP = normalizeHostIP(p.HostIP)
-		return portStr(p)
+	compatible := func(dp, lp config.PortBinding) bool {
+		if key(dp) != key(lp) || dp.Published != lp.Published {
+			return false
+		}
+		if dp.HostIP == "" {
+			return lp.HostIP == "" || lp.HostIP == "0.0.0.0" || lp.HostIP == "::"
+		}
+		return dp.HostIP == lp.HostIP
 	}
 
-	desiredSet := make(map[string]config.PortBinding, len(desired))
-	for _, p := range desired {
-		desiredSet[key(p)] = p
-	}
-	liveSet := make(map[string]config.PortBinding, len(live))
-	for _, p := range live {
-		liveSet[key(p)] = p
-	}
-
+	// Match individual bindings, not just target/protocol: several host
+	// addresses or ports can publish the same container port.
+	live = append([]config.PortBinding(nil), live...)
+	sort.Slice(live, func(i, j int) bool {
+		a, b := live[i], live[j]
+		if key(a) != key(b) {
+			return key(a) < key(b)
+		}
+		if a.Published != b.Published {
+			return a.Published < b.Published
+		}
+		return a.HostIP < b.HostIP
+	})
+	used := make([]bool, len(live))
 	var diffs []FieldDiff
-	for k, dp := range desiredSet {
-		lp, exists := liveSet[k]
-		if !exists {
-			diffs = append(diffs, FieldDiff{Field: "port." + k, Before: "", After: portStr(dp)})
-		} else if normPortStr(dp) != normPortStr(lp) {
-			diffs = append(diffs, FieldDiff{Field: "port." + k, Before: portStr(lp), After: portStr(dp)})
-		}
+	var unmatched []config.PortBinding
+	// Explicit addresses must claim their rows before wildcard defaults do.
+	ordered := append([]config.PortBinding(nil), desired...)
+	sort.SliceStable(ordered, func(i, j int) bool { return ordered[i].HostIP != "" && ordered[j].HostIP == "" })
+	type defaultMatch struct {
+		binding config.PortBinding
+		index   int
 	}
-	for k, lp := range liveSet {
-		if _, exists := desiredSet[k]; !exists {
-			// Skip ports with no host binding — they are image EXPOSE entries
-			// injected by the engine, not explicitly configured by the user.
-			if lp.Published == "" {
-				continue
+	var matchedDefaults []defaultMatch
+	for _, dp := range ordered {
+		found := false
+		for i, lp := range live {
+			if !used[i] && compatible(dp, lp) {
+				used[i], found = true, true
+				if dp.HostIP == "" {
+					matchedDefaults = append(matchedDefaults, defaultMatch{dp, i})
+				}
+				break
 			}
-			diffs = append(diffs, FieldDiff{Field: "port." + k, Before: portStr(lp), After: ""})
+		}
+		if !found {
+			unmatched = append(unmatched, dp)
 		}
 	}
+	// Docker may expand a single default binding to one row per address family.
+	for _, match := range matchedDefaults {
+		other := live[match.index]
+		for i, lp := range live {
+			if !used[i] && compatible(match.binding, lp) && ((lp.HostIP == "::" && other.HostIP == "0.0.0.0") || (lp.HostIP == "0.0.0.0" && other.HostIP == "::")) {
+				used[i] = true
+				break
+			}
+		}
+	}
+	for _, dp := range unmatched {
+		diff := FieldDiff{Field: "port." + key(dp), After: portStr(dp)}
+		for i, lp := range live {
+			if !used[i] && key(dp) == key(lp) {
+				used[i] = true
+				diff.Before = portStr(lp)
+				break
+			}
+		}
+		diffs = append(diffs, diff)
+	}
+	for i, lp := range live {
+		if !used[i] && lp.Published != "" {
+			diffs = append(diffs, FieldDiff{Field: "port." + key(lp), Before: portStr(lp)})
+		}
+	}
+	sort.Slice(diffs, func(i, j int) bool {
+		if diffs[i].Field != diffs[j].Field {
+			return diffs[i].Field < diffs[j].Field
+		}
+		if diffs[i].Before != diffs[j].Before {
+			return diffs[i].Before < diffs[j].Before
+		}
+		return diffs[i].After < diffs[j].After
+	})
 	return diffs
 }
 

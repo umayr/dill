@@ -227,6 +227,13 @@ DILL_TEST_ENGINE=docker make integration-test
 DILL_TEST_ENGINE=podman PODMAN_SOCKET=unix:///tmp/podman.sock make integration-test
 ```
 
+Run these against a disposable, isolated engine: the tests create and remove
+containers, networks, volumes, and images. `make integration-test` requires an
+explicit engine selection. `make integration-test-offline` runs the same tagged
+suite without requiring an engine, but real-engine and explicitly qualified
+Alpha tests can skip; its success is not engine qualification. Alpha tests still
+require their documented opt-ins even with an engine selected.
+
 Useful integration-test knobs:
 
 ```
