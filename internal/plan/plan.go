@@ -478,7 +478,7 @@ func diffPorts(desired, live []config.PortBinding) []FieldDiff {
 	}
 
 	compatible := func(dp, lp config.PortBinding) bool {
-		if key(dp) != key(lp) || dp.Published != lp.Published {
+		if key(dp) != key(lp) || (dp.Published != lp.Published && !(dp.Published == "0" && lp.Published != "" && lp.Published != "0")) {
 			return false
 		}
 		if dp.HostIP == "" {
@@ -500,38 +500,52 @@ func diffPorts(desired, live []config.PortBinding) []FieldDiff {
 		}
 		return a.HostIP < b.HostIP
 	})
-	used := make([]bool, len(live))
-	var diffs []FieldDiff
-	var unmatched []config.PortBinding
-	// Explicit addresses must claim their rows before wildcard defaults do.
-	ordered := append([]config.PortBinding(nil), desired...)
-	sort.SliceStable(ordered, func(i, j int) bool { return ordered[i].HostIP != "" && ordered[j].HostIP == "" })
-	type defaultMatch struct {
-		binding config.PortBinding
-		index   int
+	// An allocated port or wildcard can match several rows. Find a maximum
+	// matching instead of greedily consuming a row needed by a specific rule.
+	owners := make([]int, len(live))
+	for i := range owners {
+		owners[i] = -1
 	}
-	var matchedDefaults []defaultMatch
-	for _, dp := range ordered {
-		found := false
+	var assign func(int, []bool) bool
+	assign = func(d int, seen []bool) bool {
 		for i, lp := range live {
-			if !used[i] && compatible(dp, lp) {
-				used[i], found = true, true
-				if dp.HostIP == "" {
-					matchedDefaults = append(matchedDefaults, defaultMatch{dp, i})
-				}
-				break
+			if seen[i] || !compatible(desired[d], lp) {
+				continue
+			}
+			seen[i] = true
+			if owners[i] == -1 || assign(owners[i], seen) {
+				owners[i] = d
+				return true
 			}
 		}
-		if !found {
+		return false
+	}
+	for i := range desired {
+		assign(i, make([]bool, len(live)))
+	}
+	matched := make([]bool, len(desired))
+	used := make([]bool, len(live))
+	for i, owner := range owners {
+		if owner >= 0 {
+			matched[owner], used[i] = true, true
+		}
+	}
+	var diffs []FieldDiff
+	var unmatched []config.PortBinding
+	for i, dp := range desired {
+		if !matched[i] {
 			unmatched = append(unmatched, dp)
 		}
 	}
-	// Docker may expand a single default binding to one row per address family.
-	for _, match := range matchedDefaults {
-		other := live[match.index]
-		for i, lp := range live {
-			if !used[i] && compatible(match.binding, lp) && ((lp.HostIP == "::" && other.HostIP == "0.0.0.0") || (lp.HostIP == "0.0.0.0" && other.HostIP == "::")) {
-				used[i] = true
+	// Docker may expand one default binding to a pair with the SAME allocated port.
+	for i, owner := range owners {
+		if owner < 0 || desired[owner].HostIP != "" {
+			continue
+		}
+		other := live[i]
+		for j, lp := range live {
+			if !used[j] && lp.Published == other.Published && compatible(desired[owner], lp) && ((lp.HostIP == "::" && other.HostIP == "0.0.0.0") || (lp.HostIP == "0.0.0.0" && other.HostIP == "::")) {
+				used[j] = true
 				break
 			}
 		}
