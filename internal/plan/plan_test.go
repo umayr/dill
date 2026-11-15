@@ -79,6 +79,28 @@ func TestDiffPorts_hostIPNormalization(t *testing.T) {
 	}
 }
 
+func TestDiffPorts_dynamicPublishedPort(t *testing.T) {
+	for _, tc := range []struct {
+		name          string
+		desired, live []config.PortBinding
+		wantDiff      bool
+	}{
+		{"allocated", []config.PortBinding{pb("0", "80", "tcp", "127.0.0.1")}, []config.PortBinding{pb("54321", "80", "tcp", "127.0.0.1")}, false},
+		{"missing", []config.PortBinding{pb("0", "80", "tcp", "127.0.0.1")}, nil, true},
+		{"wrong interface", []config.PortBinding{pb("0", "80", "tcp", "127.0.0.1")}, []config.PortBinding{pb("54321", "80", "tcp", "0.0.0.0")}, true},
+		{"fixed and dynamic", []config.PortBinding{pb("0", "80", "tcp", ""), pb("1234", "80", "tcp", "0.0.0.0")}, []config.PortBinding{pb("1234", "80", "tcp", "0.0.0.0"), pb("1235", "80", "tcp", "::")}, false},
+		{"dual stack same allocation", []config.PortBinding{pb("0", "80", "tcp", "")}, []config.PortBinding{pb("1234", "80", "tcp", "0.0.0.0"), pb("1234", "80", "tcp", "::")}, false},
+		{"dual stack different allocations", []config.PortBinding{pb("0", "80", "tcp", "")}, []config.PortBinding{pb("1234", "80", "tcp", "0.0.0.0"), pb("1235", "80", "tcp", "::")}, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			diffs := diffPorts(tc.desired, tc.live)
+			if (len(diffs) != 0) != tc.wantDiff {
+				t.Fatalf("diffs = %+v, want drift %v", diffs, tc.wantDiff)
+			}
+		})
+	}
+}
+
 func TestDiffPorts_explicitAddressFamilies(t *testing.T) {
 	v4 := pb("8080", "80", "tcp", "0.0.0.0")
 	v6 := pb("8080", "80", "tcp", "::")

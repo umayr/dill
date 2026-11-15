@@ -90,6 +90,9 @@ func TestDillRealEngineDataPlaneCommands(t *testing.T) {
 	cleanupStack(t, bin, cfg, stack)
 
 	runDill(t, true, bin, "-f", cfg, "--timeout", testTimeout(), "up")
+	// The fixture publishes host port 0; the engine's allocated port must
+	// converge rather than cause a recreation on every subsequent plan.
+	assertNoopPlan(t, bin, cfg, 1)
 
 	logs := runDill(t, true, bin, "-f", cfg, "logs", "--tail", "2", "app")
 	if !strings.Contains(logs, "alpha") || !strings.Contains(logs, "beta") {
