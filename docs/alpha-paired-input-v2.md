@@ -108,9 +108,10 @@ PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s scripts \
 ```
 
 The old eleven tests remain unchanged. V2 checks synthetic positive/extraction
-and every created mode; expiry and final-clock boundary; closed typed pin/API/
-manifest/caller maps; all hash anchors; 30-case consistency; cross-version
-refusal; ZIP/tar paths, duplicates, headers, links, order and trailing data;
+and every created mode; expiry and final-clock boundary; closed typed pin/manifest/
+caller maps and exact typed matching API claims; all hash anchors; 30-case
+consistency; cross-version refusal; ZIP/tar paths, duplicates, headers, links,
+order and trailing data;
 output-parent and no-overwrite rules; fixed CLI errors and no arbitrary pin.
 These are not original source-boundary, native engine or actual application
 proof. Driver-branch CI artifacts must never replace the accepted provider2d48
