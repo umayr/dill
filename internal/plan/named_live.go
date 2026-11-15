@@ -9,7 +9,7 @@ import (
 )
 
 // NormalizeLiveForSelection copies inspected facts for a PRIVATE commitment.
-// It reuses the planner's restart/network/host-IP equivalences, but does not
+// It reuses the planner's restart/network equivalences, but does not
 // discard live-only mounts, multiple port bindings or unrequested env fields.
 // It is not validation, ownership proof, a second planner or desired config.
 func NormalizeLiveForSelection(live *orchestrator.LiveConfig) *orchestrator.LiveConfig {
@@ -39,7 +39,6 @@ func NormalizeLiveForSelection(live *orchestrator.LiveConfig) *orchestrator.Live
 	v.CapAdd = sortedSet(live.CapAdd)
 	v.Ports = append([]config.PortBinding{}, live.Ports...)
 	for i := range v.Ports {
-		v.Ports[i].HostIP = normalizeHostIP(v.Ports[i].HostIP)
 		if v.Ports[i].Protocol == "" {
 			v.Ports[i].Protocol = "tcp"
 		}
