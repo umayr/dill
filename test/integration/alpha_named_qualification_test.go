@@ -155,6 +155,14 @@ func decodeAlphaNamed(data []byte, code int) (preflight.Result, error) {
 // not evidence of the native --timeout mechanism or a fabricated terminal ID.
 func (f *alphaQualifiedFixture) namedAttempt(t *testing.T, action, timeout string, extra ...string) (preflight.Result, int) {
 	t.Helper()
+	return f.namedAttemptPublicStack(t, f.stack, action, timeout, extra...)
+}
+
+// Only the declared-but-absent privacy negative prescribes an empty public
+// stack. The actual owned invocation/fixture/window still uses f.stack; never
+// synthesize cleared public context or relax ordinary preview correlation.
+func (f *alphaQualifiedFixture) namedAttemptPublicStack(t *testing.T, publicStack, action, timeout string, extra ...string) (preflight.Result, int) {
+	t.Helper()
 	args := []string{"preflight", action, "--contract", "dill.preflight/1", "--format", "json", "--engine", "docker", "--engine-socket", f.socket, "-p", f.stack, "-f", f.cfg, "--coordination-state-dir", f.state, "--coordination-layout", "native-local-docker-v1", "--coordination-daemon-id", f.daemon, "--coordination-source", "cli", "--timeout", timeout}
 	args = append(args, extra...)
 	before := alphaResourceSnapshot(t, "docker")
@@ -172,7 +180,7 @@ func (f *alphaQualifiedFixture) namedAttempt(t *testing.T, action, timeout strin
 		code = exited.ExitCode()
 	}
 	result, err := decodeAlphaNamed(data, code)
-	if err != nil || result.Operation != action || result.Stack != f.stack || f.seen[result.OperationID] {
+	if err != nil || result.Operation != action || result.Stack != publicStack || f.seen[result.OperationID] {
 		t.Fatalf("invalid named terminal, raw output withheld: %v", err)
 	}
 	f.seen[result.OperationID] = true
@@ -329,12 +337,30 @@ func TestAlphaQualifiedNamedPreflightLockCancellation(t *testing.T) {
 	f.namedReview(t, "stop") // Fresh explicit request, never a replay of cancellation.
 }
 
+// Existing DirectStartIDs uses the fixed secret-unavailable privacy boundary
+// for a missing declared container. Its late refusal intentionally withdraws
+// BOTH target and stack, even though private durable coordination was entered.
+func alphaNamedDeclaredAbsentRefusal(result preflight.Result, code int) bool {
+	coverage := preflight.Coverage{
+		Containers: preflight.Scope{Scope: "declared-stack"},
+		Network:    preflight.Scope{Scope: "stack-network"},
+		Volumes:    preflight.Scope{Scope: "declared-attached-named"},
+	}
+	return code == 1 && result.Operation == "start" && result.Outcome == "failed" && result.EngineEffects == "none" && result.CoordinationEffects == "written" &&
+		result.Target == nil && result.Stack == "" && result.Resources != nil && len(result.Resources) == 0 && result.InputDigest == nil && result.SelectionDigest == nil &&
+		!result.ResourcesTruncated && result.Coverage == coverage && len(result.Errors) == 1 && result.Errors[0].Code == "SECRET_UNAVAILABLE" && result.Errors[0].Message == "Secret configuration or source unavailable."
+}
+
 func TestAlphaQualifiedNamedPreflightEmptyAndOrphans(t *testing.T) {
 	t.Run("declared-but-absent", func(t *testing.T) {
 		f := newAlphaQualifiedFixture(t)
-		result, code := f.namedAttempt(t, "start", "60s")
-		if code != 1 || len(result.Errors) != 1 || result.Errors[0].Code != "PREFLIGHT_UNAVAILABLE" {
-			t.Fatal("absent declared service was incorrectly accepted as empty Start")
+		result, code := f.namedAttemptPublicStack(t, "", "start", "60s")
+		if !alphaNamedDeclaredAbsentRefusal(result, code) {
+			t.Fatal("absent declared service lost its exact privacy-safe refusal or exposed review/context")
+		}
+		record := alphaInspectCoordination(t, f)
+		if record.OperationID != result.OperationID || record.State != "terminal" || record.Outcome != "failed" || record.Effects != "none" {
+			t.Fatal("redacted refusal was not correlated to its actual case-created durable terminal")
 		}
 	})
 	t.Run("empty", func(t *testing.T) {

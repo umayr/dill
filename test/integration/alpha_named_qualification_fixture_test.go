@@ -48,6 +48,61 @@ func TestAlphaNamedEmptyFixtureEvaluation(t *testing.T) {
 	}
 }
 
+// Frozen late-secret receipt shape, not native execution or a source proof.
+// The same decoder+predicate composition is used by the actual negative case.
+func TestAlphaNamedDeclaredAbsentPrivacyOracle(t *testing.T) {
+	const receipt = `{"version":"dill.preflight/1","operationId":"op_00000000000000000000000000000000","operation":"start","target":null,"stack":"","outcome":"failed","engineEffects":"none","coordinationEffects":"written","inputDigest":null,"selectionDigest":null,"coverage":{"containers":{"scope":"declared-stack","count":0,"presentCount":0,"complete":false},"network":{"scope":"stack-network","count":0,"presentCount":0,"complete":false},"volumes":{"scope":"declared-attached-named","count":0,"presentCount":0,"complete":false}},"resources":[],"resourcesTruncated":false,"errors":[{"code":"SECRET_UNAVAILABLE","message":"Secret configuration or source unavailable."}]}`
+	valid, err := decodeAlphaNamed([]byte(receipt), 1)
+	if err != nil || !alphaNamedDeclaredAbsentRefusal(valid, 1) {
+		t.Fatal("exact frozen redacted refusal rejected")
+	}
+	if alphaNamedDeclaredAbsentRefusal(valid, 0) || alphaNamedDeclaredAbsentRefusal(valid, 2) {
+		t.Fatal("wrong exit accepted")
+	}
+	mutations := map[string]func(map[string]any){
+		"code":         func(m map[string]any) { m["errors"].([]any)[0].(map[string]any)["code"] = "PREFLIGHT_UNAVAILABLE" },
+		"message":      func(m map[string]any) { m["errors"].([]any)[0].(map[string]any)["message"] = "wrong" },
+		"outcome":      func(m map[string]any) { m["outcome"] = "cancelled" },
+		"effects":      func(m map[string]any) { m["engineEffects"] = "complete" },
+		"coordination": func(m map[string]any) { m["coordinationEffects"] = "none" },
+		"operation":    func(m map[string]any) { m["operation"] = "stop" },
+		"target": func(m map[string]any) {
+			m["target"] = map[string]any{"engine": "docker", "endpointDigest": "sha256:" + strings.Repeat("a", 64), "qualifiedIdentityDigest": "sha256:" + strings.Repeat("b", 64)}
+		},
+		"stack":             func(m map[string]any) { m["stack"] = "invented-context" },
+		"rows":              func(m map[string]any) { m["resources"] = []any{map[string]any{"kind": "network"}} },
+		"inputDigest":       func(m map[string]any) { m["inputDigest"] = "sha256:" + strings.Repeat("a", 64) },
+		"selectionDigest":   func(m map[string]any) { m["selectionDigest"] = "sha256:" + strings.Repeat("a", 64) },
+		"truncated":         func(m map[string]any) { m["resourcesTruncated"] = true },
+		"truncated-null":    func(m map[string]any) { m["resourcesTruncated"] = nil },
+		"truncated-coerced": func(m map[string]any) { m["resourcesTruncated"] = "false" },
+		"scope":             func(m map[string]any) { m["coverage"].(map[string]any)["network"].(map[string]any)["scope"] = "wrong" },
+		"complete":          func(m map[string]any) { m["coverage"].(map[string]any)["network"].(map[string]any)["complete"] = true },
+		"complete-null":     func(m map[string]any) { m["coverage"].(map[string]any)["network"].(map[string]any)["complete"] = nil },
+		"complete-coerced":  func(m map[string]any) { m["coverage"].(map[string]any)["network"].(map[string]any)["complete"] = 0 },
+		"count-null":        func(m map[string]any) { m["coverage"].(map[string]any)["network"].(map[string]any)["count"] = nil },
+		"count-bool":        func(m map[string]any) { m["coverage"].(map[string]any)["network"].(map[string]any)["count"] = false },
+		"count-fraction":    func(m map[string]any) { m["coverage"].(map[string]any)["network"].(map[string]any)["count"] = 0.5 },
+	}
+	for name, mutate := range mutations {
+		t.Run(name, func(t *testing.T) {
+			var document map[string]any
+			if err := json.Unmarshal([]byte(receipt), &document); err != nil {
+				t.Fatal(err)
+			}
+			mutate(document)
+			data, err := json.Marshal(document)
+			if err != nil {
+				t.Fatal(err)
+			}
+			result, err := decodeAlphaNamed(data, 1)
+			if err == nil && alphaNamedDeclaredAbsentRefusal(result, 1) {
+				t.Fatal("incorrect privacy/phase or null/coerced evidence accepted")
+			}
+		})
+	}
+}
+
 // Successful full listing, never failed inspect, establishes absence. Names and
 // cardinality come from the prescribed fixture; no candidate coverage is echoed.
 func alphaNamedResourceInventory(t *testing.T) map[string]map[string]string {

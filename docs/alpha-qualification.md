@@ -63,7 +63,11 @@ The existing actual crash/recovery/concurrency/foreign baseline stays mandatory.
 
 The empty positive is a genuinely empty Pkl `services {}` graph with exactly
 one network review row, not a declared-but-absent service. The latter is a
-separate required negative within the same case. Review membership is prescribed
+separate required negative within the same case: existing DirectStartIDs uses
+the fixed `SECRET_UNAVAILABLE` privacy refusal and clears public target/stack.
+The case correlates its exact failed/none receipt through its owned invocation,
+zero-write window and matching private durable terminal; it never invents
+cleared public context or accepts positive rows/digests. Review membership is prescribed
 by each fixture and independently checked against successful full native
 inventories, including actual absence/planned names and present immutable IDs.
 
