@@ -122,11 +122,35 @@ func TestDiffPorts_fixedAndDynamicDualStackPermutations(t *testing.T) {
 		}
 	}
 	permute(0)
-	mixedDesired := append(append([]config.PortBinding{}, desired...), pb("2222", "80", "tcp", "127.0.0.1"))
-	mixedLive := append(append([]config.PortBinding{}, live...), pb("2222", "80", "tcp", "127.0.0.1"))
-	if diffs := diffPorts(mixedDesired, mixedLive); len(diffs) != 0 {
-		t.Fatalf("unrelated explicit binding interfered with pairs: %+v", diffs)
+	mixedDesired := append(append([]config.PortBinding{}, desired...), pb("2345", "80", "tcp", "127.0.0.1"))
+	mixedLive := append(append([]config.PortBinding{}, live...), pb("2345", "80", "tcp", "127.0.0.1"))
+	var permuteLive func(int)
+	permuteLive = func(n int) {
+		if n == len(mixedLive) {
+			if diffs := diffPorts(mixedDesired, mixedLive); len(diffs) != 0 {
+				t.Fatalf("mixed desired=%+v live=%+v diffs=%+v", mixedDesired, mixedLive, diffs)
+			}
+			return
+		}
+		for i := n; i < len(mixedLive); i++ {
+			mixedLive[n], mixedLive[i] = mixedLive[i], mixedLive[n]
+			permuteLive(n + 1)
+			mixedLive[n], mixedLive[i] = mixedLive[i], mixedLive[n]
+		}
 	}
+	var permuteDesired func(int)
+	permuteDesired = func(n int) {
+		if n == len(mixedDesired) {
+			permuteLive(0)
+			return
+		}
+		for i := n; i < len(mixedDesired); i++ {
+			mixedDesired[n], mixedDesired[i] = mixedDesired[i], mixedDesired[n]
+			permuteDesired(n + 1)
+			mixedDesired[n], mixedDesired[i] = mixedDesired[i], mixedDesired[n]
+		}
+	}
+	permuteDesired(0)
 	// Different allocated ports are not a dual-stack pair.
 	if diffs := diffPorts(desired[:1], []config.PortBinding{pb("54321", "80", "tcp", "0.0.0.0"), pb("54322", "80", "tcp", "::")}); len(diffs) == 0 {
 		t.Fatal("different host ports collapsed")
