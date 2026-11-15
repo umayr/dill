@@ -500,16 +500,46 @@ func diffPorts(desired, live []config.PortBinding) []FieldDiff {
 		}
 		return a.HostIP < b.HostIP
 	})
+	// Treat a matching IPv4/IPv6 pair as one default binding before
+	// assignment, unless an explicit desired address could use either row.
+	// Such rows must remain independently matchable for drift reporting.
+	explicitMatch := func(lp config.PortBinding) bool {
+		for _, dp := range desired {
+			if dp.HostIP != "" && compatible(dp, lp) {
+				return true
+			}
+		}
+		return false
+	}
+	type portSlot struct{ first, second int }
+	var slots []portSlot
+	grouped := make([]bool, len(live))
+	for i, lp := range live {
+		if grouped[i] {
+			continue
+		}
+		slot := portSlot{first: i, second: -1}
+		if !explicitMatch(lp) && (lp.HostIP == "0.0.0.0" || lp.HostIP == "::") {
+			for j := i + 1; j < len(live); j++ {
+				other := live[j]
+				if !grouped[j] && !explicitMatch(other) && key(lp) == key(other) && lp.Published == other.Published && ((lp.HostIP == "::" && other.HostIP == "0.0.0.0") || (lp.HostIP == "0.0.0.0" && other.HostIP == "::")) {
+					slot.second, grouped[j] = j, true
+					break
+				}
+			}
+		}
+		slots = append(slots, slot)
+	}
 	// An allocated port or wildcard can match several rows. Find a maximum
 	// matching instead of greedily consuming a row needed by a specific rule.
-	owners := make([]int, len(live))
+	owners := make([]int, len(slots))
 	for i := range owners {
 		owners[i] = -1
 	}
 	var assign func(int, []bool) bool
 	assign = func(d int, seen []bool) bool {
-		for i, lp := range live {
-			if seen[i] || !compatible(desired[d], lp) {
+		for i, slot := range slots {
+			if seen[i] || !compatible(desired[d], live[slot.first]) {
 				continue
 			}
 			seen[i] = true
@@ -521,13 +551,16 @@ func diffPorts(desired, live []config.PortBinding) []FieldDiff {
 		return false
 	}
 	for i := range desired {
-		assign(i, make([]bool, len(live)))
+		assign(i, make([]bool, len(slots)))
 	}
 	matched := make([]bool, len(desired))
 	used := make([]bool, len(live))
 	for i, owner := range owners {
 		if owner >= 0 {
-			matched[owner], used[i] = true, true
+			matched[owner], used[slots[i].first] = true, true
+			if slots[i].second >= 0 {
+				used[slots[i].second] = true
+			}
 		}
 	}
 	var diffs []FieldDiff
@@ -539,10 +572,10 @@ func diffPorts(desired, live []config.PortBinding) []FieldDiff {
 	}
 	// Docker may expand one default binding to a pair with the SAME allocated port.
 	for i, owner := range owners {
-		if owner < 0 || desired[owner].HostIP != "" {
+		if owner < 0 || desired[owner].HostIP != "" || slots[i].second >= 0 {
 			continue
 		}
-		other := live[i]
+		other := live[slots[i].first]
 		for j, lp := range live {
 			if !used[j] && lp.Published == other.Published && compatible(desired[owner], lp) && ((lp.HostIP == "::" && other.HostIP == "0.0.0.0") || (lp.HostIP == "0.0.0.0" && other.HostIP == "::")) {
 				used[j] = true

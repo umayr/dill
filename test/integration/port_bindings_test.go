@@ -43,7 +43,7 @@ config {
       image = "docker.io/library/busybox:1.36"
       pullPolicy = "missing"
       command = List("sh", "-c", "trap 'exit 0' TERM; while true; do sleep 1; done")
-      ports = List("127.0.0.1:%d:80", "127.0.0.1:%d:80", "%d:81")
+      ports = List("127.0.0.1:%d:80", "127.0.0.1:%d:80", "%d:81", "0:81")
     }
   }
 }

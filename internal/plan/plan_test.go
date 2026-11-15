@@ -101,6 +101,38 @@ func TestDiffPorts_dynamicPublishedPort(t *testing.T) {
 	}
 }
 
+func TestDiffPorts_fixedAndDynamicDualStackPermutations(t *testing.T) {
+	desired := []config.PortBinding{pb("0", "80", "tcp", ""), pb("1234", "80", "tcp", "")}
+	live := []config.PortBinding{pb("1234", "80", "tcp", "0.0.0.0"), pb("1234", "80", "tcp", "::"), pb("54321", "80", "tcp", "0.0.0.0"), pb("54321", "80", "tcp", "::")}
+	var permute func(int)
+	permute = func(n int) {
+		if n == len(live) {
+			for pass := 0; pass < 2; pass++ {
+				if diffs := diffPorts(desired, live); len(diffs) != 0 {
+					t.Fatalf("desired=%+v live=%+v diffs=%+v", desired, live, diffs)
+				}
+				desired[0], desired[1] = desired[1], desired[0]
+			}
+			return
+		}
+		for i := n; i < len(live); i++ {
+			live[n], live[i] = live[i], live[n]
+			permute(n + 1)
+			live[n], live[i] = live[i], live[n]
+		}
+	}
+	permute(0)
+	mixedDesired := append(append([]config.PortBinding{}, desired...), pb("2222", "80", "tcp", "127.0.0.1"))
+	mixedLive := append(append([]config.PortBinding{}, live...), pb("2222", "80", "tcp", "127.0.0.1"))
+	if diffs := diffPorts(mixedDesired, mixedLive); len(diffs) != 0 {
+		t.Fatalf("unrelated explicit binding interfered with pairs: %+v", diffs)
+	}
+	// Different allocated ports are not a dual-stack pair.
+	if diffs := diffPorts(desired[:1], []config.PortBinding{pb("54321", "80", "tcp", "0.0.0.0"), pb("54322", "80", "tcp", "::")}); len(diffs) == 0 {
+		t.Fatal("different host ports collapsed")
+	}
+}
+
 func TestDiffPorts_explicitAddressFamilies(t *testing.T) {
 	v4 := pb("8080", "80", "tcp", "0.0.0.0")
 	v6 := pb("8080", "80", "tcp", "::")
