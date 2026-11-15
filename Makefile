@@ -7,7 +7,7 @@ PKL     ?= pkl
 VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo "dev")
 LDFLAGS := -ldflags "-X main.version=$(VERSION)"
 
-.PHONY: build install clean test integration-test vet tidy fmt validate dist
+.PHONY: build install clean test integration-test integration-test-offline vet tidy fmt validate dist
 
 build:
 	@mkdir -p bin
@@ -20,6 +20,11 @@ test:
 	go test -tags $(TAGS) ./...
 
 integration-test:
+	@case "$${DILL_TEST_ENGINE:-$${DILL_ENGINE:-}}" in docker|podman) ;; *) echo 'Set DILL_TEST_ENGINE=docker or podman for engine integration tests' >&2; exit 1;; esac
+	go test -tags "$(TAGS),integration" ./test/integration -count=1 -v $(if $(DILL_TEST_RUN),-run $(DILL_TEST_RUN),)
+
+# Offline integration-tagged tests may skip real-engine and qualification cases.
+integration-test-offline:
 	go test -tags "$(TAGS),integration" ./test/integration -count=1 -v $(if $(DILL_TEST_RUN),-run $(DILL_TEST_RUN),)
 
 vet:

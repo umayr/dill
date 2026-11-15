@@ -99,12 +99,16 @@ func TestContainerLeafPortMountOrderAndCompleteFacts(t *testing.T) {
 	}
 	u := syntheticLive()
 	u.Ports = []config.PortBinding{v.Ports[1], v.Ports[0]}
-	u.Ports[1].HostIP = "::"
 	u.Ports[1].Protocol = "tcp"
 	u.Volumes = []config.VolumeMount{v.Volumes[1], v.Volumes[0]}
 	got, err := ContainerDigest("synthetic", "web", "synthetic_web", u)
 	if err != nil || got != base {
 		t.Fatal("port/mount order changed", err)
+	}
+	u.Ports[1].HostIP = "::"
+	got, err = ContainerDigest("synthetic", "web", "synthetic_web", u)
+	if err != nil || got == base {
+		t.Fatal("different address families collapsed")
 	}
 	u.Ports = u.Ports[:1]
 	got, err = ContainerDigest("synthetic", "web", "synthetic_web", u)

@@ -51,6 +51,20 @@ func TestDiffPorts_changed(t *testing.T) {
 	}
 }
 
+func TestDiffPorts_multipleBindings(t *testing.T) {
+	desired := []config.PortBinding{pb("8080", "80", "tcp", "127.0.0.1"), pb("9090", "80", "tcp", "127.0.0.1")}
+	live := []config.PortBinding{desired[1], desired[0]}
+	if diffs := diffPorts(desired, live); len(diffs) != 0 {
+		t.Fatalf("reordered bindings should match: %+v", diffs)
+	}
+	if diffs := diffPorts(desired, live[:1]); len(diffs) != 1 || diffs[0].After != "127.0.0.1:8080->80" {
+		t.Fatalf("missing binding not reported: %+v", diffs)
+	}
+	if diffs := diffPorts(desired[:1], live); len(diffs) != 1 || diffs[0].Before != "127.0.0.1:9090->80" {
+		t.Fatalf("extra binding not reported: %+v", diffs)
+	}
+}
+
 // Host IP normalisation: "" should equal "0.0.0.0" and "::"
 func TestDiffPorts_hostIPNormalization(t *testing.T) {
 	desired := []config.PortBinding{pb("8080", "80", "tcp", "")}
@@ -62,6 +76,17 @@ func TestDiffPorts_hostIPNormalization(t *testing.T) {
 	live2 := []config.PortBinding{pb("8080", "80", "tcp", "::")}
 	if diffs := diffPorts(desired, live2); len(diffs) != 0 {
 		t.Errorf("expected no diffs for :: vs empty host, got %+v", diffs)
+	}
+}
+
+func TestDiffPorts_explicitAddressFamilies(t *testing.T) {
+	v4 := pb("8080", "80", "tcp", "0.0.0.0")
+	v6 := pb("8080", "80", "tcp", "::")
+	if diffs := diffPorts([]config.PortBinding{v4}, []config.PortBinding{v6}); len(diffs) == 0 {
+		t.Fatal("explicit IPv4 binding matched IPv6")
+	}
+	if diffs := diffPorts([]config.PortBinding{pb("8080", "80", "tcp", "")}, []config.PortBinding{v4, v6}); len(diffs) != 0 {
+		t.Fatalf("dual-stack default binding: %+v", diffs)
 	}
 }
 
@@ -177,6 +202,35 @@ func TestDiffConfigs_redactsSensitiveEnv(t *testing.T) {
 	}
 	if !seenSecret || !seenPublic {
 		t.Fatalf("missing expected diffs: %+v", diffs)
+	}
+}
+
+func TestDiffConfigs_emptyEnvironmentRequiresPresence(t *testing.T) {
+	svc := &config.Service{Image: "busybox", Environment: map[string]string{"EMPTY": ""}}
+	for _, tc := range []struct {
+		name string
+		env  map[string]string
+		want bool
+	}{
+		{"missing", map[string]string{}, true},
+		{"empty", map[string]string{"EMPTY": ""}, false},
+		{"nonempty", map[string]string{"EMPTY": "value"}, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			diffs, err := diffConfigs("app", svc, &orchestrator.LiveConfig{Image: "busybox", Env: tc.env}, "", "test")
+			if err != nil {
+				t.Fatal(err)
+			}
+			found := false
+			for _, d := range diffs {
+				if d.Field == "env.EMPTY" {
+					found = true
+				}
+			}
+			if found != tc.want {
+				t.Fatalf("diffs = %+v, want env diff %v", diffs, tc.want)
+			}
+		})
 	}
 }
 

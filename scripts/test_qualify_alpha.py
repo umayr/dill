@@ -592,7 +592,7 @@ print('private-empty-auth-only')
             fake.write_text('#!/bin/sh\nprintf "%s\\n" "$@" > "$CAPTURE"\n')
             fake.chmod(0o700)
             capture = root / "argv"
-            env = dict(os.environ, PATH=str(root) + os.pathsep + os.environ.get("PATH", ""), CAPTURE=str(capture))
+            env = dict(os.environ, PATH=str(root) + os.pathsep + os.environ.get("PATH", ""), CAPTURE=str(capture), DILL_TEST_ENGINE="docker")
             proc = subprocess.run(["make", "integration-test", q.make_test_selector(["TestAlpha", "TestBeta"])],
                                   cwd=q.ROOT, env=env, capture_output=True, timeout=10)
             self.assertEqual(proc.returncode, 0, proc.stderr.decode())
@@ -602,6 +602,22 @@ print('private-empty-auth-only')
             self.assertIn("-count=1", argv)
         with self.assertRaises(ValueError):
             q.make_test_selector(["TestBad;touch marker"])
+
+    def test_integration_make_requires_engine_before_invoking_go(self):
+        import subprocess
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            fake = root / "go"
+            fake.write_text('#!/bin/sh\ntouch "$CAPTURE"\n')
+            fake.chmod(0o700)
+            capture = root / "called"
+            env = dict(os.environ, PATH=str(root) + os.pathsep + os.environ.get("PATH", ""), CAPTURE=str(capture))
+            env.pop("DILL_TEST_ENGINE", None)
+            env.pop("DILL_ENGINE", None)
+            proc = subprocess.run(["make", "integration-test"], cwd=q.ROOT, env=env, capture_output=True, timeout=10)
+            self.assertNotEqual(proc.returncode, 0)
+            self.assertIn(b"Set DILL_TEST_ENGINE", proc.stderr)
+            self.assertFalse(capture.exists())
 
     def test_timeout_is_recorded_as_failure(self):
         import sys
