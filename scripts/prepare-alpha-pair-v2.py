@@ -37,7 +37,7 @@ EXPECTED_FILES = frozenset({
     "test/qualification/v1/cases.json", "test/qualification/v1/valid.pkl",
     "test/qualification/v1/invalid-graph.pkl",
 })
-INTEGRATION_NAMES = "alpha_cleanup alpha_coordination_concurrency alpha_coordination alpha_guardrails alpha_handoff alpha_named_preflight alpha_named_qualification_fixture alpha_named_qualification alpha_operations cancellation capabilities_conformance conformance dill_integration failed_start operation ownership preflight_integration resources secrets".split()
+INTEGRATION_NAMES = "alpha_cleanup alpha_coordination_concurrency alpha_coordination alpha_guardrails alpha_handoff alpha_named_preflight alpha_named_qualification_fixture alpha_named_qualification alpha_operations cancellation capabilities_conformance conformance dill_integration failed_start operation ownership port_bindings preflight_integration resources secrets".split()
 OUTER_FILES = (EXPECTED_FILES - {"bin/pkl"}) | {
     "bin/alpha-evidence-docker/evidence.json", ARCHIVE_MEMBER,
     *("test/integration/" + n + "_test.go" for n in INTEGRATION_NAMES),
@@ -45,7 +45,7 @@ OUTER_FILES = (EXPECTED_FILES - {"bin/pkl"}) | {
     "scripts/test_qualify_alpha.py", "scripts/test_stage_alpha_artifact.py",
 }
 EXPECTED_CASES = frozenset("offline-valid offline-invalid-graph success-repeat-config-change changed-image invalid-config-preserves-live foreign-container-collision retained-volume cancellation failed-start-cleanup operation-contract-baseline operation-outcomes no-prune bounded-storage-preflight same-stack-concurrency crash-unknown-recovery foreign-resource-inventory brine-candidate-handoff qualified-docker-profile qualified-podman-rejected different-stack-concurrency alias-concurrency corrupt-journal-rejection inspected-exact-operation-recovery qualified-image-volume-rejected named-preflight-five-actions named-preflight-mismatch-before-ensure named-preflight-store-selector-binding named-preflight-lock-cancellation named-preflight-empty-orphan named-preflight-metadata-refusal".split())
-assert len(EXPECTED_FILES) == 31 and len(OUTER_FILES) == 55 and len(EXPECTED_CASES) == 30
+assert len(EXPECTED_FILES) == 31 and len(OUTER_FILES) == 56 and len(EXPECTED_CASES) == 30
 
 
 class Rejected(ValueError):
@@ -134,7 +134,7 @@ def verified_archive(path, metadata, pin, now):
     require(h.hexdigest() == pin["zipSha256"])
     with zipfile.ZipFile(path) as z:
         entries = z.infolist()
-        require(len(entries) == 55 and {e.filename for e in entries} == OUTER_FILES)
+        require(len(entries) == 56 and {e.filename for e in entries} == OUTER_FILES)
         for entry in entries:
             require(safe_name(entry.filename) and stat.S_IFMT(entry.external_attr >> 16) in (0, stat.S_IFREG)
                     and not entry.is_dir() and not entry.flag_bits & 1)

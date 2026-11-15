@@ -158,10 +158,20 @@ class PairV2Tests(unittest.TestCase):
                 self.rejected()
         self.pin = {**original, "extra": "bad"}
         self.rejected()
-        for key, value in (("version", "dill.brine-alpha-input/1"), ("fixtureVersion", "dill.alpha-qualification/1"), ("expiresAt", "2026-11-29T02:16:09+00:00"), ("expiresAt", "2026-02-30T00:00:00Z"), ("candidateCommit", "A" * 40), ("artifactId", "14143195067"), ("platform", "darwin-arm64")):
+        for key, value in (("version", "dill.brine-alpha-input/1"), ("fixtureVersion", "dill.alpha-qualification/1"), ("expiresAt", original["expiresAt"].replace("Z", "+00:00")), ("expiresAt", "2026-02-30T00:00:00Z"), ("candidateCommit", "A" * 40), ("artifactId", str(original["artifactId"])), ("platform", "darwin-arm64")):
             self.pin = {**original, key: value}
             with self.subTest(key=key, value=value):
                 self.rejected()
+
+    def test_corrected_provider_outer_source_is_required_and_closed(self):
+        required = "test/integration/port_bindings_test.go"
+        self.assertIn(required, q.OUTER_FILES)
+        self.assertNotIn(required, q.EXPECTED_FILES)
+        self.assertEqual(len(q.OUTER_FILES), 56)
+        self.pack(outer=lambda entries: entries.pop(required))
+        self.rejected()
+        self.pack(outer=lambda entries: entries.__setitem__("test/integration/unapproved_test.go", b"synthetic source\n"))
+        self.rejected()
 
     def test_all_pinned_hash_anchors(self):
         original = copy.deepcopy(self.pin)
