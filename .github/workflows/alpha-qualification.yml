@@ -124,6 +124,7 @@ jobs:
           done
           exit 1
       - name: Run exact disposable qualification or explicit unsupported-engine baseline
+        id: qualify
         env:
           ENGINE: ${{ matrix.engine }}
           CANDIDATE_SHA: ${{ inputs.candidate_sha || github.event.pull_request.head.sha }}
@@ -148,24 +149,25 @@ jobs:
             --output "$PWD/bin/alpha-evidence-$ENGINE" \
             --engine "$ENGINE" --socket "$socket" --disposable \
             --operations --profiles "${qualification[@]}"
-      - name: Publish only exact public candidate supply and bounded evidence
-        if: always()
+      - name: Seal exact public files and reject extra output before upload
+        id: seal_public
+        if: ${{ always() && (steps.qualify.outcome == 'success' || steps.qualify.outcome == 'failure') }}
+        env:
+          ENGINE: ${{ matrix.engine }}
+          CANDIDATE_SHA: ${{ inputs.candidate_sha || github.event.pull_request.head.sha }}
+        run: |
+          python3 scripts/stage-alpha-artifact.py --engine "$ENGINE" \
+            --candidate-sha "$CANDIDATE_SHA" --pkl "$RUNNER_TEMP/pkl" \
+            --output "$RUNNER_TEMP/dill-public-$ENGINE"
+      - name: Publish only sealed public candidate supply and bounded evidence
+        if: ${{ always() && steps.seal_public.outcome == 'success' }}
         uses: actions/upload-artifact@v4
         with:
           name: alpha-baseline-${{ inputs.candidate_sha || github.event.pull_request.head.sha }}-${{ matrix.engine }}
           if-no-files-found: error
           retention-days: 14
-          # Explicit public allowlist. NEVER publish output/home, the trusted
-          # provisioning home, private coordination state, or service logs.
+          # One fresh sealed directory, no wildcard upload or private output root.
+          # The collector rejects extras/links and independently verifies all32
+          # canonical tar members against exact source/binary/Pkl/manifest bytes.
           path: |
-            bin/dill
-            bin/alpha-evidence-*/evidence.json
-            bin/alpha-evidence-*/handoff.tar.gz
-            dill.pkl
-            internal/loader/pkl-toolchain.json
-            internal/operation/testdata
-            test/qualification/v1
-            test/integration
-            docs/alpha-candidate-handoff.md
-            scripts/qualify-alpha.py
-            scripts/test_qualify_alpha.py
+            ${{ runner.temp }}/dill-public-${{ matrix.engine }}/

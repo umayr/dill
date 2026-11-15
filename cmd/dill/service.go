@@ -5,6 +5,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"sort"
 	"strings"
 
 	"github.com/umayr/dill/internal/config"
@@ -31,6 +32,13 @@ func runStop(ctx context.Context, opts commandOptions, services []string) error 
 		}
 	}
 	sn := st.Name
+	capture, captureErr := opts.checkedCapture("stop", sn)
+	if captureErr != nil {
+		return captureErr
+	}
+	if capture != nil && (len(services) != 0 || opts.DryRun || capture.stopIDs == nil) {
+		return errNamedCaptureUnavailable
+	}
 	engine, err := newEngine(ctx, st.Engine, opts)
 	if err != nil {
 		return err
@@ -38,7 +46,15 @@ func runStop(ctx context.Context, opts commandOptions, services []string) error 
 	defer engine.Close()
 
 	var names []string
-	if len(services) > 0 {
+	if capture != nil {
+		for name, id := range capture.stopIDs {
+			if id == "" {
+				return errNamedCaptureUnavailable
+			}
+			names = append(names, name)
+		}
+		sort.Strings(names)
+	} else if len(services) > 0 {
 		cfg := st.Config
 		if _, err := selectServices(cfg.Services, services, false); err != nil {
 			return err
@@ -71,7 +87,11 @@ func runStop(ctx context.Context, opts commandOptions, services []string) error 
 	// first stop. Bind the intent to immutable IDs so a later name reuse cannot
 	// redirect it. Legacy stop retains independent best-effort behavior.
 	captured := map[string]string{}
-	if opts.operation != nil {
+	if capture != nil {
+		for name, id := range capture.stopIDs {
+			captured[name] = id
+		}
+	} else if opts.operation != nil {
 		for _, name := range names {
 			id, err := orchestrator.OwnedID(ctx, engine, name, sn, serviceForName(name))
 			if err != nil {
@@ -161,15 +181,33 @@ func runDirectStart(ctx context.Context, opts commandOptions, args []string, res
 	if err != nil {
 		return err
 	}
+	stack := resolveStackNameWithOptions(cfg, opts)
+	capture, captureErr := opts.checkedCapture(name, stack)
+	if captureErr != nil {
+		return captureErr
+	}
+	if capture != nil && (len(fs.Args()) != 0 || *noDeps || opts.DryRun || capture.serviceIDs == nil || len(capture.serviceIDs) != len(selected)) {
+		return errNamedCaptureUnavailable
+	}
 	engine, err := openEngine(ctx, cfg, opts)
 	if err != nil {
 		return err
 	}
 	defer engine.Close()
-	stack := resolveStackNameWithOptions(cfg, opts)
-	ids, err := orchestrator.DirectStartIDs(ctx, engine, stack, selected, len(fs.Args()) == 0)
-	if err != nil {
-		return config.ErrSecretUnavailable
+	ids := map[string]string{}
+	if capture != nil {
+		for service, svc := range selected {
+			id, ok := capture.serviceIDs[service]
+			if !ok || id == "" {
+				return errNamedCaptureUnavailable
+			}
+			ids[serviceContainerName(stack, service, svc)] = id
+		}
+	} else {
+		ids, err = orchestrator.DirectStartIDs(ctx, engine, stack, selected, len(fs.Args()) == 0)
+		if err != nil {
+			return config.ErrSecretUnavailable
+		}
 	}
 	if opts.DryRun {
 		for service := range selected {
@@ -207,5 +245,9 @@ func runDirectStart(ctx context.Context, opts commandOptions, args []string, res
 	for service := range selected {
 		actions[service] = dag.ActionStart
 	}
-	return g.Run(ctx, engine, stack, opts.Timeout, actions, opts.progress(), dag.MakePullSink(func(service string) dag.PullSink { return &plainPullSink{service: service} }))
+	mkSink := dag.MakePullSink(func(service string) dag.PullSink { return &plainPullSink{service: service} })
+	if capture != nil {
+		return g.RunCaptured(ctx, engine, stack, opts.Timeout, actions, opts.progress(), mkSink, capture.serviceIDs)
+	}
+	return g.Run(ctx, engine, stack, opts.Timeout, actions, opts.progress(), mkSink)
 }

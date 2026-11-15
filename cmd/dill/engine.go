@@ -31,6 +31,9 @@ func newEngine(ctx context.Context, engineName string, opts commandOptions) (orc
 		}
 		engine, err = orchestrator.NewDockerEngineWithClient(coordination.Endpoint, coord.target.Client())
 		if err == nil {
+			if coord.namedReadOnly {
+				engine = orchestrator.DenyMutations(engine)
+			}
 			coord.guard.Engine = engine
 			engine = coord.guard
 		}

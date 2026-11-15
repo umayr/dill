@@ -1,4 +1,9 @@
-# Disposable Alpha candidate evidence (fixture v1)
+# Disposable Alpha candidate evidence (policy v2)
+
+The successor catalog/evidence/handoff records use explicit `/2` identities,
+30 mandatory cases and a closed 32-member supply archive. Existing b3 `/1`
+24-case evidence is not extension qualification. Public fixture filesystem paths
+remain `test/qualification/v1` because the Pkl fixture syntax is unchanged.
 
 This is the disposable evidence harness for [#80](https://github.com/umayr/dill/issues/80),
 not a deployment tool or full conformance/release qualification. A green baseline
@@ -16,7 +21,7 @@ as `blocked` or `not-run`, never passed or silently skipped.
 `--provisioning-source trusted-gha-native-linux-host`. The separate trusted
 workflow step must provision identity/private state **before candidate execution**;
 the runner never derives expected identity from a selected endpoint. No unsupported
-host/discovery fallback is allowed. All 24 IDs have independently bound modes,
+host/discovery fallback is allowed. All 30 IDs have independently bound modes,
 evidence kinds and exact executable test names. Supplementary tests are mandatory:
 `bounded-storage-preflight` requires standalone, orphan and actual-live suites all
 passing. Pure decoder/process/readiness helpers cannot satisfy runtime IDs.
@@ -29,13 +34,49 @@ profile observations are kept separate. The only positive no-prune row remains
 ordinary isolated CLI, never substituted by qualified orphan rejection.
 
 The copied `handoff.tar.gz` includes the exact candidate, pinned Pkl, schema,
-versioned fixtures, public operation goldens and a checksum manifest. The actual
+versioned fixtures, public operation goldens, all 15 byte-identical public named
+preflight goldens, the named-preflight guide and a checksum manifest. A separate
+closed collector rejects extras/links, independently verifies the canonical
+32-member archive against originals, and seals one explicit upload directory.
+No wildcard upload reads private evidence roots. The actual
 copied executable evaluates the unchanged copied fixture with source `brine` and
 pull never; its qualified receipt and durable record must match before publication.
 Public evidence records archive/manifest hashes. **No private state/HOME/auth/logs
 are archived.** See [recipient instructions](alpha-candidate-handoff.md).
 Actual external Brine application/browser acceptance remains separately **not-run**;
 Dill-side supply does not imply app E2E, release approval or production safety.
+
+## Mandatory named-preflight extension
+
+Six additional required cases cover all five preview→fresh checked-apply routes,
+complete bounded actual names, prepared IDs/original-reference provenance and
+retained data; mismatches for flags/config/live IDs/prepared content/original
+references before ALL mutators; state alias equivalence and socket/copy binding;
+a real held-lock preview using exactly one native `--timeout 2s`; empty/orphan
+behavior; and actual unsafe state metadata refusal. Copy controls first prove
+fresh destination metadata valid, preserve internal hardlinks and share no links
+to the original. Forced death/nil receipts and mocked close failures are never
+native cancellation evidence. Missing/skipped/blocked/unknown required positives
+fail complete acceptance. Empty Start may ensure a network; no-op Up is not a
+zero-mutator promise. Down retention is honest, not qualified teardown success.
+The existing actual crash/recovery/concurrency/foreign baseline stays mandatory.
+
+The empty positive is a genuinely empty Pkl `services {}` graph with exactly
+one network review row, not a declared-but-absent service. The latter is a
+separate required negative within the same case: existing DirectStartIDs uses
+the fixed `SECRET_UNAVAILABLE` privacy refusal and clears public target/stack.
+The case correlates its exact failed/none receipt through its owned invocation,
+zero-write window and matching private durable terminal; it never invents
+cleared public context or accepts positive rows/digests. Review membership is prescribed
+by each fixture and independently checked against successful full native
+inventories, including actual absence/planned names and present immutable IDs.
+
+Qualified Docker additionally records the exact frozen supported
+`preflightCapabilities` object. Ordinary Podman has 11 baseline passes and 19
+qualified blocks when actually successful, and is explicitly unqualified.
+Source-policy proof and actual Brine app/browser execution are NOT supplied by
+these trusted synthetic Dill-only fixtures. See the copied handoff guide for
+receiving and checked-apply rules.
 
 ## Boundary and current subset
 
@@ -101,7 +142,7 @@ successfully so parser failure cannot masquerade as policy enforcement.
 These are **prepared profile assertions, not executed local engine evidence**.
 The profile is not the #78 daemon-attested coordinator: profile runtime evidence
 is stored only in the separate `preparedProfiles` observations and **cannot clear
-any of the 24 required case IDs**, including bounded storage and qualified
+any of the 30 required case IDs**, including bounded storage and qualified
 image-volume rejection. Required positive no-prune is separately selected and
 bound to its approved isolated CLI semantics, not promoted from observations. Known pinned-image/no-op
 reconciliation corrections must pass the strict repeat expectation, not relax it.
@@ -110,10 +151,13 @@ implementation; missing/skipped selected tests still fail. Full qualified mode
 must later also test unsupported/foreign preflight **without** adding the separate
 profile flag, so that flag cannot hide a coordinator preflight gap.
 
-### Still required on combined final heads
+### Historical prerequisite checklist — not current implementation status
 
-`cases.json` lists the following explicitly blocked cases. Do not remove a block
-merely because a prerequisite compiles or its mock tests pass:
+The following was the prerequisite planning inventory. The catalog now wires
+these as mandatory actual qualified selectors, not permanently blocked rows.
+Unsupported/unselected cases remain explicitly blocked, and no current successor
+runtime acceptance exists merely because the tests compile. Brine app/source
+acceptance remains a separate downstream gate:
 
 - #77: operation discovery, exact contract invocation, success/failure/cancelled/
   unknown outcomes, redacted errors and accurate engine effects/resource reports.
@@ -269,7 +313,20 @@ The runner emits `evidence.json` with:
   actual engine version response when run, exact commands, exits and output hashes;
 - individual baseline case results plus unresolved prerequisite gaps.
 
-Only bounded version metadata and command arguments are persisted; raw Pkl,
+All nested public records are closed and typed before sealing: unknown
+stdout/stderr/env/log fields fail collection, including inside command arrays.
+Integer exit/byte/count fields reject booleans, null and coercion; diagnostic
+classes come only from the fixed reviewed catalog, including safe failure
+`error` classes. `engineVersion` is ONLY `{engine, clientVersion, serverVersion}`
+with both actual CLI version fields nonempty printable ASCII of at most 128
+bytes—no inference, defaults, trimming or raw Components/Details dictionaries.
+
+Command argv is a fixed, non-executable observation grammar: `<candidate>`,
+`<pkl>`, `<repo>/test/qualification/v1/...` and `<engine-socket>` replace physical
+operator executable/workspace/socket paths. Actual execution still receives the
+original explicit inputs; public placeholders are never executable authority.
+Sealed evidence is canonical sorted-key, two-space JSON with one final newline.
+Only bounded version metadata and redacted command arguments are persisted; raw Pkl,
 engine, workload or Go-test diagnostics are **not** copied into the evidence.
 Do not put secrets in arguments, socket/config paths, fixtures or environments.
 The private `home/` and raw daemon logs are not uploaded. This does not claim
@@ -284,12 +341,13 @@ build/test logs are independently retained in the workflow run.
 2. Inspect the explicit engine endpoint, daemon identity, synthetic stack labels,
    immutable container/network/volume IDs, states and mounts. Compare against the
    pre-run inventory. Confirm no foreign resource changed before claiming isolation.
-   This full inventory demonstration is still a blocked combined acceptance case.
-3. When #78 is integrated, inspect its trusted local journal and actual live
-   resources using the **approved final inspection interface**. Unknown/incomplete
-   records must block new mutation until exact-operation acknowledgement following
-   inspection. No inspect/recover/ack command is invented here, and no automatic
-   replay/rollback is promised by this baseline.
+   Required native cases must actually demonstrate this full inventory.
+3. Inspect the trusted local journal using the existing offline
+   `coordination inspect`, plus separate actual read-only resources/data
+   inspection. Only an already-known exact recorded operation ID can receive
+   `coordination acknowledge --operation-id ID --inspected`. In-progress,
+   unknown or partial records block mutation; known failed/none does not itself
+   invent an inspection barrier. No automatic replay/rollback is promised.
 4. Existing test cleanup only targets its synthetic stacks. `down` retains
    networks; `teardown` retains volumes and networks and can exit nonzero to report
    retention. Cleanup is **not database rollback**, not restoration of replaced

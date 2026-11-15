@@ -28,13 +28,14 @@ class QualificationTests(unittest.TestCase):
             results.append({"id": case["id"], "status": "passed", "evidenceKind": kind,
                             "candidateCommit": COMMIT, "binarySha256": digest, "target": endpoint,
                             **({"tests": list(q.REQUIRED_RUNTIME_TESTS[case["id"]])} if case["mode"] != "offline" else {})})
-        evidence = {"fixtureVersion": manifest["version"], "cases": results,
+        evidence = {"version": "dill.alpha-evidence/2", "fixtureVersion": manifest["version"], "cases": results,
+                    "preflightCapabilities": deepcopy(q.PREFLIGHT_CAPABILITIES),
                     "source": {"commit": COMMIT, "dirty": False},
                     "binary": {"buildRevision": COMMIT, "buildModified": "false", "sha256": digest, "goOS": "linux"},
                     "schema": {"sha256": "c" * 64}, "pkl": {"sha256": "d" * 64},
                     "checksumsAfter": {"binary": digest, "schema": "c" * 64, "pkl": "d" * 64},
                     "integrityVerified": True, "engine": "docker", "disposableAttested": True,
-                    "target": endpoint, "engineVersion": {"Server": {"Version": "synthetic"}},
+                    "target": endpoint, "engineVersion": {"engine": "docker", "clientVersion": "synthetic", "serverVersion": "synthetic"},
                     "baselinePassed": True, "commands": [{"passed": True}], "qualifiedRequested": True,
                     "qualifiedProvisioning": {"source": q.PROVISIONING_SOURCE, "layout": "native-local-docker-v1",
                         "expectedIdentityDigest": "sha256:" + "e" * 64, "privateStateRootVerified": True},
@@ -51,6 +52,10 @@ class QualificationTests(unittest.TestCase):
 
     def test_final_gate_missing_failed_or_unqualified_evidence_never_passes(self):
         mutations = [
+            lambda e, m: e.update(version="dill.alpha-evidence/1"),
+            lambda e, m: m.update(version="dill.alpha-qualification/1"),
+            lambda e, m: e.pop("preflightCapabilities"),
+            lambda e, m: e["preflightCapabilities"].update(supported=False),
             lambda e, m: e["cases"].pop(),
             lambda e, m: m["cases"].pop(),
             lambda e, m: e["cases"].append(e["cases"][0]),
@@ -140,6 +145,53 @@ class QualificationTests(unittest.TestCase):
             self.assertTrue(evidence["baselinePassed"])
             self.assertEqual(evidence["qualification"], "incomplete")
             self.assertFalse(evidence["acceptance"]["complete"])
+
+    def test_version_projection_never_promotes_raw_cli_fields_or_infers_versions(self):
+        document = {"Client": {"Version": "actual-client", "stdout": "PRIVATE"},
+                    "Server": {"Version": "actual-server", "Details": {"raw": "PRIVATE"}}, "stderr": "PRIVATE"}
+        self.assertEqual(q.public_engine_version(document, "docker"),
+                         {"engine": "docker", "clientVersion": "actual-client", "serverVersion": "actual-server"})
+        for value in (None, True, 42, "", "bad\nline", "x" * 129):
+            with self.subTest(value=value), self.assertRaises(ValueError):
+                q.public_engine_version({"Client": {"Version": value}, "Server": {"Version": "actual"}}, "docker")
+        self.assertEqual(q.public_engine_version({"Client": {"Version": " actual "}, "Server": {"Version": " actual "}}, "docker")["clientVersion"], " actual ")
+        for value in ({}, {"Server": {"Version": "actual"}}, {"Client": {"APIVersion": "not-Version"}, "Server": {"Version": "actual"}}):
+            with self.assertRaises(ValueError):
+                q.public_engine_version(value, "docker")
+
+    def test_command_paths_are_redacted_without_changing_execution(self):
+        pkl = "/private/fixture-only/pkl"
+        actual = [str(q.ROOT / "bin/dill"), "-f", str(q.FIXTURES / "valid.pkl"), "validate"]
+        public = q.public_command_argv(actual, {"DILL_PKL_PATH": pkl})
+        self.assertEqual(public, ["<candidate>", "-f", "<repo>/test/qualification/v1/valid.pkl", "validate"])
+        self.assertEqual(actual[0], str(q.ROOT / "bin/dill"))
+        self.assertEqual(q.public_command_argv([pkl, "--version"], {"DILL_PKL_PATH": pkl}), ["<pkl>", "--version"])
+
+    def test_named_discovery_is_exact_and_typed(self):
+        from copy import deepcopy
+        self.assertEqual(q.preflight_capabilities(deepcopy(q.PREFLIGHT_CAPABILITIES)), q.PREFLIGHT_CAPABILITIES)
+        mutations = [lambda x: x.update(supported=1), lambda x: x.update(supported=False),
+                     lambda x: x.update(version="dill.preflight-capabilities/2"),
+                     lambda x: x.update(extra=True), lambda x: x["operations"].reverse(),
+                     lambda x: x["limits"].update(maxResources=256.0),
+                     lambda x: x["limits"].update(maxOutputBytes=262145)]
+        mutations += [lambda x, key=key: x.pop(key) for key in q.PREFLIGHT_CAPABILITIES]
+        for mutate in mutations:
+            doc = deepcopy(q.PREFLIGHT_CAPABILITIES)
+            mutate(doc)
+            with self.subTest(document=doc), self.assertRaises(ValueError):
+                q.preflight_capabilities(doc)
+        for doc in (None, [], True):
+            with self.assertRaises(ValueError):
+                q.preflight_capabilities(doc)
+
+    def test_v1_cases_cannot_qualify_v2(self):
+        evidence, manifest = self.synthetic_complete_gate_inputs()
+        manifest["cases"] = [x for x in manifest["cases"] if not x["id"].startswith("named-preflight-")]
+        evidence["cases"] = [x for x in evidence["cases"] if not x["id"].startswith("named-preflight-")]
+        self.assertEqual(len(manifest["cases"]), 24)
+        self.assertEqual(len(q.FINAL_REQUIRED_CASES), 30)
+        self.assertFalse(q.final_acceptance(evidence, manifest)["complete"])
 
     def test_hash(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -352,11 +404,13 @@ print('private-empty-auth-only')
             args.coordination_daemon_id, args.coordination_state_root = "synthetic-daemon-id", str(state)
             args.native_layout_provisioned, args.provisioning_source = True, q.PROVISIONING_SOURCE
             path = root / "test/qualification/v1/cases.json"
-            path.write_text(json.dumps({"version": "dill.alpha-qualification/1", "cases": [
+            path.write_text(json.dumps({"version": "dill.alpha-qualification/2", "cases": [
                 {"id": "mock-only", "mode": "qualified-engine", "test": "TestNativePrimary", "additionalTests": ["TestNativeExtra"], "requires": [78], "reason": "mock"}]}))
             observed = []
             class NativeFake(self.fake_recorder()):
                 def run(self, argv, timeout=120, expected=0, env=None):
+                    if "preflight-capabilities" in argv:
+                        return json.dumps(q.PREFLIGHT_CAPABILITIES).encode(), True
                     if "operation-capabilities" in argv:
                         return json.dumps({"version": "dill.operation/1", "engines": ["docker", "podman"],
                             "features": ["explicitLocalSelector", "attended", "redactedSummary", "conservativeEffects", "optInQualifiedLocalCoordination"],
@@ -364,7 +418,7 @@ print('private-empty-auth-only')
                             "qualifiedCoordinationOperations": ["up", "down", "stop", "start", "restart", "rm"],
                             "qualifiedCoordinationEngines": ["docker"], "qualifiedCoordinationLayouts": ["native-local-docker-v1"]}).encode(), True
                     if argv[0] == "docker":
-                        return b'{"Server":{"Version":"synthetic"}}', True
+                        return b'{"Client":{"Version":"synthetic"},"Server":{"Version":"synthetic"}}', True
                     if argv[0] == "make":
                         observed.append((argv, env.copy()))
                         return b"--- PASS: TestNativePrimary (0s)\n--- PASS: TestNativeExtra (0s)\n", True
@@ -399,8 +453,11 @@ print('private-empty-auth-only')
                 args = self.fake_candidate(root)
                 (root / "docs").mkdir()
                 (root / "docs/alpha-candidate-handoff.md").write_text("synthetic public guide")
-                (root / "internal/operation/testdata").mkdir(parents=True)
-                (root / "internal/operation/testdata/public.json").write_text("{}")
+                for name in q.PUBLIC_HANDOFF_FILES - {"bin/dill", "bin/pkl"}:
+                    path = root / name
+                    path.parent.mkdir(parents=True, exist_ok=True)
+                    if not path.exists():
+                        path.write_text("synthetic public fixture")
                 output = root / "out"
                 bundle = output / "handoff"
                 bundle.mkdir(parents=True)
@@ -413,8 +470,8 @@ print('private-empty-auth-only')
                         target.parent.mkdir(parents=True, exist_ok=True)
                         shutil.copyfile(source, target)
                         digests[name] = q.sha256(source)
-                    document = {"version": "dill.alpha-handoff/1", "status": "verified", "candidateCommit": COMMIT,
-                                "binarySha256": digests["bin/dill"], "fixtureVersion": "dill.alpha-qualification/1", "files": digests,
+                    document = {"version": "dill.alpha-handoff/2", "status": "verified", "candidateCommit": COMMIT,
+                                "binarySha256": digests["bin/dill"], "fixtureVersion": "dill.alpha-qualification/2", "files": digests,
                                 "caller": {"contract": "dill.operation/1", "source": "brine", "outcome": "succeeded", "effects": "complete", "qualifiedIdentityDigest": identity},
                                 "downstreamBrineAcceptance": "not-run"}
                     if variant == "wrong-commit":
@@ -459,7 +516,7 @@ print('private-empty-auth-only')
         fixtures = root / "test/qualification/v1"
         fixtures.mkdir(parents=True)
         (fixtures / "valid.pkl").write_text("synthetic fixture")
-        (fixtures / "cases.json").write_text(json.dumps({"version": "dill.alpha-qualification/1", "cases": [
+        (fixtures / "cases.json").write_text(json.dumps({"version": "dill.alpha-qualification/2", "cases": [
             {"id": "valid", "mode": "offline", "fixture": "valid.pkl", "exit": 0},
             {"id": "concurrency", "mode": "blocked", "requires": [78], "reason": "unintegrated"}]}))
         return argparse.Namespace(expected_commit=COMMIT, binary=str(root / "dill"),
@@ -609,7 +666,7 @@ print('private-empty-auth-only')
                                 "features": ["explicitLocalSelector", "attended", "redactedSummary", "conservativeEffects"],
                                 "operations": ["validate", "plan", "diff", "up", "down", "stop", "start", "restart", "rm", "teardown"]}).encode(), True
                         if str(argv[0]) == engine:
-                            return b'{"Server":{"Version":"synthetic"}}', True
+                            return b'{"Client":{"Version":"synthetic"},"Server":{"Version":"synthetic"}}', True
                         if str(argv[0]) == "make":
                             names = ["TestGuardrail"] + (["TestDockerProfile"] if engine == "docker" else [])
                             outer.assertEqual(argv[-1], q.make_test_selector(names))

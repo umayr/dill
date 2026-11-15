@@ -19,6 +19,7 @@ import (
 	"github.com/umayr/dill/internal/operation"
 	"github.com/umayr/dill/internal/orchestrator"
 	"github.com/umayr/dill/internal/plan"
+	"github.com/umayr/dill/internal/preflight"
 )
 
 type operationState struct {
@@ -29,6 +30,7 @@ type operationState struct {
 	endpoint     string
 	coordination *operationCoordination
 	census       map[string]string
+	named        *namedCapture
 	listed       []string
 	ctx          context.Context
 }
@@ -142,9 +144,21 @@ func runOperation(ctx context.Context, args []string) error {
 		}
 		return nil
 	}
-	if secretInvocation(args) {
+	bound := namedBindingIntent(args)
+	if (!bound && secretInvocation(args)) || (bound && namedSecretIntent(args)) {
 		result.Outcome = "failed"
 		return emit(1, "SECRET_UNAVAILABLE", "Secret configuration or source unavailable.")
+	}
+	var namedInvocation preflight.Invocation
+	if bound {
+		var reason string
+		namedInvocation, reason = preflight.ParseInvocation(args, true)
+		if reason != "" {
+			return emit(2, "INVALID_ARGUMENTS", "Invalid operation arguments.")
+		}
+		if !qualifiedNativeHost() {
+			return emit(2, "UNSUPPORTED_COORDINATION", "Unsupported qualified coordination invocation.")
+		}
 	}
 	if len(args) == 0 || !operationSupported(args[0]) {
 		return emit(2, "UNSUPPORTED_OPERATION", "Unsupported operation. Use operation-capabilities discovery.")
@@ -166,6 +180,10 @@ func runOperation(ctx context.Context, args []string) error {
 	force := fs.Bool("force", false, "force image removal")
 	coordOptions := coordinationOptions{}
 	coordOptions.flags(fs)
+	if bound {
+		fs.String("preflight-contract", "", "named preflight contract")
+		fs.String("expect-preflight", "", "expected named selection")
+	}
 	fs.SetOutput(io.Discard)
 	if fs.Parse(args[1:]) != nil {
 		return emit(2, "INVALID_ARGUMENTS", "Invalid operation arguments.")
@@ -210,7 +228,7 @@ func runOperation(ctx context.Context, args []string) error {
 		if err := coordOptions.validate(name, opts); err != nil {
 			return emit(2, "UNSUPPORTED_COORDINATION", "Unsupported qualified coordination invocation.")
 		}
-		state.coordination = &operationCoordination{options: coordOptions}
+		state.coordination = &operationCoordination{options: coordOptions, collectNamed: bound}
 	}
 	result.Target = &operation.Target{Engine: opts.Engine, EndpointDigest: operation.Digest(endpoint)}
 	result.Stack = opts.StackName
@@ -226,7 +244,7 @@ func runOperation(ctx context.Context, args []string) error {
 	cfg, err := loadConfig(ctx, opts)
 	// Decoded secret grants are deliberately unsupported in this new adapter.
 	// No identifying metadata from this path is returned on failure.
-	if hasSecretGrants(cfg) || errors.Is(err, config.ErrSecretUnavailable) {
+	if hasSecretGrants(cfg) || errors.Is(err, config.ErrSecretUnavailable) || (bound && cfg != nil && len(cfg.Secrets) != 0) {
 		result.Target = nil
 		result.Stack = ""
 		result.Outcome = "failed"
@@ -261,7 +279,10 @@ func runOperation(ctx context.Context, args []string) error {
 		if state.coordination != nil {
 			err = state.coordination.prepare(ctx, opts, cfg, name, *pull)
 		}
-		if err == nil && name != "validate" && name != "plan" && name != "diff" {
+		if err == nil && bound {
+			err = bindNamedOperation(ctx, opts, cfg, namedInvocation)
+		}
+		if err == nil && !bound && name != "validate" && name != "plan" && name != "diff" {
 			err = preflightOperationOwnership(ctx, opts, cfg)
 		}
 		if err == nil && (name == "down" || name == "rm" || name == "teardown") {
@@ -305,12 +326,25 @@ func runOperation(ctx context.Context, args []string) error {
 			return emit(0, "", "")
 		}
 		return emit(1, "", "")
+	// A known secret refusal must clear identifying metadata even when the
+	// context is cancelled concurrently. Keep legacy classification unchanged.
+	case bound && errors.Is(err, config.ErrSecretUnavailable):
+		result.Target = nil
+		result.Stack = ""
+		result.Outcome = "failed"
+		return emit(1, "SECRET_UNAVAILABLE", "Secret configuration or source unavailable.")
 	case errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) || ctx.Err() != nil:
 		result.Outcome = "cancelled"
 		return emit(1, "CANCELLED", "Operation cancelled or deadline exceeded.")
 	case coordinationInspection(err):
 		result.Outcome = "failed"
 		return emit(1, "COORDINATION_INSPECTION_REQUIRED", "Unresolved coordination state. Inspect and explicitly acknowledge it before retrying.")
+	case errors.Is(err, errNamedMismatch):
+		result.Outcome = "failed"
+		return emit(1, "PREFLIGHT_MISMATCH", "Reviewed resource selection changed. Review again before retrying.")
+	case bound && errors.Is(err, errNamedCaptureUnavailable):
+		result.Outcome = "failed"
+		return emit(1, "PREFLIGHT_UNAVAILABLE", "Complete preflight evidence unavailable.")
 	case failureKind(err) == "invalid_input":
 		result.Outcome = "invalid_input"
 		return emit(2, "INVALID_INPUT", "Invalid operation input.")

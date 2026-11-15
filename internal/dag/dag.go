@@ -101,9 +101,21 @@ func Build(services map[string]*config.Service) (*Graph, error) {
 // If any service fails to become ready within timeout, the entire deployment
 // is aborted and all containers started during this run are torn down.
 func (g *Graph) Run(ctx context.Context, engine orchestrator.Engine, stackName string, timeout time.Duration, actions map[string]Action, prog Progress, mkSink MakePullSink) error {
+	return g.run(ctx, engine, stackName, timeout, actions, prog, mkSink, nil)
+}
+
+func (g *Graph) run(ctx context.Context, engine orchestrator.Engine, stackName string, timeout time.Duration, actions map[string]Action, prog Progress, mkSink MakePullSink, capturedIDs map[string]string) error {
 	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
+	// A compared capture constrains the existing runner; it is not another
+	// planner. Validate its WHOLE set before the first network ensure. Later
+	// checks may reject drift, never silently authorize a replacement identity.
+	if capturedIDs != nil {
+		if err := g.validateCapturedIDs(ctx, engine, stackName, capturedIDs); err != nil {
+			return err
+		}
+	}
 	if err := engine.EnsureNetwork(ctx, stackName); err != nil {
 		return fmt.Errorf("creating stack network: %w", err)
 	}
@@ -164,6 +176,9 @@ func (g *Graph) Run(ctx context.Context, engine orchestrator.Engine, stackName s
 					return fmt.Errorf("service %q: inspect returned an empty container ID", n.name)
 				}
 				containerID = live.ID
+				if capturedIDs != nil && containerID != capturedIDs[n.name] {
+					return ErrCapturedSelectionChanged
+				}
 			}
 
 			switch actions[n.name] {

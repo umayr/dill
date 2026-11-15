@@ -37,8 +37,9 @@ func TestAlphaQualifiedCandidateHandoff(t *testing.T) {
 		"dill.pkl":                           filepath.Join(f.root, "dill.pkl"),
 		"internal/loader/pkl-toolchain.json": filepath.Join(f.root, "internal/loader/pkl-toolchain.json"),
 		"docs/alpha-candidate-handoff.md":    filepath.Join(f.root, "docs/alpha-candidate-handoff.md"),
+		"docs/named-preflight-v1.md":         filepath.Join(f.root, "docs/named-preflight-v1.md"),
 	}
-	for _, directory := range []string{"test/qualification/v1", "internal/operation/testdata"} {
+	for _, directory := range []string{"test/qualification/v1", "internal/operation/testdata", "internal/preflight/testdata"} {
 		err := filepath.WalkDir(filepath.Join(f.root, directory), func(path string, entry fs.DirEntry, walkErr error) error {
 			if walkErr != nil {
 				return walkErr
@@ -107,8 +108,8 @@ func TestAlphaQualifiedCandidateHandoff(t *testing.T) {
 	}
 	f.assertForeign(t)
 	manifest := map[string]any{
-		"version": "dill.alpha-handoff/1", "status": "verified", "candidateCommit": commit,
-		"binarySha256": expectedBinary, "fixtureVersion": "dill.alpha-qualification/1", "files": digests,
+		"version": "dill.alpha-handoff/2", "status": "verified", "candidateCommit": commit,
+		"binarySha256": expectedBinary, "fixtureVersion": "dill.alpha-qualification/2", "files": digests,
 		"caller":                    map[string]string{"contract": "dill.operation/1", "source": "brine", "outcome": "succeeded", "effects": "complete", "qualifiedIdentityDigest": result.Target.QualifiedIdentityDigest},
 		"downstreamBrineAcceptance": "not-run",
 	}

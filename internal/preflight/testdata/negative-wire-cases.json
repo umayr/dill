@@ -1,0 +1,32 @@
+{
+  "version": "dill.preflight-negative-wire/1",
+  "base": "preview-up-create.json",
+  "requiredRejects": [
+    "unknown_version",
+    "unknown_top_or_nested_key",
+    "duplicate_json_key",
+    "trailing_json",
+    "null_required_boolean",
+    "missing_resources_or_errors_array",
+    "missing_coverage_scope",
+    "fractional_negative_or_string_count",
+    "coverage_row_or_present_count_mismatch",
+    "duplicate_kind_name",
+    "short_container_or_network_id",
+    "mismatched_identityKind_presence",
+    "absent_start_container",
+    "network_absent_retain_mislabeled_create",
+    "recreate_fake_future_id",
+    "container_retention_preserve",
+    "volume_immutable_incarnation_claim",
+    "nonnull_target_missing_empty_or_selector_only_qualifiedDigest",
+    "success_missing_digest",
+    "failure_rows_or_digest_present",
+    "truncated_success",
+    "metadata_unknown_success",
+    "exit1_success_marker",
+    "oversized_bytes",
+    "unsafe_name_control_invalid_utf8_or_over255",
+    "field_count_array_null_instead_empty"
+  ]
+}

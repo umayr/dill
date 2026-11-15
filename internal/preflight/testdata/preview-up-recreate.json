@@ -1,0 +1,71 @@
+{
+  "exitCode": 0,
+  "stdout": {
+    "version": "dill.preflight/1",
+    "operationId": "op_00000000000000000000000000000002",
+    "operation": "up",
+    "target": {
+      "engine": "docker",
+      "endpointDigest": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+      "qualifiedIdentityDigest": "sha256:2222222222222222222222222222222222222222222222222222222222222222"
+    },
+    "stack": "synthetic",
+    "outcome": "succeeded",
+    "engineEffects": "none",
+    "coordinationEffects": "written",
+    "inputDigest": "sha256:6666666666666666666666666666666666666666666666666666666666666666",
+    "selectionDigest": "sha256:7777777777777777777777777777777777777777777777777777777777777777",
+    "coverage": {
+      "containers": {
+        "scope": "declared-stack",
+        "count": 1,
+        "presentCount": 1,
+        "complete": true
+      },
+      "network": {
+        "scope": "stack-network",
+        "count": 1,
+        "presentCount": 1,
+        "complete": true
+      },
+      "volumes": {
+        "scope": "declared-attached-named",
+        "count": 1,
+        "presentCount": 1,
+        "complete": true
+      }
+    },
+    "resources": [
+      {
+        "kind": "container",
+        "name": "synthetic_web",
+        "identity": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "identityKind": "immutable-id",
+        "presence": "present",
+        "action": "recreate",
+        "retention": "not-applicable"
+      },
+      {
+        "kind": "network",
+        "name": "synthetic",
+        "identity": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "identityKind": "immutable-id",
+        "presence": "present",
+        "action": "ensure",
+        "retention": "preserve"
+      },
+      {
+        "kind": "volume",
+        "name": "synthetic_data",
+        "identity": "synthetic_data",
+        "identityKind": "engine-name",
+        "presence": "present",
+        "action": "ensure",
+        "retention": "preserve"
+      }
+    ],
+    "resourcesTruncated": false,
+    "errors": []
+  },
+  "runtime": "synthetic-design-not-executed"
+}

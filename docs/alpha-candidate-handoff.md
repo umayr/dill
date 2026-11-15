@@ -1,4 +1,11 @@
-# Copied Dill Alpha candidate handoff (v1)
+# Copied Dill Alpha candidate handoff (v2)
+
+This successor requires `dill.alpha-qualification/2`, `dill.alpha-evidence/2`
+and `dill.alpha-handoff/2`: all **30** required native Docker cases and the exact
+**32-member** public archive. Old 24-case/v1/16-member evidence remains historical
+and cannot qualify this extension. The `test/qualification/v1` filesystem path
+is retained for unchanged fixture syntax; the catalog policy identity is `/2`.
+The Dill operation/1 and named-preflight/1 wire contracts are unchanged.
 
 This bundle supplies **Dill-side artifacts and a usable copied caller contract**.
 It does not run, qualify or approve the external Brine application/browser, an
@@ -16,7 +23,16 @@ location, never over an existing operator installation/state directory.
 
 The `handoff.tar.gz` allowlist contains `bin/dill`, checksum-pinned `bin/pkl`,
 `dill.pkl`, `internal/loader/pkl-toolchain.json`, `test/qualification/v1/`, public
-`internal/operation/testdata/` goldens, this guide and `handoff.json`. There is no
+`internal/operation/testdata/` goldens, all 15 unchanged public
+`internal/preflight/testdata/` goldens, `docs/named-preflight-v1.md`, this guide
+and `handoff.json`. All nested public evidence records are closed and typed;
+raw diagnostics are forbidden even inside command arrays. The only engine
+version fields are actual bounded `{engine, clientVersion, serverVersion}`.
+Public command argv uses fixed redacted placeholders, never executable authority.
+The collector rejects extras/links and independently checks
+all payloads, manifest bindings and canonical archive bytes before sealing one
+explicit upload directory; no wildcard upload reads private evidence roots.
+There is no
 HOME, registry auth, coordination key/journal, private state or raw engine log.
 The manifest binds the exact candidate commit and every public copied file hash.
 Check its externally supplied checksum first, then verify every listed file:
@@ -25,7 +41,7 @@ Check its externally supplied checksum first, then verify every listed file:
 import hashlib, json, pathlib
 root = pathlib.Path("extracted-bundle")
 manifest = json.loads((root / "handoff.json").read_text())
-assert manifest["version"] == "dill.alpha-handoff/1"
+assert manifest["version"] == "dill.alpha-handoff/2"
 for name, expected in manifest["files"].items():
     path = root / name
     assert not path.is_symlink() and path.is_file()
@@ -85,6 +101,35 @@ matching durable source/operation/target via offline `coordination inspect`.
 The harness performs this actual copied-caller proof and independently verifies
 all copied hashes before creating the public archive. Failed cleanup fails the
 case; a partial setup manifest cannot green artifact supply.
+
+## Named preview and fresh checked apply
+
+After the SAME independent native provisioning, obtain `preflight-capabilities
+--format json` and require the exact supported `dill.preflight-capabilities/1`
+profile documented in `named-preflight-v1.md`. The qualification evidence records
+that exact bounded object (array order matters; JSON object member order does
+not). Preview each desired action using the explicit qualified tuple and
+`preflight <action> --contract dill.preflight/1`. Pass its verbatim successful
+selection digest to a fresh `operation <action> --contract dill.operation/1`
+using BOTH `--preflight-contract dill.preflight/1 --expect-preflight sha256:...`
+and identical effective config/flags/source/target/store. A digest is not
+permission or a reservation; never auto-preview/retry/replay after mismatch.
+
+The six mandatory new cases exercise all five actual handlers; actual names,
+immutable prepared IDs and original-reference/no-op provenance; retained data;
+force/config/live-ID/prepared-content/original-reference mismatches before ALL
+mutators; same-inode state aliases versus socket spelling and valid copied-store
+bindings; actual held-lock cancellation using one native `--timeout 2s` flag;
+genuine zero-service empty/orphan behavior (declared-but-absent Start stays a
+negative); and actual unsafe state metadata refusal. Copies preserve
+internal hardlinks but share none with the original, and a fresh successful
+destination preview proves metadata validity before testing stale comparison.
+Outer process death, a missing receipt or unit-injected close cancellation is
+not native structured-cancellation evidence. Existing native crash/unknown,
+exact inspected-ID recovery, concurrency and foreign/data retention remain
+mandatory. Empty retained-network Down `failed/none` does NOT invent an inspection
+barrier; no-op Up/empty Start may still ensure resources. No qualified teardown
+success is claimed.
 
 Only native Docker, prepared immutable no-VOLUME images and dedicated named
 storage are supported. Binds, secrets, devices/caps, host namespaces, image

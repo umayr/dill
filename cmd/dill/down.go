@@ -32,6 +32,13 @@ func runDown(ctx context.Context, opts commandOptions, args []string) error {
 		}
 	}
 	sn := st.Name
+	capture, captureErr := opts.checkedCapture("down", sn)
+	if captureErr != nil {
+		return captureErr
+	}
+	if capture != nil && (len(args) != 0 || opts.DryRun || capture.removal == nil || capture.removal.Stack != sn) {
+		return errNamedCaptureUnavailable
+	}
 	engine, err := newEngine(ctx, st.Engine, opts)
 	if err != nil {
 		return err
@@ -75,17 +82,22 @@ func runDown(ctx context.Context, opts commandOptions, args []string) error {
 	}
 
 	if opts.operation != nil {
-		names, err := engine.ListStack(ctx, sn)
-		if err != nil {
-			return err
-		}
-		targets := make([]orchestrator.RemovalTarget, 0, len(names))
-		for _, name := range names {
-			targets = append(targets, orchestrator.RemovalTarget{Name: name})
-		}
-		intent, err := orchestrator.CaptureRemovalIntent(ctx, engine, sn, targets)
-		if err != nil {
-			return err
+		var intent *orchestrator.RemovalIntent
+		if capture != nil {
+			intent = capture.removal
+		} else {
+			names, err := engine.ListStack(ctx, sn)
+			if err != nil {
+				return err
+			}
+			targets := make([]orchestrator.RemovalTarget, 0, len(names))
+			for _, name := range names {
+				targets = append(targets, orchestrator.RemovalTarget{Name: name})
+			}
+			intent, err = orchestrator.CaptureRemovalIntent(ctx, engine, sn, targets)
+			if err != nil {
+				return err
+			}
 		}
 		if err := opts.replaceRemovalIntent(intent, "remove", []operation.Intent{{Kind: "network", Identity: sn, Action: "retain"}}); err != nil {
 			return err

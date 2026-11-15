@@ -1,0 +1,23 @@
+{
+  "version": "dill.preflight-fixture-manifest/1",
+  "status": "proposed-freeze-not-implemented-not-runtime-proof",
+  "contract": "dill.preflight/1",
+  "fixtures": [
+    "apply-mismatch.json",
+    "argv.json",
+    "canonical-vectors.json",
+    "capabilities-supported.json",
+    "capabilities-unsupported.json",
+    "negative-wire-cases.json",
+    "preview-down-absent.json",
+    "preview-empty-start.json",
+    "preview-invalid-contract.json",
+    "preview-limit-failure.json",
+    "preview-metadata-unknown.json",
+    "preview-up-config-noop.json",
+    "preview-up-create.json",
+    "preview-up-recreate.json"
+  ],
+  "disclosure": "synthetic only; operator names not general public upload permission",
+  "candidatePin": "b3 remains unchanged until successor independently accepted"
+}

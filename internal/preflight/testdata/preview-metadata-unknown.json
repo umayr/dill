@@ -1,0 +1,48 @@
+{
+  "exitCode": 1,
+  "stdout": {
+    "version": "dill.preflight/1",
+    "operationId": "op_00000000000000000000000000000007",
+    "operation": "up",
+    "target": {
+      "engine": "docker",
+      "endpointDigest": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+      "qualifiedIdentityDigest": "sha256:2222222222222222222222222222222222222222222222222222222222222222"
+    },
+    "stack": "synthetic",
+    "outcome": "unknown",
+    "engineEffects": "none",
+    "coordinationEffects": "unknown",
+    "inputDigest": null,
+    "selectionDigest": null,
+    "coverage": {
+      "containers": {
+        "scope": "declared-stack",
+        "count": 0,
+        "presentCount": 0,
+        "complete": false
+      },
+      "network": {
+        "scope": "stack-network",
+        "count": 0,
+        "presentCount": 0,
+        "complete": false
+      },
+      "volumes": {
+        "scope": "declared-attached-named",
+        "count": 0,
+        "presentCount": 0,
+        "complete": false
+      }
+    },
+    "resources": [],
+    "resourcesTruncated": false,
+    "errors": [
+      {
+        "code": "COORDINATION_COMMIT_FAILED",
+        "message": "Durable preflight outcome unavailable. Inspect before retrying."
+      }
+    ]
+  },
+  "runtime": "synthetic-design-not-executed"
+}

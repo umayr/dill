@@ -1,0 +1,131 @@
+{
+  "version": "dill.preflight-canonical-vectors/1",
+  "runtime": "synthetic-design-not-executed",
+  "limits": "Original service hash leaf is an explicit synthetic input, not an executed Go ServiceConfigHash proof. Separate tests must derive it from original desired provenance. No actual target/state exists.",
+  "store": {
+    "keyHex": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f",
+    "device": "11",
+    "inode": "22",
+    "euid": "1000",
+    "messageHex": "64696c6c2e6e616d65642d73746f72652f3100000000000000000b000000000000001600000000000003e8",
+    "privateExpectedTokenHex": "f2d33684a75479373947427a9601eaf4efc46b6eab5af4c9b0944e3eb57b990a"
+  },
+  "input": {
+    "domain": "dill.effective-input/1",
+    "payload": {
+      "logicalContract": "dill.preflight/1",
+      "engine": "docker",
+      "stack": "synthetic",
+      "operation": "up",
+      "flags": {
+        "timeoutNanos": 300000000000,
+        "forceRecreate": false,
+        "noPrune": true,
+        "effectivePullPolicy": "never",
+        "noDeps": false,
+        "callerSource": "brine"
+      },
+      "services": [
+        {
+          "name": "web",
+          "containerName": "synthetic_web",
+          "desiredConfigHash": "3333333333333333333333333333333333333333333333333333333333333333",
+          "dependsOn": [],
+          "effectivePullPolicy": "never",
+          "preparedImageId": "sha256:4444444444444444444444444444444444444444444444444444444444444444"
+        }
+      ]
+    },
+    "canonicalUtf8": "{\"engine\":\"docker\",\"flags\":{\"callerSource\":\"brine\",\"effectivePullPolicy\":\"never\",\"forceRecreate\":false,\"noDeps\":false,\"noPrune\":true,\"timeoutNanos\":300000000000},\"logicalContract\":\"dill.preflight/1\",\"operation\":\"up\",\"services\":[{\"containerName\":\"synthetic_web\",\"dependsOn\":[],\"desiredConfigHash\":\"3333333333333333333333333333333333333333333333333333333333333333\",\"effectivePullPolicy\":\"never\",\"name\":\"web\",\"preparedImageId\":\"sha256:4444444444444444444444444444444444444444444444444444444444444444\"}],\"stack\":\"synthetic\"}",
+    "expected": "sha256:7a4c34cf264e77797340e775f25cbe9275bc988ca4b19c8434624ad8d2d999f5"
+  },
+  "selection": {
+    "domain": "dill.named-selection/1",
+    "payload": {
+      "logicalContract": "dill.preflight/1",
+      "target": {
+        "engine": "docker",
+        "endpointDigest": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+        "qualifiedIdentityDigest": "sha256:2222222222222222222222222222222222222222222222222222222222222222"
+      },
+      "stack": "synthetic",
+      "operation": "up",
+      "inputDigest": "sha256:7a4c34cf264e77797340e775f25cbe9275bc988ca4b19c8434624ad8d2d999f5",
+      "stateScope": "f2d33684a75479373947427a9601eaf4efc46b6eab5af4c9b0944e3eb57b990a",
+      "coverage": {
+        "containers": {
+          "scope": "declared-stack",
+          "count": 1,
+          "presentCount": 0,
+          "complete": true
+        },
+        "network": {
+          "scope": "stack-network",
+          "count": 1,
+          "presentCount": 0,
+          "complete": true
+        },
+        "volumes": {
+          "scope": "declared-attached-named",
+          "count": 1,
+          "presentCount": 0,
+          "complete": true
+        }
+      },
+      "resources": [
+        {
+          "kind": "container",
+          "name": "synthetic_web",
+          "identity": "synthetic_web",
+          "identityKind": "planned-name",
+          "presence": "absent",
+          "action": "create",
+          "retention": "not-applicable"
+        },
+        {
+          "kind": "network",
+          "name": "synthetic",
+          "identity": "synthetic",
+          "identityKind": "planned-name",
+          "presence": "absent",
+          "action": "ensure",
+          "retention": "preserve"
+        },
+        {
+          "kind": "volume",
+          "name": "synthetic_data",
+          "identity": "synthetic_data",
+          "identityKind": "planned-name",
+          "presence": "absent",
+          "action": "ensure",
+          "retention": "preserve"
+        }
+      ],
+      "facts": {
+        "containers": [
+          {
+            "name": "synthetic_web",
+            "exists": false,
+            "id": null,
+            "configDigest": null
+          }
+        ],
+        "network": {
+          "name": "synthetic",
+          "exists": false,
+          "id": null,
+          "settingsDigest": null
+        },
+        "volumes": [
+          {
+            "name": "synthetic_data",
+            "exists": false,
+            "settingsDigest": null
+          }
+        ]
+      }
+    },
+    "canonicalUtf8": "{\"coverage\":{\"containers\":{\"complete\":true,\"count\":1,\"presentCount\":0,\"scope\":\"declared-stack\"},\"network\":{\"complete\":true,\"count\":1,\"presentCount\":0,\"scope\":\"stack-network\"},\"volumes\":{\"complete\":true,\"count\":1,\"presentCount\":0,\"scope\":\"declared-attached-named\"}},\"facts\":{\"containers\":[{\"configDigest\":null,\"exists\":false,\"id\":null,\"name\":\"synthetic_web\"}],\"network\":{\"exists\":false,\"id\":null,\"name\":\"synthetic\",\"settingsDigest\":null},\"volumes\":[{\"exists\":false,\"name\":\"synthetic_data\",\"settingsDigest\":null}]},\"inputDigest\":\"sha256:7a4c34cf264e77797340e775f25cbe9275bc988ca4b19c8434624ad8d2d999f5\",\"logicalContract\":\"dill.preflight/1\",\"operation\":\"up\",\"resources\":[{\"action\":\"create\",\"identity\":\"synthetic_web\",\"identityKind\":\"planned-name\",\"kind\":\"container\",\"name\":\"synthetic_web\",\"presence\":\"absent\",\"retention\":\"not-applicable\"},{\"action\":\"ensure\",\"identity\":\"synthetic\",\"identityKind\":\"planned-name\",\"kind\":\"network\",\"name\":\"synthetic\",\"presence\":\"absent\",\"retention\":\"preserve\"},{\"action\":\"ensure\",\"identity\":\"synthetic_data\",\"identityKind\":\"planned-name\",\"kind\":\"volume\",\"name\":\"synthetic_data\",\"presence\":\"absent\",\"retention\":\"preserve\"}],\"stack\":\"synthetic\",\"stateScope\":\"f2d33684a75479373947427a9601eaf4efc46b6eab5af4c9b0944e3eb57b990a\",\"target\":{\"endpointDigest\":\"sha256:1111111111111111111111111111111111111111111111111111111111111111\",\"engine\":\"docker\",\"qualifiedIdentityDigest\":\"sha256:2222222222222222222222222222222222222222222222222222222222222222\"}}",
+    "expected": "sha256:6843cc5d2371d9b4fd1ec716558306aebd120cf14d07b0c8e084d2e1f8561ac2"
+  }
+}

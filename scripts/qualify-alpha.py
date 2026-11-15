@@ -56,6 +56,12 @@ REQUIRED_CASE_EVIDENCE = {
     "corrupt-journal-rejection": ("qualified-engine", "real-qualified-engine"),
     "inspected-exact-operation-recovery": ("qualified-engine", "real-qualified-engine"),
     "qualified-image-volume-rejected": ("qualified-engine", "real-qualified-engine"),
+    "named-preflight-five-actions": ("qualified-engine", "real-qualified-engine"),
+    "named-preflight-mismatch-before-ensure": ("qualified-engine", "real-qualified-engine"),
+    "named-preflight-store-selector-binding": ("qualified-engine", "real-qualified-engine"),
+    "named-preflight-lock-cancellation": ("qualified-engine", "real-qualified-engine"),
+    "named-preflight-empty-orphan": ("qualified-engine", "real-qualified-engine"),
+    "named-preflight-metadata-refusal": ("qualified-engine", "real-qualified-engine"),
 }
 REQUIRED_RUNTIME_TESTS = {
     "success-repeat-config-change": ("TestDillRealEngineLifecycle",),
@@ -80,6 +86,12 @@ REQUIRED_RUNTIME_TESTS = {
     "corrupt-journal-rejection": ("TestAlphaQualifiedCorruptJournal",),
     "inspected-exact-operation-recovery": ("TestAlphaQualifiedCrashUnknownRecovery",),
     "qualified-image-volume-rejected": ("TestAlphaQualifiedStandalonePreflight",),
+    "named-preflight-five-actions": ("TestAlphaQualifiedNamedPreflightFiveRoutes",),
+    "named-preflight-mismatch-before-ensure": ("TestAlphaQualifiedNamedPreflightMismatchBeforeEnsure",),
+    "named-preflight-store-selector-binding": ("TestAlphaQualifiedNamedPreflightStoreSelectorBinding",),
+    "named-preflight-lock-cancellation": ("TestAlphaQualifiedNamedPreflightLockCancellation",),
+    "named-preflight-empty-orphan": ("TestAlphaQualifiedNamedPreflightEmptyAndOrphans",),
+    "named-preflight-metadata-refusal": ("TestAlphaQualifiedNamedPreflightMetadataRefusal",),
 }
 REQUIRED_OFFLINE_FIXTURES = {"offline-valid": ("valid.pkl", 0), "offline-invalid-graph": ("invalid-graph.pkl", 2)}
 FINAL_REQUIRED_CASES = frozenset(REQUIRED_CASE_EVIDENCE)
@@ -89,6 +101,24 @@ PROFILE_LIMITATIONS = frozenset({
     "dedicated-named-volumes-only", "no-binds", "no-secrets", "no-host-namespace",
     "no-devices-or-capabilities", "no-orphans-or-uninventoried-mounts", "qualified-teardown-unsupported",
 })
+
+
+PREFLIGHT_CAPABILITIES = {
+    "version": "dill.preflight-capabilities/1", "supported": True,
+    "contract": "dill.preflight/1", "applyContract": "dill.operation/1",
+    "operations": ["up", "start", "restart", "stop", "down"],
+    "engines": ["docker"], "layouts": ["native-local-docker-v1"],
+    "limits": {"maxResources": 256, "maxNameBytes": 255, "maxOutputBytes": 262144},
+}
+
+
+def preflight_capabilities(document):
+    """Frozen supported shape; array order matters, JSON object order does not."""
+    if (not isinstance(document, dict) or document != PREFLIGHT_CAPABILITIES
+            or document.get("supported") is not True
+            or any(type(value) is not int for value in document.get("limits", {}).values())):
+        raise ValueError("named preflight capabilities differ from the frozen supported profile")
+    return document
 
 
 def final_acceptance(evidence, manifest):
@@ -105,7 +135,8 @@ def final_acceptance(evidence, manifest):
     if (len(declared) != len(set(declared)) or set(declared) != FINAL_REQUIRED_CASES
             or len(observed) != len(set(observed)) or set(observed) != FINAL_REQUIRED_CASES):
         reasons.append("required-case-set-mismatch")
-    if manifest.get("version") != "dill.alpha-qualification/1" or evidence.get("fixtureVersion") != manifest.get("version"):
+    if (evidence.get("version") != "dill.alpha-evidence/2" or manifest.get("version") != "dill.alpha-qualification/2"
+            or evidence.get("fixtureVersion") != manifest.get("version")):
         reasons.append("fixture-version-mismatch")
     source, binary = evidence.get("source", {}), evidence.get("binary", {})
     commit = source.get("commit", "")
@@ -114,7 +145,12 @@ def final_acceptance(evidence, manifest):
         reasons.append("candidate-not-clean-and-pinned")
     if (evidence.get("engine") != "docker" or binary.get("goOS") != "linux" or evidence.get("disposableAttested") is not True
             or not str(evidence.get("target", "")).startswith("unix:///")
-            or not isinstance(evidence.get("engineVersion"), dict) or not evidence["engineVersion"]):
+            or not isinstance(evidence.get("engineVersion"), dict)
+            or set(evidence["engineVersion"]) != {"engine", "clientVersion", "serverVersion"}
+            or evidence["engineVersion"].get("engine") != "docker"
+            or any(not isinstance(evidence["engineVersion"].get(key), str)
+                   or not re.fullmatch(r"[ -~]{1,128}", evidence["engineVersion"][key])
+                   for key in ("clientVersion", "serverVersion"))):
         reasons.append("disposable-docker-runtime-missing")
     provisioning = evidence.get("qualifiedProvisioning") or {}
     if (evidence.get("qualifiedRequested") is not True or provisioning.get("source") != PROVISIONING_SOURCE
@@ -131,6 +167,10 @@ def final_acceptance(evidence, manifest):
             or evidence.get("checksumsAfter") != expected_hashes
             or evidence.get("integrityVerified") is not True):
         reasons.append("final-integrity-evidence-missing")
+    try:
+        preflight_capabilities(evidence.get("preflightCapabilities"))
+    except ValueError:
+        reasons.append("named-preflight-capabilities-missing")
     profile = manifest.get("qualifiedProfile", {})
     if (profile.get("engine") != "docker" or profile.get("layout") != "native-local-docker-v1"
             or set(profile.get("limitations", [])) != PROFILE_LIMITATIONS):
@@ -307,16 +347,50 @@ def test_results(output, names):
     return results
 
 
+def public_command_argv(argv, env):
+    """Keep fixed public grammar, never operator executable/workspace paths."""
+    paths = {str(ROOT / "bin/dill"): "<candidate>"}
+    if env.get("DILL_PKL_PATH"):
+        paths[env["DILL_PKL_PATH"]] = "<pkl>"
+    if env.get("DILL_ENGINE_SOCKET"):
+        paths[env["DILL_ENGINE_SOCKET"]] = "<engine-socket>"
+    result = []
+    for value in map(str, argv):
+        if value in paths:
+            result.append(paths[value])
+        elif value.startswith(str(ROOT) + os.sep):
+            result.append("<repo>/" + str(Path(value).relative_to(ROOT)))
+        elif value.startswith("/"):
+            result.append("<redacted-path>")
+        else:
+            result.append(value)
+    return result
+
+
+def public_engine_version(document, engine):
+    """Project only actual version fields, never arbitrary raw CLI dictionaries."""
+    values = []
+    for part in ("Client", "Server"):
+        if not isinstance(document, dict) or not isinstance(document.get(part), dict):
+            raise ValueError("actual client and server versions required")
+        value = document[part].get("Version")
+        if not isinstance(value, str) or not re.fullmatch(r"[ -~]{1,128}", value):
+            raise ValueError("actual client/server version outside bounded printable shape")
+        values.append(value)
+    return {"engine": engine, "clientVersion": values[0], "serverVersion": values[1]}
+
+
 class Recorder:
     def __init__(self, env):
         self.env = env
         self.commands = []
 
     def run(self, argv, timeout=120, expected=0, env=None):
-        record = {"argv": [str(x) for x in argv], "expectedExit": expected}
+        execution = [str(x) for x in argv]
+        record = {"argv": public_command_argv(execution, env or self.env), "expectedExit": expected}
         self.commands.append(record)
         try:
-            proc = subprocess.Popen(record["argv"], cwd=ROOT, env=env or self.env,
+            proc = subprocess.Popen(execution, cwd=ROOT, env=env or self.env,
                                     stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                                     start_new_session=True)
             try:
@@ -337,6 +411,9 @@ class Recorder:
                           stdoutBytes=len(stdout), stderrBytes=len(stderr))
             record["passed"] = proc.returncode == expected
             return stdout, record["passed"]
+        except KeyboardInterrupt:
+            record.update(passed=False, failure="KeyboardInterrupt")
+            raise
         except (OSError, subprocess.TimeoutExpired) as error:
             # Deliberately do not persist raw candidate/engine diagnostics.
             record.update(passed=False, failure=type(error).__name__)
@@ -375,16 +452,55 @@ def qualified_inputs(args):
                   "expectedIdentityDigest": identity, "privateStateRootVerified": True}
 
 
+# Exactly 31 payloads plus handoff.json; no directory glob can grow the archive.
+PUBLIC_HANDOFF_FILES = frozenset({
+    "bin/dill",
+    "bin/pkl",
+    "dill.pkl",
+    "internal/loader/pkl-toolchain.json",
+    "docs/alpha-candidate-handoff.md",
+    "docs/named-preflight-v1.md",
+    "internal/operation/testdata/failure.json",
+    "internal/operation/testdata/manifest.json",
+    "internal/operation/testdata/qualified-cleanup-failure.json",
+    "internal/operation/testdata/qualified-success.json",
+    "internal/operation/testdata/success.json",
+    "internal/operation/testdata/unsupported-operation.json",
+    "internal/operation/testdata/unsupported-version.json",
+    "internal/preflight/testdata/apply-mismatch.json",
+    "internal/preflight/testdata/argv.json",
+    "internal/preflight/testdata/canonical-vectors.json",
+    "internal/preflight/testdata/capabilities-supported.json",
+    "internal/preflight/testdata/capabilities-unsupported.json",
+    "internal/preflight/testdata/manifest.json",
+    "internal/preflight/testdata/negative-wire-cases.json",
+    "internal/preflight/testdata/preview-down-absent.json",
+    "internal/preflight/testdata/preview-empty-start.json",
+    "internal/preflight/testdata/preview-invalid-contract.json",
+    "internal/preflight/testdata/preview-limit-failure.json",
+    "internal/preflight/testdata/preview-metadata-unknown.json",
+    "internal/preflight/testdata/preview-up-config-noop.json",
+    "internal/preflight/testdata/preview-up-create.json",
+    "internal/preflight/testdata/preview-up-recreate.json",
+    "test/qualification/v1/cases.json",
+    "test/qualification/v1/valid.pkl",
+    "test/qualification/v1/invalid-graph.pkl",
+})
+
+
 def handoff_sources(binary, pkl):
     sources = {"bin/dill": binary, "bin/pkl": pkl, "dill.pkl": ROOT / "dill.pkl",
                "internal/loader/pkl-toolchain.json": ROOT / "internal/loader/pkl-toolchain.json",
-               "docs/alpha-candidate-handoff.md": ROOT / "docs/alpha-candidate-handoff.md"}
-    for directory in (FIXTURES, ROOT / "internal/operation/testdata"):
+               "docs/alpha-candidate-handoff.md": ROOT / "docs/alpha-candidate-handoff.md",
+               "docs/named-preflight-v1.md": ROOT / "docs/named-preflight-v1.md"}
+    for directory in (FIXTURES, ROOT / "internal/operation/testdata", ROOT / "internal/preflight/testdata"):
         for path in directory.rglob("*"):
             if path.is_symlink() or (not path.is_dir() and not path.is_file()):
                 raise ValueError("public supply inputs must be regular files, never links or state")
             if path.is_file():
                 sources[str(path.relative_to(ROOT))] = path
+    if set(sources) != PUBLIC_HANDOFF_FILES:
+        raise ValueError("public supply set differs from the frozen 32-member handoff")
     return sources
 
 
@@ -404,8 +520,8 @@ def verify_handoff(output, binary, pkl, commit, identity):
     if actual != allowed or any(sha256(bundle / name) != digest for name, digest in expected.items()):
         raise ValueError("copied supply differs from pinned public inputs")
     document = json.loads((bundle / "handoff.json").read_text())
-    fixed = {"version": "dill.alpha-handoff/1", "status": "verified", "candidateCommit": commit,
-             "binarySha256": expected["bin/dill"], "fixtureVersion": "dill.alpha-qualification/1", "files": expected,
+    fixed = {"version": "dill.alpha-handoff/2", "status": "verified", "candidateCommit": commit,
+             "binarySha256": expected["bin/dill"], "fixtureVersion": "dill.alpha-qualification/2", "files": expected,
              "caller": {"contract": "dill.operation/1", "source": "brine", "outcome": "succeeded",
                         "effects": "complete", "qualifiedIdentityDigest": identity},
              "downstreamBrineAcceptance": "not-run"}
@@ -449,7 +565,7 @@ def collect(args):
     output.mkdir(mode=0o700, parents=False, exist_ok=False)
     env = private_env(output, pkl)
     recorder = Recorder(env)
-    evidence = {"version": "dill.alpha-evidence/1", "createdAt": datetime.now(timezone.utc).isoformat(),
+    evidence = {"version": "dill.alpha-evidence/2", "createdAt": datetime.now(timezone.utc).isoformat(),
                 "qualification": "incomplete", "engine": args.engine or "not-run",
                 "target": endpoint, "disposableAttested": args.disposable,
                 "operationContractRequested": args.operations,
@@ -515,7 +631,7 @@ def collect(args):
                   or (case["mode"] == "qualified-engine" and not args.qualified)):
                 result.update(status="blocked", requires=case["requires"], reason=case["reason"])
             evidence["cases"].append(result)
-        # Deliberately separate narrower #79 observations from the 24 required
+        # Deliberately separate narrower #79 observations from the 30 required
         # combined cases: --alpha-disposable must not hide qualified-only gaps.
         evidence["preparedProfiles"] = [{"id": case["id"], "status": "not-run"}
                                         for case in manifest.get("preparedProfiles", [])]
@@ -545,6 +661,10 @@ def collect(args):
             if args.qualified:
                 if "optInQualifiedLocalCoordination" not in evidence["operationCapabilities"]["features"]:
                     raise ValueError("qualified capabilities unavailable; no fallback to prepared profile")
+                named_caps, passed = recorder.run([binary, "preflight-capabilities", "--format", "json"])
+                if not passed or len(named_caps) > 64 * 1024:
+                    raise ValueError("named preflight discovery failed or exceeded its bound")
+                evidence["preflightCapabilities"] = preflight_capabilities(json.loads(named_caps))
                 target_env.update(DILL_TEST_ALPHA_COORDINATION="1",
                                   DILL_TEST_ALPHA_STATE_ROOT=str(state_root),
                                   DILL_TEST_ALPHA_DAEMON_ID=args.coordination_daemon_id,
@@ -561,7 +681,7 @@ def collect(args):
             # Only the version response, never engine info/inspect/config/environment.
             if len(engine_version) > 64 * 1024:
                 raise ValueError("unexpected engine version response size")
-            evidence["engineVersion"] = json.loads(engine_version)
+            evidence["engineVersion"] = public_engine_version(json.loads(engine_version), args.engine)
             tests = list(dict.fromkeys(name for case in runtime_cases if case["mode"] in modes for name in runtime_tests(case)))
             data, passed = recorder.run(["make", "integration-test", make_test_selector(tests)],
                                         timeout=1800, env=target_env)

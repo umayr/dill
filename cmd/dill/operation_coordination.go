@@ -67,6 +67,12 @@ type operationCoordination struct {
 	guard           *coordinatedEngine
 	operationID     string
 	transportClosed bool
+	// Named capture is opt-in and remains private until the complete qualified
+	// inspection succeeds. Ordinary qualified operations are unchanged.
+	collectNamed        bool
+	namedReadOnly       bool
+	namedInventory      *namedInventory
+	namedStateAttempted bool
 }
 
 // prepare validates the complete DECLARED inventory before engine/state access.
@@ -141,6 +147,9 @@ func (c *operationCoordination) prepare(ctx context.Context, opts commandOptions
 		return errors.New("qualified target unavailable")
 	}
 	c.target = target
+	if c.collectNamed {
+		c.namedStateAttempted = true
+	}
 	state, err := coordination.Open(ctx, c.options.directory)
 	if err != nil {
 		return errors.New("trusted coordination state unavailable")
@@ -172,6 +181,10 @@ func (c *operationCoordination) prepare(ctx context.Context, opts commandOptions
 			return usageError{"qualified operations cannot prune undeclared containers"}
 		}
 	}
+	var inventory *namedInventory
+	if c.collectNamed {
+		inventory = newNamedInventory(stack, listed)
+	}
 	actualImages, ok := c.guard.Engine.(orchestrator.DisposableImageInspector)
 	if !ok {
 		return orchestrator.ErrDisposableUnavailable
@@ -180,10 +193,18 @@ func (c *operationCoordination) prepare(ctx context.Context, opts commandOptions
 		container := serviceContainerName(stack, service, svc)
 		live, err := engine.InspectConfig(ctx, container)
 		if errors.Is(err, orchestrator.ErrNotFound) {
+			if inventory != nil {
+				inventory.containers[container] = nil
+			}
 			continue
 		}
 		if err != nil {
 			return err
+		}
+		if inventory != nil && live != nil {
+			if _, marked := live.SystemLabels[orchestrator.SecretEnabledLabel]; marked {
+				return config.ErrSecretUnavailable
+			}
 		}
 		if err = orchestrator.CheckOwnership(container, stack, service, live); err != nil {
 			return err
@@ -221,6 +242,9 @@ func (c *operationCoordination) prepare(ctx context.Context, opts commandOptions
 			}
 		}
 		c.guard.ids[live.ID] = true
+		if inventory != nil {
+			inventory.containers[container] = cloneNamedLive(live)
+		}
 	}
 	// Shared #79 whole-resource read-only preflight MUST precede every handler,
 	// not merely volume creation or a caller-selected --alpha-disposable flag.
@@ -236,6 +260,12 @@ func (c *operationCoordination) prepare(ctx context.Context, opts commandOptions
 		return err
 	}
 	c.guard.Engine = guarded
+	if inventory != nil {
+		if err := inventory.complete(ctx, guarded, &effective); err != nil {
+			return err
+		}
+		c.namedInventory = inventory
+	}
 	return nil
 }
 
@@ -407,6 +437,12 @@ func (e *coordinatedEngine) EnforceDisposableVolumes() error {
 		return e.enforcer.EnforceDisposableVolumes()
 	}
 	return errors.New("disposable volume enforcement unavailable")
+}
+func (e *coordinatedEngine) EnforcePreparedImages(images map[string]orchestrator.PreparedImage) error {
+	if p, ok := e.Engine.(orchestrator.PreparedImageEnforcer); ok {
+		return p.EnforcePreparedImages(images)
+	}
+	return orchestrator.ErrDisposableUnavailable
 }
 func (e *coordinatedEngine) PreviewResources(ctx context.Context, stack string, names []string) ([]orchestrator.PreviewResource, error) {
 	if v, ok := e.Engine.(orchestrator.PreviewResourceInspector); ok {
