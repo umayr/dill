@@ -21,7 +21,7 @@ func TestDillPortBindingsConverge(t *testing.T) {
 	cfg := filepath.Join(t.TempDir(), "compose.pkl")
 	var listeners []net.Listener
 	var ports []int
-	for range 3 {
+	for range 4 {
 		ln, err := net.Listen("tcp4", "127.0.0.1:0")
 		if err != nil {
 			t.Fatal(err)
@@ -43,11 +43,11 @@ config {
       image = "docker.io/library/busybox:1.36"
       pullPolicy = "missing"
       command = List("sh", "-c", "trap 'exit 0' TERM; while true; do sleep 1; done")
-      ports = List("127.0.0.1:%d:80", "127.0.0.1:%d:80", "%d:81")
+      ports = List("127.0.0.1:%d:80", "127.0.0.1:%d:80", "%d:81", "0:81", "127.0.0.1:%d:81")
     }
   }
 }
-`, filepath.ToSlash(filepath.Join(root, "dill.pkl")), stack, env.engine, ports[0], ports[1], ports[2])
+`, filepath.ToSlash(filepath.Join(root, "dill.pkl")), stack, env.engine, ports[0], ports[1], ports[2], ports[3])
 	if err := os.WriteFile(cfg, []byte(body), 0600); err != nil {
 		t.Fatal(err)
 	}
