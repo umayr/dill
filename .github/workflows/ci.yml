@@ -99,6 +99,50 @@ jobs:
     name: Integration / Docker
     runs-on: ubuntu-latest
     steps:
+      - name: Independently provision trusted native Docker identity for functional integration
+        run: |
+          # This literal trusted-host step precedes checkout, source scripts,
+          # builds, binary version probes, and all candidate/test execution.
+          set -euo pipefail
+          test "${RUNNER_ENVIRONMENT:-}" = github-hosted
+          test "$(uname -s)" = Linux
+          test ! -e /.dockerenv
+          test ! -e /run/.containerenv
+          test -x /usr/bin/docker
+          sudo systemctl is-active --quiet docker
+          daemon_pid=$(sudo systemctl show docker --property MainPID --value)
+          [[ "$daemon_pid" =~ ^[1-9][0-9]*$ ]]
+          test "$daemon_pid" -gt 1
+          test "$(sudo stat -c %u "/proc/$daemon_pid")" = 0
+          IFS= read -r daemon_comm < "/proc/$daemon_pid/comm"
+          test "$daemon_comm" = dockerd
+          test -S /var/run/docker.sock
+          test "$(stat -c %u /var/run/docker.sock)" = 0
+          # Native in the SAME guest and namespaces, not Docker Desktop,
+          # a different VM, a namespace-separated client, or a proxy layout.
+          for namespace in user pid mnt net; do
+            caller_ns=$(readlink "/proc/$$/ns/$namespace")
+            daemon_ns=$(sudo readlink "/proc/$daemon_pid/ns/$namespace")
+            test -n "$caller_ns"
+            test "$caller_ns" = "$daemon_ns"
+          done
+          umask 077
+          trusted_home=$(mktemp -d "$RUNNER_TEMP/dill-alpha-trusted.XXXXXXXX")
+          mkdir -m 700 "$trusted_home/docker"
+          printf '%s\n' '{"auths":{}}' > "$trusted_home/docker/config.json"
+          # No ambient context, proxy, auth helpers, TLS selector or endpoint.
+          daemon_id=$(/usr/bin/env -i PATH=/usr/bin:/bin HOME="$trusted_home" \
+            DOCKER_CONFIG="$trusted_home/docker" /usr/bin/docker \
+            --config "$trusted_home/docker" --host unix:///var/run/docker.sock \
+            info --format '{{.ID}}')
+          [[ "$daemon_id" =~ ^[A-Za-z0-9][A-Za-z0-9:-]{7,127}$ ]]
+          state_root=$(mktemp -d "$RUNNER_TEMP/dill-alpha-state.XXXXXXXX")
+          chmod 700 "$state_root"
+          test "$(stat -c %a "$state_root")" = 700
+          test "$(stat -c %u "$state_root")" = "$(id -u)"
+          printf '::add-mask::%s\n' "$daemon_id"
+          printf 'DILL_ALPHA_EXPECTED_DAEMON_ID=%s\n' "$daemon_id" >> "$GITHUB_ENV"
+          printf 'DILL_ALPHA_STATE_ROOT=%s\n' "$state_root" >> "$GITHUB_ENV"
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
         with:
@@ -115,6 +159,20 @@ jobs:
           DILL_TEST_ENGINE: docker
           DILL_TEST_TIMEOUT: 2m
         run: make integration-test
+      - name: Exercise operation envelope, qualified coordination, named preflight, recovery and no-prune
+        env:
+          DILL_TEST_ENGINE: docker
+          DILL_TEST_TIMEOUT: 2m
+          DILL_ENGINE_SOCKET: unix:///var/run/docker.sock
+          DILL_TEST_ALPHA_COORDINATION: "1"
+          DILL_TEST_ALPHA_OPERATIONS: "1"
+          DILL_TEST_ALPHA_GUARDRAILS: "1"
+          DILL_TEST_ALPHA_NATIVE_LAYOUT: native-local-docker-v1
+          DILL_TEST_ALPHA_DAEMON_ID: ${{ env.DILL_ALPHA_EXPECTED_DAEMON_ID }}
+          DILL_TEST_ALPHA_STATE_ROOT: ${{ env.DILL_ALPHA_STATE_ROOT }}
+          DILL_PKL_PATH: ${{ runner.temp }}/pkl
+        run: |
+          go test -tags containers_image_openpgp,exclude_graphdriver_devicemapper,exclude_graphdriver_btrfs,integration ./test/integration -count=1 -v -timeout 30m -run '^TestAlpha(Qualified(StandalonePreflight|ForeignOwnership|OrphanRejection|PodmanRejected|Handlers|DockerProfile|ActualLivePreflight|SameStackConcurrency|AliasConcurrency|DifferentStackConcurrency|CrashUnknownRecovery|CorruptJournal|NamedPreflight(FiveRoutes|MismatchBeforeEnsure|StoreSelectorBinding|LockCancellation|EmptyAndOrphans|MetadataRefusal))|NoPruneBothEngines|OperationEnvelopeConformance)$'
       - name: Dump Docker state on failure
         if: failure()
         run: |
@@ -160,6 +218,14 @@ jobs:
           PODMAN_SOCKET: unix:///tmp/dill-podman.sock
           DILL_TEST_TIMEOUT: 2m
         run: make integration-test
+      - name: Exercise operation envelope and ordinary no-prune preservation
+        env:
+          DILL_TEST_ENGINE: podman
+          DILL_ENGINE_SOCKET: unix:///tmp/dill-podman.sock
+          DILL_TEST_ALPHA_OPERATIONS: "1"
+          DILL_TEST_ALPHA_GUARDRAILS: "1"
+          DILL_PKL_PATH: ${{ runner.temp }}/pkl
+        run: go test -tags containers_image_openpgp,exclude_graphdriver_devicemapper,exclude_graphdriver_btrfs,integration ./test/integration -count=1 -v -run '^TestAlpha(NoPruneBothEngines|OperationEnvelopeConformance)$'
       - name: Dump Podman state on failure
         if: failure()
         run: |
@@ -202,6 +268,9 @@ jobs:
           done
 
   alpha-secrets:
+    # The delivery contract is disabled; this historical positive qualification
+    # must not run or be interpreted as evidence for the current CLI.
+    if: ${{ false }}
     name: Alpha secrets / ${{ matrix.engine }}
     runs-on: ubuntu-24.04
     timeout-minutes: 40

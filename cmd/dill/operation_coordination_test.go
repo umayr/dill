@@ -46,7 +46,9 @@ type coordinatedDockerFixture struct {
 	unknownNetworks, extraNetwork                        bool
 	unknownLiveHost                                      bool
 	networkExists, foreignNetwork, foreignVolume         bool
-	liveNamedVolume, missingVolume                       bool
+	liveNamedVolume, missingVolume, unknownPreparedImage bool
+	volumeReads, replaceVolumeAt, imageReads             int
+	imageReadsByID                                       map[string]int
 	writeStarted                                         chan struct{}
 }
 
@@ -162,7 +164,15 @@ func (f *coordinatedDockerFixture) serve(w http.ResponseWriter, r *http.Request)
 		if f.preparedImageID != "" {
 			id = f.preparedImageID
 		}
+		f.imageReads++
+		if f.imageReadsByID == nil {
+			f.imageReadsByID = make(map[string]int)
+		}
+		f.imageReadsByID[strings.TrimSuffix(strings.TrimPrefix(path, "/images/"), "/json")]++
 		var imageConfig any = map[string]any{"Volumes": volumes}
+		if f.unknownPreparedImage {
+			imageConfig = nil
+		}
 		if f.liveImageID != "" && strings.TrimSuffix(strings.TrimPrefix(path, "/images/"), "/json") == f.liveImageID {
 			id = f.liveImageID
 			switch f.liveImageStatus {
@@ -245,7 +255,8 @@ func (f *coordinatedDockerFixture) serve(w http.ResponseWriter, r *http.Request)
 			return
 		}
 		owner := "app"
-		if f.foreignVolume {
+		f.volumeReads++
+		if f.foreignVolume || (f.replaceVolumeAt > 0 && f.volumeReads >= f.replaceVolumeAt) {
 			owner = "foreign-stack"
 		}
 		json.NewEncoder(w).Encode(map[string]any{"Name": "app_data", "Driver": "local", "Options": map[string]string{}, "Labels": map[string]string{"dill.managed": "true", "dill.stack": owner}})
@@ -496,12 +507,13 @@ func TestQualifiedForeignResourcesFailBeforeAnyHTTPWrite(t *testing.T) {
 
 func TestQualifiedCensusRejectsActualUnsupportedLegacyWorkload(t *testing.T) {
 	for _, name := range qualifiedOperations {
-		for _, kind := range []string{"cap-add", "devices", "privileged", "tmpfs", "tmpfs-mount", "userns-host", "pid-host", "ipc-host", "uts-host", "cgroup-host", "unknown-host", "image-volumes", "image-missing", "image-malformed", "image-mismatch", "safe-old-image", "safe-private-namespaces"} {
+		for _, kind := range []string{"cap-add", "devices", "privileged", "tmpfs", "tmpfs-mount", "userns-host", "pid-host", "ipc-host", "uts-host", "cgroup-host", "unknown-host", "image-volumes", "image-missing", "image-malformed", "image-mismatch", "safe-old-image", "safe-old-image-owned-volume", "safe-private-namespaces"} {
 			t.Run(name+"/"+kind, func(t *testing.T) {
 				fixture := newCoordinatedDocker(t, true)
 				fixture.mu.Lock()
 				fixture.running = name != "start" && name != "rm"
 				fixture.liveImageID = "sha256:" + strings.Repeat("b", 64)
+				oldImageID := fixture.liveImageID
 				switch kind {
 				case "cap-add":
 					fixture.liveHost = map[string]any{"CapAdd": []string{"SYS_ADMIN"}}
@@ -525,6 +537,8 @@ func TestQualifiedCensusRejectsActualUnsupportedLegacyWorkload(t *testing.T) {
 					fixture.liveHost = map[string]any{"CgroupnsMode": "host"}
 				case "unknown-host":
 					fixture.unknownLiveHost = true
+				case "safe-old-image-owned-volume":
+					fixture.liveNamedVolume = true
 				case "safe-private-namespaces":
 					fixture.liveHost = map[string]any{"IpcMode": "private", "CgroupnsMode": "private"}
 				case "image-volumes":
@@ -539,7 +553,7 @@ func TestQualifiedCensusRejectsActualUnsupportedLegacyWorkload(t *testing.T) {
 				fixture.mu.Unlock()
 				cfg := syntheticConfig()
 				cfg.Services["web"].Image = "synthetic:new-safe-desired"
-				if kind == "image-volumes" {
+				if kind == "image-volumes" || kind == "safe-old-image-owned-volume" {
 					cfg.Services["web"].Volumes = []json.RawMessage{json.RawMessage(`"data:/data"`)}
 				}
 				useSyntheticConfig(t, cfg)
@@ -547,16 +561,24 @@ func TestQualifiedCensusRejectsActualUnsupportedLegacyWorkload(t *testing.T) {
 				if name == "rm" {
 					args = append(args, "--yes")
 				}
-				// Targeted down is a real success path without changing the full
-				// down network-retention error contract covered by the other test.
-				if name == "down" && (kind == "safe-old-image" || kind == "safe-private-namespaces") {
+				// Use the same targeted down path for old-image negatives and
+				// controls so network retention cannot cause a false positive.
+				if name == "down" && (strings.HasPrefix(kind, "image-") || kind == "safe-old-image" || kind == "safe-old-image-owned-volume" || kind == "safe-private-namespaces") {
 					args = append(args, "web")
 				}
 				result, code, _ := captureOperation(t, "", args)
 				fixture.mu.Lock()
 				writes := fixture.writes
+				oldImageReads := fixture.imageReadsByID[oldImageID]
+				volumeReads := fixture.volumeReads
 				fixture.mu.Unlock()
-				if kind == "safe-old-image" || kind == "safe-private-namespaces" {
+				if strings.HasPrefix(kind, "image-") && oldImageReads == 0 {
+					t.Fatalf("old-image policy was never evaluated: %+v code=%d writes=%d volumeReads=%d", result, code, writes, volumeReads)
+				}
+				if kind == "safe-old-image-owned-volume" && (oldImageReads == 0 || volumeReads == 0) {
+					t.Fatalf("safe old image and owned volume were not both inspected: %+v code=%d imageReads=%d volumeReads=%d", result, code, oldImageReads, volumeReads)
+				}
+				if kind == "safe-old-image" || kind == "safe-old-image-owned-volume" || kind == "safe-private-namespaces" {
 					if code != 0 || result.Outcome != "succeeded" || result.Effects != "complete" || writes == 0 || name == "start" && writes != 1 || name == "restart" && writes != 2 {
 						t.Fatalf("safe old image needs no provenance/equality gate: %+v code=%d writes=%d", result, code, writes)
 					}
@@ -592,15 +614,6 @@ func TestQualifiedRequiresActualAttachedNetworkEvidence(t *testing.T) {
 				t.Fatalf("unqualified actual attachments allowed: %+v code=%d HTTP writes=%d", result, code, writes)
 			}
 		})
-	}
-}
-
-func TestQualifiedAutomaticGuardrailsComposeWithExplicitProfile(t *testing.T) {
-	fixture := newCoordinatedDocker(t, false)
-	useSyntheticConfig(t, syntheticConfig())
-	result, code, _ := captureOperation(t, "", fixture.args("up", "--alpha-disposable"))
-	if code != 0 || result.Outcome != "succeeded" {
-		t.Fatalf("canonical capability forwarding lost across wrappers: %+v code=%d", result, code)
 	}
 }
 

@@ -1,5 +1,7 @@
 # Dill
 
+**Availability:** the Alpha disposable profile and strict file-secret entrypoints are disabled. See [disabled features and retained protections](docs/disabled-alpha-secrets.md); historical Alpha documents do not describe current availability.
+
 See the [roadmap](ROADMAP.md) for the Dill/Brine vision, ownership boundaries,
 phased implementation tickets, and evaluated experimental Pkl design examples.
 The roadmap describes planned work, not additional features of the current schema.

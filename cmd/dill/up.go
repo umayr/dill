@@ -44,6 +44,15 @@ func runUp(ctx context.Context, opts commandOptions, args []string) (retErr erro
 	if err := fs.Parse(args); err != nil {
 		return usageError{err.Error()}
 	}
+	alphaRequested := opts.AlphaDisposable
+	fs.Visit(func(f *flag.Flag) {
+		if f.Name == "alpha-disposable" {
+			alphaRequested = true
+		}
+	})
+	if alphaRequested {
+		return usageError{"Alpha disposable profile is disabled"}
+	}
 	if *pullPolicy != "" && *pullPolicy != "always" && *pullPolicy != "missing" && *pullPolicy != "never" {
 		return usageError{fmt.Sprintf("unknown pull policy %q (supported: always, missing, never)", *pullPolicy)}
 	}
@@ -64,6 +73,12 @@ func runUp(ctx context.Context, opts commandOptions, args []string) (retErr erro
 
 func runUpConfig(ctx context.Context, opts commandOptions, cfg *config.DillConfig, names []string, noDeps bool, pullPolicy string, open func(context.Context, *config.DillConfig) (orchestrator.Engine, error)) (retErr error) {
 	secret := requiresSecretPreflight(opts, cfg)
+	if secret || opts.secretMode() {
+		return config.ErrSecretUnavailable
+	}
+	if opts.AlphaDisposable {
+		return usageError{"Alpha disposable profile is disabled"}
+	}
 	safe := opts.secretMode() || secret
 	if safe {
 		restore := silenceSecretLogs()

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io/fs"
 	"sort"
 	"strconv"
 	"strings"
@@ -141,6 +142,9 @@ func compute(ctx context.Context, cfg *config.DillConfig, engine Source, stackNa
 			return nil, err
 		}
 
+		if _, marked := live.SystemLabels[orchestrator.SecretEnabledLabel]; marked && len(d.svc.Secrets) == 0 {
+			return nil, config.ErrSecretUnavailable
+		}
 		localImageID, err := engine.LocalImageID(ctx, d.svc.Image)
 		if err != nil {
 			return nil, fmt.Errorf("resolving local image for %s: %w", name, err)
@@ -171,6 +175,28 @@ func compute(ctx context.Context, cfg *config.DillConfig, engine Source, stackNa
 
 	for _, cn := range liveNames {
 		if _, ok := desiredContainers[cn]; !ok {
+			live, err := engine.InspectConfig(ctx, cn)
+			if err != nil {
+				if errors.Is(err, context.Canceled) {
+					return nil, context.Canceled
+				}
+				if errors.Is(err, context.DeadlineExceeded) {
+					return nil, context.DeadlineExceeded
+				}
+				if errors.Is(err, orchestrator.ErrNotFound) {
+					return nil, fmt.Errorf("stack container inspection: %w", orchestrator.ErrNotFound)
+				}
+				if errors.Is(err, fs.ErrPermission) {
+					return nil, fmt.Errorf("stack container inspection: %w", fs.ErrPermission)
+				}
+				return nil, errors.New("stack container inspection unavailable")
+			}
+			if live == nil {
+				return nil, errors.New("stack container inspection unavailable")
+			}
+			if _, marked := live.SystemLabels[orchestrator.SecretEnabledLabel]; marked {
+				return nil, config.ErrSecretUnavailable
+			}
 			changes = append(changes, Change{Service: cn, Kind: KindRemove, Diffs: []FieldDiff{}})
 		}
 	}

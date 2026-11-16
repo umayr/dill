@@ -56,23 +56,6 @@ func TestFullUpNoPruneRetainsOmittedServices(t *testing.T) {
 	}
 }
 
-func TestDisposableProfileImpliesNoPruneDespiteFalseFlag(t *testing.T) {
-	for _, args := range [][]string{{"--alpha-disposable", "--no-prune=false"}, {"--alpha-disposable", "--no-prune=false", "--no-deps", "app"}} {
-		e := newDisposableUpEngine()
-		withTestRuntime(t, e, disposableConfig(), func() {
-			err := runUp(context.Background(), disposableOptions(), args)
-			if err != nil {
-				t.Fatal(err)
-			}
-			for _, event := range e.events {
-				if strings.HasPrefix(event, "remove:") || strings.HasPrefix(event, "stop:") {
-					t.Fatalf("implicit prune: %v", e.events)
-				}
-			}
-		})
-	}
-}
-
 func TestNoPruneStillRejectsForeignDesiredContainer(t *testing.T) {
 	for _, engine := range []string{"docker", "podman"} {
 		e := newDisposableUpEngine().preMutationEngine
@@ -116,34 +99,6 @@ func TestDisposableConfigFailureBeforeEngineOpen(t *testing.T) {
 					t.Fatalf("error=%v engine opened=%t", err, opened)
 				}
 			})
-		}
-	}
-}
-
-func TestDisposablePullNeverOverrideSupportsServiceCopies(t *testing.T) {
-	for _, args := range [][]string{{"--alpha-disposable", "--pull", "never"}, {"--alpha-disposable", "--pull", "never", "--no-deps", "app"}} {
-		e := newDisposableUpEngine()
-		cfg := disposableConfig()
-		cfg.Services["app"].PullPolicy = "always"
-		withTestRuntime(t, e, cfg, func() {
-			if err := runUp(context.Background(), disposableOptions(), args); err != nil {
-				t.Fatal(err)
-			}
-			for _, event := range e.events {
-				if strings.HasPrefix(event, "pull:") {
-					t.Fatalf("prepared profile pulled: %v", e.events)
-				}
-			}
-		})
-	}
-}
-
-func TestDisposablePullOverrideRejectedBeforeEngine(t *testing.T) {
-	for _, policy := range []string{"always", "missing"} {
-		opened := false
-		err := runUpConfig(context.Background(), disposableOptions(), disposableConfig(), nil, true, policy, func(context.Context, *config.DillConfig) (orchestrator.Engine, error) { opened = true; return nil, nil })
-		if !errors.Is(err, orchestrator.ErrDisposableUnsupported) || opened {
-			t.Fatalf("policy=%s error=%v opened=%t", policy, err, opened)
 		}
 	}
 }

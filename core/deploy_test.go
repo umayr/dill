@@ -76,6 +76,7 @@ func TestDeployExternalSuccessAndPreflight(t *testing.T) {
 		mutate func(*core.Config)
 	}{
 		{"secret", func(c *core.Config) { c.Services["web"].Secrets = []core.SecretGrant{{Name: "secret"}} }},
+		{"secret-requirement", func(c *core.Config) { c.Secrets = []core.SecretRequirement{{Name: "secret"}} }},
 		{"cycle", func(c *core.Config) { c.Services["web"].DependsOn = []string{"web"} }},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -89,7 +90,7 @@ func TestDeployExternalSuccessAndPreflight(t *testing.T) {
 			if err == nil || opened {
 				t.Fatalf("err=%v opened=%v", err, opened)
 			}
-			if tc.name == "secret" && !errors.Is(err, core.ErrSecretDeployUnsupported) {
+			if (tc.name == "secret" || tc.name == "secret-requirement") && !errors.Is(err, core.ErrSecretDeployUnsupported) {
 				t.Fatal(err)
 			}
 		})

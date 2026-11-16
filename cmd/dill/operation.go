@@ -214,12 +214,18 @@ func runOperation(ctx context.Context, args []string) error {
 	if fs.Parse(args[1:]) != nil {
 		return emit(2, "INVALID_ARGUMENTS", "Invalid operation arguments.")
 	}
-	guardrailFlag := false
+	guardrailFlag, alphaRequested := false, false
 	fs.Visit(func(f *flag.Flag) {
 		if f.Name == "no-prune" || f.Name == "alpha-disposable" {
 			guardrailFlag = true
 		}
+		if f.Name == "alpha-disposable" {
+			alphaRequested = true
+		}
 	})
+	if alphaRequested {
+		return emit(2, "UNSUPPORTED_OPTIONS", "Alpha disposable profile is disabled.")
+	}
 	if guardrailFlag && name != "up" {
 		return emit(2, "INVALID_ARGUMENTS", "Unsupported options for this operation.")
 	}

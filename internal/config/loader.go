@@ -41,6 +41,10 @@ func Load(ctx context.Context, path string) (result *DillConfig, retErr error) {
 			retErr = ErrSecretUnavailable
 			return
 		}
+		if len(cfg.Secrets) > 0 && retErr != nil {
+			retErr = ErrSecretUnavailable
+			return
+		}
 		for _, svc := range cfg.Services {
 			if svc != nil && len(svc.Secrets) > 0 && retErr != nil {
 				retErr = ErrSecretUnavailable

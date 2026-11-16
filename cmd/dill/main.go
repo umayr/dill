@@ -157,10 +157,13 @@ func run(args []string) (retErr error) {
 		}
 	}()
 
+	// Strict-secret operation is disabled; retain fixed diagnostics and never
+	// evaluate input or reach an engine for an explicit secret invocation.
+	if safe {
+		return config.ErrSecretUnavailable
+	}
+
 	if isProtocolInvocation(args) {
-		if safe {
-			return config.ErrSecretUnavailable
-		}
 		if code := runProtocol(args); code != 0 {
 			return protocolExit{code}
 		}
@@ -212,8 +215,8 @@ Commands:
   stacks    List dill-managed stacks (alias: ls)
   doctor    Check local dill, Pkl, and engine readiness
   caps      Show known adapter limitations as JSON
-  secret-capabilities  Discover the Alpha file-secret contract as JSON
-  secrets check        Check authorized local secret sources without mutation
+  secret-capabilities  Unavailable (strict-secret support is disabled)
+  secrets check        Unavailable (strict-secret support is disabled)
   operation-capabilities  Discover the bounded local operation contract
   operation Execute an attended local operation (--contract dill.operation/1)
   coordination Inspect/acknowledge qualified local crash state (offline)

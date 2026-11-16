@@ -58,6 +58,11 @@ func resolveLabelStack(ctx context.Context, opts commandOptions) (*labelStack, e
 			Engine: cfg.Engine,
 		}, nil
 	}
+	// A secret classification must never be converted into ordinary label-only
+	// cleanup. Only genuinely unavailable ordinary configuration may fall back.
+	if errors.Is(err, config.ErrSecretUnavailable) {
+		return nil, config.ErrSecretUnavailable
+	}
 	if opts.StackName == "" {
 		return nil, fmt.Errorf("%w\nhint: pass -p/--stack-name (and --engine if needed) to operate from container labels", err)
 	}

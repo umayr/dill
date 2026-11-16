@@ -22,6 +22,7 @@ case "$2" in
  invalid) printf '%s' '{"config":{"services":{"synthetic-private":{"image":""}}}}' ;;
  evaluator) printf 'synthetic-private' >&2; exit 1 ;;
  secret-invalid) printf '%s' '{"config":{"name":"demo","secrets":[{"name":"password"}],"services":{"web":{"image":"x","secrets":[{"name":"password","target":"/run/secrets/synthetic-private"}],"labels":{"dill.synthetic-private":"x"}}}}}' ;;
+ secret-requirement) printf '%s' '{"config":{"name":"demo","secrets":[{"name":"password"}],"services":{"web":{"image":"x"}}}}' ;;
  secret-valid) printf '%s' '{"config":{"name":"demo","secrets":[{"name":"password"}],"services":{"web":{"image":"x","secrets":[{"name":"password","target":"/run/secrets/password"}]}}}}' ;;
  scoped-*) [ -z "${SERVER_SECRET+x}" ] && [ -z "${BRINE_VAR_AMBIENT+x}" ] && [ "$BRINE_VAR_VALUE" = "${2#scoped-}" ] || exit 1; printf '%s' '{"config":{"name":"demo","services":{"web":{"image":"x"}}}}' ;;
  default) [ "$SERVER_SECRET" = present ] || exit 1; printf '%s' '{"config":{"name":"demo","services":{"web":{"image":"x"}}}}' ;;
@@ -53,6 +54,16 @@ esac
 	for _, vars := range []map[string]string{{"PATH": "x"}, {"BRINE_VAR_": "x"}, {"BRINE_VAR_X=Y": "x"}, {"BRINE_VAR_X": "x\x00y"}, {"BRINE_VAR_X": strings.Repeat("x", 4097)}} {
 		if _, err := core.LoadConfigWithVars(context.Background(), "scoped", vars); err == nil {
 			t.Errorf("accepted invalid variables: %q", vars)
+		}
+	}
+	for _, load := range []func() (*core.Config, error){
+		func() (*core.Config, error) { return core.LoadConfig(context.Background(), "secret-requirement") },
+		func() (*core.Config, error) {
+			return core.LoadConfigWithVars(context.Background(), "secret-requirement", nil)
+		},
+	} {
+		if _, err := load(); !errors.Is(err, core.ErrSecretPlanningUnsupported) {
+			t.Fatalf("requirement without grant: %v", err)
 		}
 	}
 	if _, err := core.LoadConfigWithVars(context.Background(), "secret-valid", nil); !errors.Is(err, core.ErrSecretPlanningUnsupported) {
