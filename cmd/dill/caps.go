@@ -15,8 +15,12 @@ func runCaps(opts commandOptions, args []string) error {
 		fs.SetOutput(io.Discard)
 	}
 	addEngineFlag(fs, &opts)
+	format := fs.String("format", "json", "output format: json")
 	if err := fs.Parse(args); err != nil {
 		return usageError{err.Error()}
+	}
+	if err := validateFormat(*format, "json"); err != nil {
+		return err
 	}
 	if err := ensureNoArgs(fs.Args(), cmdCaps); err != nil {
 		return err

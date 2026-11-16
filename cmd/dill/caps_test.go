@@ -29,6 +29,12 @@ func TestCapsCommandRegistration(t *testing.T) {
 			if err := json.Unmarshal([]byte(out), &caps); err != nil || caps.Engine != engine {
 				t.Fatalf("caps output = %q, error = %v", out, err)
 			}
+			explicit, _, err := captureCommand(t, "", func() error {
+				return run([]string{cmdCaps, "--engine", engine, "--format", "json"})
+			})
+			if err != nil || explicit != out {
+				t.Fatalf("explicit JSON = %q, error = %v; default = %q", explicit, err, out)
+			}
 		})
 	}
 	if got := closestCommand("cap"); got != cmdCaps {
@@ -37,6 +43,10 @@ func TestCapsCommandRegistration(t *testing.T) {
 	_, _, err := captureCommand(t, "", func() error { return run([]string{cmdCaps, "extra"}) })
 	if exitCodeFor(err) != 2 || !strings.Contains(err.Error(), cmdCaps) {
 		t.Fatalf("unexpected argument error: %v", err)
+	}
+	_, _, err = captureCommand(t, "", func() error { return run([]string{cmdCaps, "--format", "text"}) })
+	if exitCodeFor(err) != 2 {
+		t.Fatalf("unsupported format error: %v", err)
 	}
 	_, _, err = captureCommand(t, "", func() error { return run([]string{"capabilities"}) })
 	if exitCodeFor(err) != 2 {

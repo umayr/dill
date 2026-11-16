@@ -8,6 +8,7 @@ import (
 	"os"
 	"strings"
 
+	"github.com/umayr/dill/core"
 	"github.com/umayr/dill/internal/dag"
 	"github.com/umayr/dill/internal/operation"
 	"github.com/umayr/dill/internal/orchestrator"
@@ -117,7 +118,8 @@ func runDown(ctx context.Context, opts commandOptions, args []string) error {
 		}
 		return nil
 	}
-	return dag.Down(ctx, engine, sn, opts.downProgress(sn))
+	_, err = core.Down(ctx, engine, sn, opts.downProgress(sn))
+	return err
 }
 
 func runTeardown(ctx context.Context, opts commandOptions, args []string) error {

@@ -14,6 +14,7 @@ import (
 	"golang.org/x/sync/errgroup"
 	"golang.org/x/term"
 
+	"github.com/umayr/dill/core"
 	"github.com/umayr/dill/internal/config"
 	"github.com/umayr/dill/internal/dag"
 	"github.com/umayr/dill/internal/log"
@@ -100,6 +101,28 @@ func runUpConfig(ctx context.Context, opts commandOptions, cfg *config.DillConfi
 	}
 
 	logger.Debug("loaded config", "engine", cfg.Engine, "services", len(cfg.Services))
+
+	// Checked, secret, disposable and operation-controlled paths retain their
+	// distinct policy and evidence handling below.
+	if !safe && capture == nil && !opts.AlphaDisposable && opts.operation == nil {
+		if _, err := selectServices(cfg.Services, names, !noDeps); err != nil {
+			return err
+		}
+		isTTY := !opts.Quiet && term.IsTerminal(int(os.Stdout.Fd()))
+		var pullMu sync.Mutex
+		logger.Debug("using stack name", "stack", resolveStackNameWithOptions(cfg, opts))
+		return core.Deploy(ctx, cfg, core.DeployOptions{
+			Stack: resolveStackNameWithOptions(cfg, opts), Services: names,
+			NoDeps: noDeps, NoPrune: opts.NoPrune, ForceRecreate: opts.ForceRecreate,
+			DryRun: opts.DryRun, PullPolicy: pullPolicy, Timeout: opts.Timeout,
+			Open: open, Progress: opts.progress(), PullSink: newMakePullSink(isTTY, &pullMu),
+			Planned: func(p *core.Plan) {
+				if opts.DryRun {
+					plan.Render(p, opts.output())
+				}
+			},
+		})
+	}
 
 	// The plan is always computed against the full config so a partial `up`
 	// cannot mistake unselected services for orphans. Only the selected subset

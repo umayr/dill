@@ -12,6 +12,7 @@ import (
 	"text/tabwriter"
 	"time"
 
+	"github.com/umayr/dill/core"
 	"github.com/umayr/dill/internal/config"
 	"github.com/umayr/dill/internal/loader"
 	"github.com/umayr/dill/internal/orchestrator"
@@ -46,32 +47,9 @@ func runStatus(ctx context.Context, opts commandOptions, args []string) error {
 	}
 	defer engine.Close()
 
-	names, err := engine.ListStack(ctx, sn)
+	out, err := core.Status(ctx, engine, sn, cfg.Engine, opts.ConfigFile, len(cfg.Services))
 	if err != nil {
-		return fmt.Errorf("listing stack: %w", err)
-	}
-	type statusOutput struct {
-		Stack      string                          `json:"stack"`
-		Engine     string                          `json:"engine"`
-		ConfigFile string                          `json:"config_file"`
-		Services   int                             `json:"services"`
-		Containers []*orchestrator.ContainerStatus `json:"containers"`
-	}
-	out := statusOutput{
-		Stack:      sn,
-		Engine:     cfg.Engine,
-		ConfigFile: opts.ConfigFile,
-		Services:   len(cfg.Services),
-	}
-	for _, name := range names {
-		cs, err := engine.ServiceStatus(ctx, name)
-		if err != nil {
-			cs = &orchestrator.ContainerStatus{Name: name, State: "error", Status: err.Error()}
-		}
-		out.Containers = append(out.Containers, cs)
-	}
-	if out.Containers == nil {
-		out.Containers = []*orchestrator.ContainerStatus{}
+		return err
 	}
 	if *format == "json" {
 		enc := json.NewEncoder(os.Stdout)

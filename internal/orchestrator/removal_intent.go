@@ -6,6 +6,13 @@ import (
 	"fmt"
 )
 
+// RemovalEngine is the capability required for checked container removal.
+type RemovalEngine interface {
+	InspectConfig(context.Context, string) (*LiveConfig, error)
+	StopService(context.Context, string) error
+	RemoveService(context.Context, string) error
+}
+
 // RemovalTarget identifies requested containers, not arbitrary engine objects.
 // Service may be empty for label-discovered cleanup; capture pins the live label.
 type RemovalTarget struct{ Name, Service string }
@@ -19,7 +26,7 @@ type RemovalIntent struct {
 	Resources []OwnedResource
 }
 
-func CaptureRemovalIntent(ctx context.Context, engine Engine, stack string, targets []RemovalTarget) (*RemovalIntent, error) {
+func CaptureRemovalIntent(ctx context.Context, engine RemovalEngine, stack string, targets []RemovalTarget) (*RemovalIntent, error) {
 	intent := &RemovalIntent{Stack: stack}
 	seen := map[string]bool{}
 	for _, target := range targets {
@@ -54,7 +61,7 @@ func CaptureRemovalIntent(ctx context.Context, engine Engine, stack string, targ
 
 // Revalidate refuses same-name replacements, including replacements labelled as
 // owned by the same stack. Subsequent mutations must use the captured ID only.
-func (i *RemovalIntent) Revalidate(ctx context.Context, engine Engine, resource OwnedResource) (bool, error) {
+func (i *RemovalIntent) Revalidate(ctx context.Context, engine RemovalEngine, resource OwnedResource) (bool, error) {
 	if err := ctx.Err(); err != nil {
 		return false, err
 	}
@@ -73,7 +80,7 @@ func (i *RemovalIntent) Revalidate(ctx context.Context, engine Engine, resource 
 
 // Remove revalidates before each mutation. Stop failures do not suppress an
 // independent removal attempt; partial cleanup remains visible to the caller.
-func (i *RemovalIntent) Remove(ctx context.Context, engine Engine, resource OwnedResource) error {
+func (i *RemovalIntent) Remove(ctx context.Context, engine RemovalEngine, resource OwnedResource) error {
 	ok, err := i.Revalidate(ctx, engine, resource)
 	if err != nil || !ok {
 		return err
