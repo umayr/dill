@@ -19,7 +19,7 @@ func (e *ResourceError) Error() string {
 func (e *ResourceError) Unwrap() error { return e.Err }
 
 // OwnedID binds later mutations to an immutable container identity.
-func OwnedID(ctx context.Context, engine Engine, name, stack, service string) (string, error) {
+func OwnedID(ctx context.Context, engine RemovalEngine, name, stack, service string) (string, error) {
 	live, err := engine.InspectConfig(ctx, name)
 	if errors.Is(err, ErrNotFound) {
 		return "", nil

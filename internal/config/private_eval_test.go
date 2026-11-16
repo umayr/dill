@@ -37,7 +37,7 @@ func TestPrivatePklOutputLimitsAndCancellation(t *testing.T) {
 			if err := os.WriteFile(p, []byte("#!/bin/sh\n"+tc.body+"\n"), 0700); err != nil {
 				t.Fatal(err)
 			}
-			out, err := privatePklOutput(context.Background(), p, "synthetic-input")
+			out, err := privatePklOutput(context.Background(), p, "synthetic-input", nil)
 			if (err == nil) != tc.ok || err != nil && err != ErrSecretUnavailable || strings.Contains(string(out), "synthetic-private") {
 				t.Fatalf("unsafe evaluator result: %v", err)
 			}
@@ -46,7 +46,7 @@ func TestPrivatePklOutputLimitsAndCancellation(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 	started := time.Now()
-	if _, err := privatePklOutput(ctx, "/bin/sh", "synthetic-input"); err != ErrSecretUnavailable || time.Since(started) > time.Second {
+	if _, err := privatePklOutput(ctx, "/bin/sh", "synthetic-input", nil); err != ErrSecretUnavailable || time.Since(started) > time.Second {
 		t.Fatal("canceled evaluator did not fail promptly")
 	}
 }

@@ -94,7 +94,7 @@ To inspect and operate on a stack:
 ```
 
 For machine-readable output, `ps`, `status`, `plan`/`diff`, `stacks`,
-`doctor`, `images`, `config`, `validate`, and `port` support `--format` where applicable.
+`doctor`, `images`, `config`, `validate`, `version`, and `port` support `--format` where applicable.
 Lifecycle commands accept service names as positional arguments, for example
 `dill up web`, `dill restart web`, or `dill down web`. Use `--no-deps` with
 `up`, `start`, or `restart` when you intentionally do not want dependency services
@@ -136,6 +136,75 @@ removing a retained network manually. See [lifecycle failures](docs/lifecycle-fa
 
 `rm` and `teardown` prompt before destructive removal; pass
 `--yes`/`-y` for automation. `stop` and `down` do not prompt.
+
+### External commands
+
+Dill can launch a separately installed executable named `dill-NAME` on `PATH`
+when invoked as `dill NAME`. For example, if `dill-example` is installed,
+`dill example --help` passes `--help` to that executable. Built-in commands
+always take precedence. The executable runs with the caller's permissions,
+environment and terminal; it is trusted code, not a sandbox or an authorized
+secret provider. Install extensions only from sources you trust.
+
+External dispatch requires the command as the first argument: Dill's global
+flags before an extension name are not forwarded. An extension defines its own
+options. External dispatch is disabled for secret/proof invocations and when
+`DILL_SECRET_POLICY` is set. No extensions are bundled or downloaded by Dill.
+
+#### Optional local status service
+
+`make build-serve` builds the separate experimental `dill-serve` Unix-socket
+service. It exposes health and status and, when explicitly configured, accepts
+trusted project snapshots for staging. It cannot deploy services or deliver file
+secrets. Snapshots themselves may contain secrets. The standalone `dill` build
+remains independent. See [installation and security requirements](docs/dill-serve.md)
+and [snapshot staging](docs/snapshot-staging.md).
+
+#### Optional Compose importer
+
+`make build-import` builds `bin/dill-import` separately. Put it on `PATH`, then
+run `dill import compose compose.yaml > compose.pkl` (or invoke `dill-import`
+directly). Review the generated file before deployment: it may contain
+plaintext environment values. Use `--schema URI` before the input filename to
+select a schema; the default is the published `dill@0.5.0` schema. The importer
+does not fetch schemas, evaluate Pkl, contact an engine, or modify files itself.
+Its output uses the schema's default engine (currently Podman); select the
+appropriate engine before deploying.
+
+The initial importer accepts explicit images, string-valued environment maps,
+quoted published TCP/UDP port mappings, and long-form absolute bind mounts with
+`type`, `source`, `target`, optional `read_only`, and an explicit
+`bind: {create_host_path: false}`. This avoids Compose's default host-directory
+creation, which Dill's bind mounts do not provide. It deliberately rejects
+other fields, including builds, dependency conditions, named volumes,
+interpolation, aliases and implicit environment values. It does not infer
+Compose networking, volume ownership or host bind-mount safety. Review the
+result, select the correct engine and run `dill validate` and `dill plan`
+before applying; conversion does not guarantee equivalent runtime behavior.
+
+### Public Go core
+
+The Go package `github.com/umayr/dill/core` exposes status, ordinary read-only
+planning, stack-wide down, and ordinary unqualified deployment. `Status` reports
+individual inspection failures in its snapshot; `ComputePlan` and `Deploy`
+reject file-secret grants, and `Down` reports partial cleanup attempts. `Deploy`
+shares ordinary CLI orchestration, including ownership checks, pull and replan,
+orphan removal and dependency ordering. A deployment error can follow successful
+mutations; it is not a transactional receipt or rollback guarantee.
+
+Callers must supply normalized configuration, an explicit stack and dependencies,
+select and authorize endpoints, and coordinate concurrent operations. The engine
+openers require explicit Docker or Podman endpoints. Most caller-supplied engines
+remain caller-owned; `Deploy` closes the engine returned by its opener. `LoadConfig`
+inherits process environment and can use the network; it is not a sandbox or a
+per-request environment isolation mechanism. See the Go API documentation for
+the precise ownership and validation contracts.
+
+The core has no access to Brine known-secret records, downgrade guards, proof,
+authorization or coordination policy. Callers must enforce those policies and
+must not use ordinary core operations to bypass checked or qualified operations.
+File-secret delivery is not exposed. This package is not a complete lifecycle
+API, and deploy is not integrated into the experimental service.
 
 ### Experimental protocol foundation
 

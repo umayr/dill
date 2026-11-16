@@ -282,7 +282,20 @@ func (g *Graph) run(ctx context.Context, engine orchestrator.Engine, stackName s
 
 // Down queries the engine for all containers in the stack and stops + removes them.
 // It does not require the config file — it relies solely on the dill.stack label.
-func Down(ctx context.Context, engine orchestrator.Engine, stackName string, prog Progress) error {
+type DownEngine interface {
+	orchestrator.RemovalEngine
+	ListStack(context.Context, string) ([]string, error)
+	RemoveNetwork(context.Context, string) error
+}
+
+// DownEvent reports an attempted capture, removal, or network operation.
+type DownEvent func(phase, name string, err error)
+
+func Down(ctx context.Context, engine DownEngine, stackName string, prog Progress) error {
+	return DownWithEvents(ctx, engine, stackName, prog, nil)
+}
+
+func DownWithEvents(ctx context.Context, engine DownEngine, stackName string, prog Progress, event DownEvent) error {
 	names, err := engine.ListStack(ctx, stackName)
 	if err != nil {
 		return fmt.Errorf("listing stack %q: %w", stackName, err)
@@ -291,6 +304,9 @@ func Down(ctx context.Context, engine orchestrator.Engine, stackName string, pro
 	var errs []error
 	for _, name := range names {
 		captured, err := orchestrator.CaptureRemovalIntent(ctx, engine, stackName, []orchestrator.RemovalTarget{{Name: name}})
+		if event != nil {
+			event("capture", name, err)
+		}
 		if err != nil {
 			errs = append(errs, err)
 			continue
@@ -299,25 +315,38 @@ func Down(ctx context.Context, engine orchestrator.Engine, stackName string, pro
 	}
 	// Preserve legacy best-effort independent cleanup while never authorizing a
 	// failed ownership target. All identities are captured before any mutation.
-	errs = append(errs, DownIntent(ctx, engine, intent, prog))
+	errs = append(errs, downIntent(ctx, engine, intent, prog, event))
 	return errors.Join(errs...)
 }
 
 // DownIntent applies only identities captured before the caller confirmed.
 // Network removal retains the existing conservative adapter behavior.
-func DownIntent(ctx context.Context, engine orchestrator.Engine, intent *orchestrator.RemovalIntent, prog Progress) error {
+func DownIntent(ctx context.Context, engine DownEngine, intent *orchestrator.RemovalIntent, prog Progress) error {
+	return downIntent(ctx, engine, intent, prog, nil)
+}
+
+func downIntent(ctx context.Context, engine DownEngine, intent *orchestrator.RemovalIntent, prog Progress, event DownEvent) error {
 	var errs []error
 	for _, resource := range intent.Resources {
 		name := resource.Name
 		if prog != nil {
 			prog(name, "removing")
 		}
-		if err := intent.Remove(ctx, engine, resource); err != nil {
+		err := intent.Remove(ctx, engine, resource)
+		if event != nil {
+			event("remove", name, err)
+		}
+		if err != nil {
 			errs = append(errs, err)
 		}
 	}
-	if err := engine.RemoveNetwork(ctx, intent.Stack); err != nil {
-		errs = append(errs, &orchestrator.ResourceError{Operation: "remove network (resource may be retained)", Resource: intent.Stack, Err: err})
+	err := engine.RemoveNetwork(ctx, intent.Stack)
+	if err != nil {
+		err = &orchestrator.ResourceError{Operation: "remove network (resource may be retained)", Resource: intent.Stack, Err: err}
+		errs = append(errs, err)
+	}
+	if event != nil {
+		event("network", intent.Stack, err)
 	}
 	return errors.Join(errs...)
 }

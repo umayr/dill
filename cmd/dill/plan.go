@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 
+	"github.com/umayr/dill/core"
 	"github.com/umayr/dill/internal/config"
 	"github.com/umayr/dill/internal/plan"
 	"github.com/umayr/dill/internal/secretfile"
@@ -103,7 +104,7 @@ func runPlanNamed(ctx context.Context, opts commandOptions, args []string, name 
 	} else if secret {
 		result, err = secretPlanCompute(ctx, cfg, engine, sn, req, evidence)
 	} else {
-		result, err = plan.Compute(ctx, cfg, engine, sn)
+		result, err = core.ComputePlan(ctx, cfg, engine, sn)
 	}
 	if err != nil {
 		return fmt.Errorf("computing plan: %w", err)

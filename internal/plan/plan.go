@@ -51,7 +51,14 @@ type Plan struct {
 	Changes []Change `json:"changes"`
 }
 
-func Compute(ctx context.Context, cfg *config.DillConfig, engine orchestrator.Engine, stackName string) (*Plan, error) {
+// Source is the read-only engine capability required for planning.
+type Source interface {
+	InspectConfig(context.Context, string) (*orchestrator.LiveConfig, error)
+	LocalImageID(context.Context, string) (string, error)
+	ListStack(context.Context, string) ([]string, error)
+}
+
+func Compute(ctx context.Context, cfg *config.DillConfig, engine Source, stackName string) (*Plan, error) {
 	if config.RejectUncheckedSecretDelivery(cfg) != nil {
 		return nil, config.ErrSecretUnavailable
 	}
@@ -99,7 +106,7 @@ func ComputeChecked(ctx context.Context, cfg *config.DillConfig, engine orchestr
 	return compute(ctx, cfg, engine, stackName, selected, mounts, req.Target)
 }
 
-func compute(ctx context.Context, cfg *config.DillConfig, engine orchestrator.Engine, stackName string, selected map[string]bool, mounts map[string][]config.ResolvedSecret, target string) (*Plan, error) {
+func compute(ctx context.Context, cfg *config.DillConfig, engine Source, stackName string, selected map[string]bool, mounts map[string][]config.ResolvedSecret, target string) (*Plan, error) {
 	// Build desired map: serviceName → containerName.
 	type desired struct {
 		svc           *config.Service

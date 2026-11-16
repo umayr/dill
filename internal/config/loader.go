@@ -74,7 +74,23 @@ func Load(ctx context.Context, path string) (result *DillConfig, retErr error) {
 
 	var out []byte
 	if private {
-		out, err = privatePklOutput(ctx, pkl, path)
+		env, scoped := ctx.Value(scopedEnvironmentKey{}).([]string)
+		if scoped && !secretPrivate {
+			// Resolve before assigning the restricted child environment. Discovery
+			// remains the operator's existing parent-side policy.
+			if !filepath.IsAbs(pkl) {
+				pkl, err = exec.LookPath(pkl)
+				if err == nil {
+					pkl, err = filepath.Abs(pkl)
+				}
+				if err != nil {
+					return nil, &EvaluatorError{Err: errors.New("Configuration evaluator failed.")}
+				}
+			}
+		} else {
+			env = nil
+		}
+		out, err = privatePklOutput(ctx, pkl, path, env)
 		if err != nil {
 			if machine && !secretPrivate {
 				if ctx.Err() != nil {

@@ -70,6 +70,11 @@ func main() {
 	if isProtocolInvocation(os.Args[1:]) && !secretInvocation(os.Args[1:]) {
 		os.Exit(runProtocol(os.Args[1:]))
 	}
+	// External commands receive their arguments unchanged, including flags
+	// that Dill would otherwise interpret as global verbosity options.
+	if code, handled := runExternalCommand(os.Args[1:]); handled {
+		os.Exit(code)
+	}
 	verbosity, remaining := logger.ParseVerbosity(os.Args[1:])
 	logger.Init(verbosity)
 
@@ -332,11 +337,7 @@ Flags:
 	case cmdFmt:
 		return runFmt(ctx, opts, commandArgs)
 	case cmdVersion:
-		if err := ensureNoArgs(commandArgs, "version"); err != nil {
-			return err
-		}
-		fmt.Println(version)
-		return nil
+		return runVersion(commandArgs)
 	default:
 		msg := fmt.Sprintf("unknown command %q", cmd)
 		if s := closestCommand(cmd); s != "" {

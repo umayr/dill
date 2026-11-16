@@ -9,6 +9,12 @@ import (
 
 type privateEvaluationKey struct{}
 type machineEvaluationKey struct{}
+type scopedEnvironmentKey struct{}
+
+// WithScopedEnvironment supplies an already validated, request-owned environment.
+func WithScopedEnvironment(ctx context.Context, env []string) context.Context {
+	return context.WithValue(ctx, scopedEnvironmentKey{}, env)
+}
 
 // WithMachineEvaluation uses the same bounded diagnostic-discarding evaluator
 // as private secret mode, but retains ONLY closed, fixed failure categories for
@@ -41,12 +47,13 @@ func (b *privateEvalBuffer) Write(p []byte) (int, error) {
 	return b.buffer.Write(p)
 }
 
-func privatePklOutput(ctx context.Context, pkl, path string) ([]byte, error) {
+func privatePklOutput(ctx context.Context, pkl, path string, env []string) ([]byte, error) {
 	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
 	stdout := &privateEvalBuffer{limit: privatePklOutputLimit, cancel: cancel}
 	stderr := &privateEvalBuffer{limit: privatePklDiagnosticLimit, cancel: cancel}
 	cmd := exec.CommandContext(ctx, pkl, "eval", path)
+	cmd.Env = env
 	cmd.WaitDelay = time.Second
 	cmd.Stdout = stdout
 	cmd.Stderr = stderr
