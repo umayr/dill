@@ -14,6 +14,9 @@ permissions:
 
 jobs:
   disposable-baseline:
+    # Historical qualification requires the disabled disposable CLI profile.
+    # A skipped job is not qualification evidence; see disabled-alpha-secrets.md.
+    if: ${{ false }}
     # Every engine and resource exists only on this fresh hosted job VM.
     # Docker must satisfy the complete bounded qualification; Podman supplies
     # an explicit unqualified baseline, never a qualified-positive claim.

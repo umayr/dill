@@ -137,7 +137,7 @@ func TestAlphaGuardrailFixtureEvaluation(t *testing.T) {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, dillBinary(t, root), "operation", "up", "--contract", "dill.operation/1", "--engine", "docker", "--engine-socket", "unix://"+filepath.ToSlash(socket), "-p", "synthetic-offline", "-f", cfg, "--alpha-disposable")
+	cmd := exec.CommandContext(ctx, dillBinary(t, root), "operation", "up", "--contract", "dill.operation/1", "--engine", "docker", "--engine-socket", "unix://"+filepath.ToSlash(socket), "-p", "synthetic-offline", "-f", cfg)
 	data, err := cmd.Output()
 	var exited *exec.ExitError
 	if !errors.As(err, &exited) || exited.ExitCode() != 1 {

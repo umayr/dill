@@ -75,12 +75,10 @@ legacy wrappers: a child error is generally exit 1.
   inspect or acknowledge offline state, not replay or repair it. Acknowledge
   changes local metadata and requires explicit inspection attestation. See
   [coordination design](local-mutation-coordination-design.md).
-* `secret-capabilities [--format json]` returns the fixed Alpha capability
-  object. `secrets check [--format json]` returns fixed available/unavailable
-  JSON; unavailable exits 1. Secret paths, evaluator/SDK diagnostics and raw
-  failures are deliberately suppressed in the guarded flow; preserve this
-  boundary. Capability argument errors use the fixed secret error on stderr,
-  not a generic JSON envelope. See [Alpha qualification](alpha-qualification.md).
+* Strict-secret operation is disabled. `secret-capabilities` fails without
+  advertising a capability; `secrets check` emits the fixed unavailable JSON
+  and exits 1. Secret selectors and proof flags fail with the fixed secret error.
+  See [disabled features](disabled-alpha-secrets.md).
 * `protocol` and `protocol run` are a separate experimental bounded transport,
   not an execution API. `protocol` emits one newline-terminated discovery JSON
   record; `protocol run` reads one bounded JSON request through EOF and emits

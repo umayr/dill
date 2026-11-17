@@ -66,10 +66,26 @@ func pathsOverlap(a, b string) bool {
 	return a == b || a == "/" || b == "/" || strings.HasPrefix(a, b+"/") || strings.HasPrefix(b, a+"/")
 }
 
-// RejectUncheckedSecretDelivery prevents unchecked entrypoints from silently
-// ignoring grants. Checked delivery must consume secretfile.Preflight evidence.
-func RejectUncheckedSecretDelivery(cfg *DillConfig) error {
+// HasSecretDeclarations identifies both declared requirements and service grants.
+func HasSecretDeclarations(cfg *DillConfig) bool {
 	if cfg == nil {
+		return false
+	}
+	if len(cfg.Secrets) > 0 {
+		return true
+	}
+	for _, svc := range cfg.Services {
+		if svc != nil && len(svc.Secrets) > 0 {
+			return true
+		}
+	}
+	return false
+}
+
+// RejectUncheckedSecretDelivery prevents unchecked entrypoints from silently
+// ignoring declarations or grants. Checked delivery must consume evidence.
+func RejectUncheckedSecretDelivery(cfg *DillConfig) error {
+	if cfg == nil || HasSecretDeclarations(cfg) {
 		return ErrSecretUnavailable
 	}
 	for _, svc := range cfg.Services {

@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"flag"
-	"fmt"
 	"io"
 	"os"
 	"path"
@@ -66,14 +65,7 @@ func secretCheckInvocation(args []string) bool {
 	return false
 }
 func hasSecretGrants(c *config.DillConfig) bool {
-	if c != nil {
-		for _, s := range c.Services {
-			if s != nil && len(s.Secrets) > 0 {
-				return true
-			}
-		}
-	}
-	return false
+	return config.HasSecretDeclarations(c)
 }
 
 // One CLI invocation owns the diagnostic scope. Successful evaluation can
@@ -160,31 +152,10 @@ func (discardPullSink) Done()                       {}
 func secretPullSink(string) dag.PullSink            { return discardPullSink{} }
 
 func runSecretCapabilities(args []string) error {
-	fs := flag.NewFlagSet("secret-capabilities", flag.ContinueOnError)
-	fs.SetOutput(io.Discard)
-	format := fs.String("format", "json", "output format: json")
-	if fs.Parse(args) != nil || *format != "json" || len(fs.Args()) != 0 {
-		return config.ErrSecretUnavailable
-	}
-	_, err := fmt.Fprintln(os.Stdout, secretCapabilitiesJSON)
-	return err
+	return config.ErrSecretUnavailable
 }
 func runSecretsCheck(ctx context.Context, o commandOptions, args []string) error {
-	fs := flag.NewFlagSet("secrets check", flag.ContinueOnError)
-	addConfigFlags(fs, &o)
-	fs.SetOutput(io.Discard)
-	format := fs.String("format", "json", "output format: json")
-	if len(args) == 0 || args[0] != "check" || fs.Parse(args[1:]) != nil || *format != "json" || len(fs.Args()) != 0 {
-		return config.ErrSecretUnavailable
-	}
-	ctx, cancel := context.WithTimeout(ctx, secretCheckTimeout)
-	defer cancel()
-	c, err := loadConfig(ctx, o)
-	if err != nil {
-		return config.ErrSecretUnavailable
-	}
-	_, _, err = prepareSecrets(ctx, o, c, nil, false, false)
-	return err
+	return config.ErrSecretUnavailable
 }
 
 func requiresSecretPreflight(o commandOptions, c *config.DillConfig) bool {

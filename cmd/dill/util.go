@@ -198,9 +198,15 @@ func resolveStackNameWithOptions(cfg *config.DillConfig, opts commandOptions) st
 
 func loadConfig(ctx context.Context, opts commandOptions) (result *config.DillConfig, retErr error) {
 	if opts.operation != nil && opts.operation.config != nil {
+		if opts.secretMode() || hasSecretGrants(opts.operation.config) {
+			return nil, config.ErrSecretUnavailable
+		}
 		return opts.operation.config, nil
 	}
 	captureSecretPolicy(&opts)
+	if opts.secretMode() {
+		return nil, config.ErrSecretUnavailable
+	}
 	discovered := false
 	defer func() {
 		if opts.secretMode() || discovered || hasSecretGrants(result) {
@@ -226,6 +232,9 @@ func loadConfig(ctx context.Context, opts commandOptions) (result *config.DillCo
 	}
 	if err != nil {
 		return nil, fmt.Errorf("loading config: %w", err)
+	}
+	if discovered {
+		return nil, config.ErrSecretUnavailable
 	}
 	if err := validateTrustedStack(opts, cfg); err != nil {
 		return nil, err

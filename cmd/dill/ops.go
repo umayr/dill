@@ -106,7 +106,7 @@ func runDoctor(ctx context.Context, opts commandOptions, args []string) error {
 
 	cfg, err := loadConfig(ctx, opts)
 	// Decoded grants can activate the guard even without explicit selectors.
-	if opts.secretMode() {
+	if opts.secretMode() || errors.Is(err, config.ErrSecretUnavailable) {
 		return config.ErrSecretUnavailable
 	}
 	add("config", err, opts.ConfigFile)

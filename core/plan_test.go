@@ -14,8 +14,11 @@ type planSource struct {
 	list  []string
 }
 
-func (s *planSource) InspectConfig(context.Context, string) (*core.LiveConfig, error) {
+func (s *planSource) InspectConfig(_ context.Context, name string) (*core.LiveConfig, error) {
 	s.calls++
+	if name == "old" {
+		return &core.LiveConfig{}, nil
+	}
 	if s.live == nil {
 		return nil, core.ErrNotFound
 	}
@@ -45,6 +48,11 @@ func TestPlanningRejectsSecretsAndInvalidConfigBeforeEngine(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	cfg.Services["web"].Secrets = nil
+	cfg.Secrets = []core.SecretRequirement{{Name: "credential"}}
+	if _, err := core.ComputePlan(context.Background(), cfg, src, "demo"); !errors.Is(err, core.ErrSecretPlanningUnsupported) {
+		t.Fatalf("requirement without grant: %v", err)
+	}
+	cfg.Secrets = nil
 	cfg.Services["web"].Labels = map[string]string{"dill.managed": "true"}
 	if _, err := core.ComputePlan(context.Background(), cfg, src, "demo"); err == nil {
 		t.Fatal("expected invalid config")
