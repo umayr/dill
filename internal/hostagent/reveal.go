@@ -37,6 +37,7 @@ type Grant struct {
 	Epoch       string `json:"epoch"`
 	ContainerID string `json:"containerId"`
 	SessionID   string `json:"sessionId"`
+	RequestID   string `json:"requestId"`
 	Nonce       string `json:"nonce"`
 	IssuedAt    int64  `json:"issuedAt"`
 	ExpiresAt   int64  `json:"expiresAt"`
@@ -51,14 +52,14 @@ func RevealBytes(g Grant) ([]byte, error) {
 		return nil, errors.New("invalid grant")
 	}
 	var b bytes.Buffer
-	b.WriteString("brine-agent-reveal/1\x00")
+	b.WriteString("brine-agent-reveal/2\x00")
 	for _, v := range []string{g.AgentID, g.EngineID} {
 		if e := lp(&b, v); e != nil {
 			return nil, e
 		}
 	}
 	_ = binary.Write(&b, binary.BigEndian, g.Generation)
-	for _, v := range []string{g.Epoch, g.ContainerID, g.SessionID, g.Nonce} {
+	for _, v := range []string{g.Epoch, g.ContainerID, g.SessionID, g.Nonce, g.RequestID} {
 		if e := lp(&b, v); e != nil {
 			return nil, e
 		}
@@ -78,14 +79,14 @@ func (s *Server) reveal(w http.ResponseWriter, r *http.Request, id string, body 
 	}
 	dec := json.NewDecoder(bytes.NewReader(body))
 	dec.DisallowUnknownFields()
-	if !exactObject(body, "containerId", "grant") || !exactNestedObject(body, "grant", "agentId", "engineId", "generation", "epoch", "containerId", "sessionId", "nonce", "issuedAt", "expiresAt", "scope", "interactive", "signature") || dec.Decode(&req) != nil || !fullID.MatchString(req.ContainerID) {
+	if !exactObject(body, "containerId", "grant") || !exactNestedObject(body, "grant", "agentId", "engineId", "generation", "epoch", "containerId", "sessionId", "requestId", "nonce", "issuedAt", "expiresAt", "scope", "interactive", "signature") || dec.Decode(&req) != nil || !fullID.MatchString(req.ContainerID) {
 		fail(w, id, 400, "INVALID_REQUEST", "Invalid request.", false)
 		return
 	}
 	g := req.Grant
 	msg, err := RevealBytes(g)
 	sig, decodeErr := raw.DecodeString(g.Signature)
-	if err != nil || g.AgentID != s.agentID || g.EngineID != s.c.EngineID || g.Generation != s.c.Generation || g.Epoch != s.epoch || g.ContainerID != req.ContainerID || !canonical(g.SessionID, 16) || !canonical(g.Nonce, 32) || g.Scope != "env.values" || !g.Interactive || !canonical(g.Signature, 64) || decodeErr != nil || !ed25519.Verify(s.c.RevealKey, msg, sig) {
+	if err != nil || g.AgentID != s.agentID || g.EngineID != s.c.EngineID || g.Generation != s.c.Generation || g.Epoch != s.epoch || g.ContainerID != req.ContainerID || !requestID.MatchString(g.RequestID) || g.RequestID != id || !canonical(g.SessionID, 16) || !canonical(g.Nonce, 32) || g.Scope != "env.values" || !g.Interactive || !canonical(g.Signature, 64) || decodeErr != nil || !ed25519.Verify(s.c.RevealKey, msg, sig) {
 		fail(w, id, 403, "UNAUTHORIZED", "Unauthorized.", false)
 		return
 	}
