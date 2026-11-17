@@ -379,8 +379,20 @@ func TestProtocolSubprocessFragmentedEOF(t *testing.T) {
 	}
 	inputConsumed(t, s.in) // complete JSON is still not a complete request without EOF
 	poll := []unix.PollFd{{Fd: int32(subprocessFD(t, s.output)), Events: unix.POLLIN}}
-	if n, err := unix.Poll(poll, 30); err != nil || n != 0 {
-		t.Fatal("output before EOF", n, err)
+	deadline := time.Now().Add(30 * time.Millisecond)
+	for {
+		remaining := time.Until(deadline)
+		if remaining <= 0 {
+			break
+		}
+		n, err := unix.Poll(poll, int((remaining+time.Millisecond-1)/time.Millisecond))
+		if errors.Is(err, unix.EINTR) {
+			continue
+		}
+		if err != nil || n != 0 {
+			t.Fatal("output before EOF", n, err)
+		}
+		break
 	}
 	halfClose(t, s.input)
 	if exit := childExit(c.Wait()); exit != 0 {
