@@ -7,7 +7,7 @@ PKL     ?= pkl
 VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo "dev")
 LDFLAGS := -ldflags "-X main.version=$(VERSION)"
 
-.PHONY: build build-import build-serve install clean test integration-test integration-test-offline vet tidy fmt validate dist
+.PHONY: build build-import build-serve build-agent install clean test integration-test integration-test-offline vet tidy fmt validate dist
 
 build:
 	@mkdir -p bin
@@ -17,6 +17,11 @@ build:
 build-serve:
 	@mkdir -p bin
 	go build -tags $(TAGS) -o bin/dill-serve ./cmd/dill-serve
+
+# Experimental read-only agent; currently session proof only.
+build-agent:
+	@mkdir -p bin
+	go build -tags $(TAGS) -o bin/dill-agent ./cmd/dill-agent
 
 # Optional offline Compose importer; the core build does not include it.
 build-import:
