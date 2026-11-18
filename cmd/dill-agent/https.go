@@ -16,9 +16,9 @@ import (
 	"time"
 )
 
-// The first HTTPS slice exposes only the existing read protocol. In particular,
-// it does not elevate bearer-token access into authorization for reveal.
-func authenticatedReads(next http.Handler, token string) http.Handler {
+// The HTTP allowlist never delegates reveal or engine mutations. A separate
+// host opt-in may expose the existing bounded, catalogued snapshot receiver.
+func authenticatedHTTPS(next, staging http.Handler, token string) http.Handler {
 	want := sha256.Sum256([]byte("Bearer " + token))
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Cache-Control", "no-store")
@@ -36,6 +36,11 @@ func authenticatedReads(next http.Handler, token string) http.Handler {
 		case "/v1/session", "/v1/inventory", "/v1/inspect", "/v1/logs":
 			next.ServeHTTP(w, r)
 		default:
+			if staging != nil && r.URL.RawPath == "" && (r.Method == http.MethodPost && r.URL.Path == "/v1/snapshots" ||
+				r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/v1/snapshots/")) {
+				staging.ServeHTTP(w, r)
+				return
+			}
 			http.NotFound(w, r)
 		}
 	})
@@ -100,7 +105,7 @@ func httpsCredentials(address, certFile, keyFile, tokenFile string) (tls.Certifi
 	return cert, token, nil
 }
 
-func serveHTTPS(address, certFile, keyFile, tokenFile string, handler http.Handler) error {
+func serveHTTPS(address, certFile, keyFile, tokenFile string, handler, staging http.Handler) error {
 	cert, token, err := httpsCredentials(address, certFile, keyFile, tokenFile)
 	if err != nil {
 		return err
@@ -111,7 +116,7 @@ func serveHTTPS(address, certFile, keyFile, tokenFile string, handler http.Handl
 	}
 	defer l.Close()
 	server := &http.Server{
-		Handler: authenticatedReads(handler, token), TLSConfig: &tls.Config{MinVersion: tls.VersionTLS13, Certificates: []tls.Certificate{cert}},
+		Handler: authenticatedHTTPS(handler, staging, token), TLSConfig: &tls.Config{MinVersion: tls.VersionTLS13, Certificates: []tls.Certificate{cert}},
 		ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 15 * time.Second, WriteTimeout: 6 * time.Minute,
 		IdleTimeout: 30 * time.Second, MaxHeaderBytes: 16 << 10,
 	}

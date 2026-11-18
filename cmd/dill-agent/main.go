@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"github.com/umayr/dill/internal/hostagent"
+	"github.com/umayr/dill/internal/serve"
 )
 
 type dockerIdentity struct{ client *http.Client }
@@ -170,6 +171,8 @@ func run() error {
 	httpsKey := flag.String("https-key-file", "", "HTTPS private key PEM file")
 	httpsToken := flag.String("https-token-file", "", "owner-only HTTPS token file")
 	printPairing := flag.Bool("print-https-pairing", false, "print secret HTTPS pairing bundle to stdout and exit without listening")
+	stagingRoot := flag.String("https-staging-root", "", "opt-in private snapshot staging root (no deployment)")
+	stagingCatalog := flag.String("https-staging-catalog", "", "private snapshot catalog root; required with staging")
 	engine := flag.String("engine-socket", "", "absolute Docker Unix socket path")
 	engineID := flag.String("engine-id", "", "enrolled engine UUID")
 	daemon := flag.String("daemon-id", "", "enrolled Docker daemon ID")
@@ -177,6 +180,9 @@ func run() error {
 	key := flag.String("key-file", "", "private file containing hex Ed25519 seed")
 	revealKey := flag.String("reveal-public-key", "", "optional enrolled Brine Ed25519 public key, hex")
 	flag.Parse()
+	if (*stagingRoot == "") != (*stagingCatalog == "") || (*stagingRoot != "" && *httpsListen == "") {
+		return errors.New("snapshot staging requires HTTPS and both private staging and catalog roots")
+	}
 	if *httpsDir != "" {
 		if *httpsListen == "" || *httpsCert != "" || *httpsKey != "" || *httpsToken != "" || *key != "" {
 			return errors.New("--https-dir requires --https-listen and cannot be mixed with individual credential files")
@@ -242,7 +248,16 @@ func run() error {
 		if *printPairing {
 			return exportPairing(os.Stdout, *httpsListen, *httpsCert, *httpsKey, *httpsToken, cfg)
 		}
-		return serveHTTPS(*httpsListen, *httpsCert, *httpsKey, *httpsToken, server)
+		var staging http.Handler
+		if *stagingRoot != "" {
+			stager, err := serve.NewCataloguedStager(*stagingRoot, *stagingCatalog)
+			if err != nil {
+				return errors.New("cannot initialize private HTTPS snapshot staging")
+			}
+			defer stager.Close()
+			staging = serve.API{Stager: stager}
+		}
+		return serveHTTPS(*httpsListen, *httpsCert, *httpsKey, *httpsToken, server, staging)
 	}
 	// Never remove an existing path, including a stale socket or symlink.
 	if _, err = os.Lstat(*listen); !os.IsNotExist(err) {
