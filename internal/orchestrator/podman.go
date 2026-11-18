@@ -153,9 +153,12 @@ func (p *PodmanEngine) StartService(ctx context.Context, name string, svc *confi
 }
 
 func (p *PodmanEngine) StartServiceChecked(ctx context.Context, name string, svc *config.Service, stackName string, req secretfile.Request) (id string, retErr error) {
+	if err := ctx.Err(); err != nil {
+		return "", err
+	}
 	defer func() {
 		if retErr != nil {
-			if ctx.Err() != nil {
+			if ctx.Err() != nil && errors.Is(retErr, ctx.Err()) {
 				retErr = ctx.Err()
 			} else {
 				retErr = config.ErrSecretUnavailable
@@ -164,7 +167,7 @@ func (p *PodmanEngine) StartServiceChecked(ctx context.Context, name string, svc
 	}()
 	mounts, err := checkedSecretMounts(ctx, name, svc, stackName, "podman", p.socket, req)
 	if err != nil {
-		return "", config.ErrSecretUnavailable
+		return "", err
 	}
 	return p.startService(ctx, name, svc, stackName, mounts, req.Target)
 }

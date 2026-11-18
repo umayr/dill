@@ -3,6 +3,7 @@ package orchestrator
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -204,9 +205,12 @@ func (d *DockerEngine) StartService(ctx context.Context, name string, svc *confi
 }
 
 func (d *DockerEngine) StartServiceChecked(ctx context.Context, name string, svc *config.Service, stackName string, req secretfile.Request) (id string, retErr error) {
+	if err := ctx.Err(); err != nil {
+		return "", err
+	}
 	defer func() {
 		if retErr != nil {
-			if ctx.Err() != nil {
+			if ctx.Err() != nil && errors.Is(retErr, ctx.Err()) {
 				retErr = ctx.Err()
 			} else {
 				retErr = config.ErrSecretUnavailable
@@ -215,7 +219,7 @@ func (d *DockerEngine) StartServiceChecked(ctx context.Context, name string, svc
 	}()
 	mounts, err := checkedSecretMounts(ctx, name, svc, stackName, "docker", d.cli.DaemonHost(), req)
 	if err != nil {
-		return "", config.ErrSecretUnavailable
+		return "", err
 	}
 	return d.startService(ctx, name, svc, stackName, mounts, req.Target)
 }
