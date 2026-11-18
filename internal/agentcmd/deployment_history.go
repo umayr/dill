@@ -2,6 +2,8 @@ package agentcmd
 
 import (
 	"bytes"
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"io"
@@ -38,6 +40,7 @@ type deploymentHistoryFile struct {
 	Version int                `json:"version"`
 	Target  string             `json:"target"`
 	Rows    []deploymentRecord `json:"operations"`
+	Journal string             `json:"journalId,omitempty"`
 }
 
 type deploymentHistory struct {
@@ -45,6 +48,7 @@ type deploymentHistory struct {
 	dir      *os.File
 	path     string
 	target   string
+	journal  string // immutable after load; binds a request to one durable history
 	rows     []deploymentRecord
 	active   map[string]bool
 	poisoned bool
@@ -78,7 +82,7 @@ func (h *deploymentHistory) load() error {
 	if err != nil {
 		if _, statErr := os.Lstat(path); os.IsNotExist(statErr) {
 			// No mutating request is accepted before the first successful sync.
-			return h.save(h.rows)
+			return h.initializeJournal()
 		}
 		return err
 	}
@@ -95,20 +99,37 @@ func (h *deploymentHistory) load() error {
 	seen := make(map[string]bool, len(file.Rows))
 	latest := make(map[string]deploymentRecord)
 	for _, r := range file.Rows {
-		if seen[r.RequestID] || !validDeploymentRecord(r) || !allowedDeploymentMode(recordNextMode(latest[r.Stack]), r.Mode) {
+		if seen[r.RequestID] || !validDeploymentRecord(r) || (r.Mode != "fence" && !allowedDeploymentMode(recordNextMode(latest[r.Stack]), r.Mode)) {
 			return errors.New("invalid deployment history record")
 		}
 		seen[r.RequestID] = true
-		if r.State != "failed" || r.Effects != "none" {
+		if !ignoresOwnership(r) {
 			latest[r.Stack] = r
 		}
 	}
 	h.rows = file.Rows
+	if file.Journal == "" {
+		// Upgrade existing history without discarding ownership or outcomes.
+		return h.initializeJournal()
+	}
+	if !validApplyID(file.Journal) {
+		return errOperationConflict
+	}
+	h.journal = file.Journal
 	return h.dir.Sync()
 }
 
+func (h *deploymentHistory) initializeJournal() error {
+	var id [16]byte
+	if _, err := rand.Read(id[:]); err != nil {
+		return err
+	}
+	h.journal = hex.EncodeToString(id[:])
+	return h.save(h.rows)
+}
+
 func (h *deploymentHistory) save(rows []deploymentRecord) error {
-	b, err := json.Marshal(deploymentHistoryFile{Version: 1, Target: h.target, Rows: rows})
+	b, err := json.Marshal(deploymentHistoryFile{Version: 1, Target: h.target, Rows: rows, Journal: h.journal})
 	if err != nil {
 		return err
 	}
@@ -127,7 +148,11 @@ func (h *deploymentHistory) save(rows []deploymentRecord) error {
 	return h.dir.Sync()
 }
 
-// managedLocked ignores only failures that prove no engine effects. A
+func ignoresOwnership(r deploymentRecord) bool {
+	return r.Mode == "fence" || (r.State == "failed" && r.Effects == "none")
+}
+
+// managedLocked ignores fences and failures that prove no engine effects. A
 // removal is a tombstone: retained resources are never silently adopted.
 func (h *deploymentHistory) managedLocked(stack string) (deploymentRecord, string) {
 	if h.poisoned {
@@ -135,7 +160,7 @@ func (h *deploymentHistory) managedLocked(stack string) (deploymentRecord, strin
 	}
 	for i := len(h.rows) - 1; i >= 0; i-- {
 		r := h.rows[i]
-		if r.Stack != stack || (r.State == "failed" && r.Effects == "none") {
+		if r.Stack != stack || ignoresOwnership(r) {
 			continue
 		}
 		return r, recordNextMode(r)
@@ -185,7 +210,37 @@ func (h *deploymentHistory) reserve(row deploymentRecord, expectedPrevious strin
 	return nil
 }
 
+// fence and reserve compete under the same lock and use the same durable
+// journal. Even an apply that has already started preflight cannot pass a fence.
+func (h *deploymentHistory) fence(id, stack string) (deploymentStatus, error) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if h.poisoned || !validApplyID(id) || !validDeployStack(stack) {
+		return deploymentStatus{}, errOperationConflict
+	}
+	if status, exists := h.statusLocked(id); exists {
+		if status.Stack != stack {
+			return deploymentStatus{}, errOperationConflict
+		}
+		return status, nil
+	}
+	if len(h.rows) >= historyLimit {
+		return deploymentStatus{}, errOperationConflict
+	}
+	status := deploymentStatus{RequestID: id, Stack: stack, State: "not-admitted", Effects: "none"}
+	rows := append(append([]deploymentRecord{}, h.rows...), deploymentRecord{deploymentStatus: status, Mode: "fence"})
+	if err := h.save(rows); err != nil {
+		h.poisoned = true
+		return deploymentStatus{}, errOperationConflict
+	}
+	h.rows = rows
+	return status, nil
+}
+
 func validDeploymentRecord(r deploymentRecord) bool {
+	if r.Mode == "fence" {
+		return validApplyID(r.RequestID) && validDeployStack(r.Stack) && r.State == "not-admitted" && r.Effects == "none" && r.OperationID == "" && r.StageID == "" && r.Manifest == "" && len(r.Owned) == 0
+	}
 	if !validApplyID(r.RequestID) || !validDeployStack(r.Stack) || !validApplyID(r.StageID) || !preflight.ValidDigest("sha256:"+r.Manifest) || !validDeploymentStatus(r.deploymentStatus) ||
 		(r.Mode != "create" && r.Mode != "update" && r.Mode != "remove") {
 		return false
@@ -224,6 +279,10 @@ func (h *deploymentHistory) finish(result deploymentStatus, owned []operation.Ma
 func (h *deploymentHistory) status(id string) (deploymentStatus, bool) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
+	return h.statusLocked(id)
+}
+
+func (h *deploymentHistory) statusLocked(id string) (deploymentStatus, bool) {
 	for _, row := range h.rows {
 		if row.RequestID == id {
 			if row.State == "pending" {

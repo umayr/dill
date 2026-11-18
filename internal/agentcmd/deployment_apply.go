@@ -105,12 +105,40 @@ func (h *applyEndpoint) review(w http.ResponseWriter, r *http.Request) {
 	_ = json.NewEncoder(w).Encode(result)
 }
 
+const journalHeader = "X-Dill-Journal-Id"
+
 func (h *applyEndpoint) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	journal := r.Header.Values(journalHeader)
+	fence := r.URL.Path == "/v1/deploy/fence"
+	bound := fence || r.URL.Path == "/v1/deploy/journal-apply"
+	if (bound || len(journal) != 0) && (len(journal) != 1 || !validApplyID(journal[0]) || journal[0] != h.history.journal) {
+		http.Error(w, "deployment journal does not match", http.StatusConflict)
+		return
+	}
+	w.Header().Set(journalHeader, h.history.journal)
+	if fence {
+		fields, ok := deploymentFields(w, r, "requestId", "stack", "confirm")
+		if !ok || fields["confirm"] != "fence-if-unadmitted" || !validApplyID(fields["requestId"]) || !validDeployStack(fields["stack"]) {
+			http.Error(w, "invalid fence confirmation", http.StatusBadRequest)
+			return
+		}
+		if r.Context().Err() != nil {
+			http.Error(w, "request cancelled", http.StatusRequestTimeout)
+			return
+		}
+		status, err := h.history.fence(fields["requestId"], fields["stack"])
+		if err != nil {
+			http.Error(w, "request could not be fenced; inspect the deployment journal", http.StatusConflict)
+			return
+		}
+		writeDeploymentStatus(w, status)
+		return
+	}
 	switch r.URL.Path {
 	case "/v1/deploy/preview", "/v1/deploy/remove-preview":
 		h.review(w, r)
 		return
-	case "/v1/deploy/apply", "/v1/deploy/remove":
+	case "/v1/deploy/apply", "/v1/deploy/journal-apply", "/v1/deploy/remove":
 	default:
 		id := strings.TrimPrefix(r.URL.Path, "/v1/deploy/operations/")
 		if !validApplyID(id) || r.URL.RawQuery != "" || r.ContentLength != 0 || len(r.TransferEncoding) != 0 {
