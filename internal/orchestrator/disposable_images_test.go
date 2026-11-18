@@ -55,6 +55,22 @@ func TestAdapterDisposablePreparedImageMetadataParity(t *testing.T) {
 	}
 }
 
+func TestDisposablePreflightPreservesImageCancellation(t *testing.T) {
+	for _, adapter := range []string{"docker", "podman"} {
+		t.Run(adapter, func(t *testing.T) {
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			engine := guardrailAdapterRaw(t, adapter, contextTransport(func(r *http.Request) (*http.Response, error) {
+				cancel()
+				return nil, context.Canceled
+			}))
+			if err := PreflightDisposableResources(ctx, engine, volumeOnlyConfig(), "stack"); !errors.Is(err, context.Canceled) {
+				t.Fatalf("expected cancellation, got %v", err)
+			}
+		})
+	}
+}
+
 func TestAdapterDisposableCreatePinsPreparedImageID(t *testing.T) {
 	for _, adapter := range []string{"docker", "podman"} {
 		t.Run(adapter, func(t *testing.T) {

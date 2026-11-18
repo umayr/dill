@@ -18,3 +18,21 @@ The decimal parser rejects negative, exponential, nonnumeric, overflowing and po
 - Podman and Docker inspect representations, unlimited/default values, cgroup v1/v2 enforcement and drift must be verified on real supported versions. Wire fixtures alone do not establish parity. #18 owns the shared conformance fixtures. #29/#32 and #40 own complete pre-mutation validation and target-aware preflight.
 - Experimental `DataSize`, bounded CPU/PID values, explicit versioned JSON conversion and typed/legacy equivalence remain future work, dependent on #38 and its prerequisites. Existing design `Resources` uses positive constraints but is not a bounded, serialized runtime contract. Define units, rounding and overflow there before implementation; do not conflate host capacity assertions with enforcement.
 - Cpuset equivalence and target CPU availability are not normalized; current raw comparisons can report drift for equivalent spellings. Hash versioning/migration is tracked by #16. Resource removal without a trusted prior hash and effective-state observation need a defined policy.
+
+## Isolated test observations
+
+On an isolated Lima Ubuntu 26.04 VM with Podman 5.7, rootless container
+removal failed with `rootless netns: kill network process: permission denied`.
+The same resource test failed on unchanged main; the VM's AppArmor audit log
+showed the `pasta` profile denying a signal from `podman` at that time. The
+Lima helper uses a moving Ubuntu image and distribution packages. Use an image
+and package combination with a corrected policy; do not disable AppArmor to
+make the suite pass. GitHub's separate Podman integration passed. This local
+observation is not a claim about every Podman or Ubuntu installation.
+
+The opt-in `DILL_TEST_CGROUP_CPU=1` extension to `TestDillResourceLimits`
+checks the cgroup-v2 quota and an increase in throttling events during a bounded
+CPU workload. Run it only against an isolated disposable engine. It requires a
+private cgroup namespace and readable CPU controller files and fails if that
+evidence is absent. It does not establish memory, PID, reservation, CPU shares,
+cpuset, cgroup-v1, or host-wide enforcement.

@@ -78,6 +78,9 @@ func (n *namedInventory) complete(ctx context.Context, engine orchestrator.Engin
 		id, volumes, err := images.DisposableImage(ctx, svc.Image)
 		id = strings.TrimPrefix(id, "sha256:")
 		if err != nil || !preflight.ValidID(id) || len(volumes) != 0 {
+			if ctx.Err() != nil && errors.Is(err, ctx.Err()) {
+				return ctx.Err()
+			}
 			return bad
 		}
 		n.prepared[service] = "sha256:" + id
