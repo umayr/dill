@@ -263,12 +263,19 @@ func TestCanceledCreateReportsUnknownOutcomeWithoutNameCleanup(t *testing.T) {
 			ctx, cancel := context.WithCancel(context.Background())
 			defer cancel()
 			var deletes []string
+			creates := 0
 			transport := contextTransport(func(r *http.Request) (*http.Response, error) {
+				// The Podman binding can invoke its transport again with a cancelled
+				// context; model a transport that refuses to send those attempts.
+				if err := r.Context().Err(); err != nil {
+					return nil, err
+				}
 				if r.Method == http.MethodDelete {
 					deletes = append(deletes, r.URL.Path)
 					return contextResponse(r, 204, ""), nil
 				}
 				if strings.HasSuffix(r.URL.Path, "/containers/create") {
+					creates++
 					cancel()
 					return nil, context.Canceled
 				}
@@ -292,8 +299,8 @@ func TestCanceledCreateReportsUnknownOutcomeWithoutNameCleanup(t *testing.T) {
 			if !errors.Is(err, context.Canceled) || !strings.Contains(err.Error(), "unknown") || !strings.Contains(err.Error(), "stack_web") {
 				t.Fatalf("create outcome not reported: %v", err)
 			}
-			if len(deletes) != 0 {
-				t.Fatalf("unsafe deletion without created ID: %v", deletes)
+			if len(deletes) != 0 || creates != 1 {
+				t.Fatalf("creates=%d, unsafe deletions=%v", creates, deletes)
 			}
 		})
 	}

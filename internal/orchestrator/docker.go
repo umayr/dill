@@ -105,6 +105,9 @@ func (d *DockerEngine) PullImage(ctx context.Context, img string, w io.Writer) e
 			} `json:"progressDetail"`
 		}
 		if err := dec.Decode(&msg); err != nil {
+			if ctxErr := ctx.Err(); ctxErr != nil {
+				return fmt.Errorf("pull %s: %w", img, ctxErr)
+			}
 			if err == io.EOF {
 				break
 			}
