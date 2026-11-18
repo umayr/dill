@@ -48,7 +48,7 @@ func authenticatedHTTPS(next, staging, preview, apply http.Handler, token string
 			}
 			http.NotFound(w, r)
 		default:
-			if apply != nil && r.URL.RawPath == "" && (r.Method == http.MethodPost && (r.URL.Path == "/v1/deploy/apply" || r.URL.Path == "/v1/deploy/remove" || r.URL.Path == "/v1/deploy/remove-preview") ||
+			if apply != nil && r.URL.RawPath == "" && (r.Method == http.MethodPost && (r.URL.Path == "/v1/deploy/apply" || r.URL.Path == "/v1/deploy/journal-apply" || r.URL.Path == "/v1/deploy/fence" || r.URL.Path == "/v1/deploy/remove" || r.URL.Path == "/v1/deploy/remove-preview") ||
 				r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/v1/deploy/operations/")) {
 				apply.ServeHTTP(w, r)
 				return
