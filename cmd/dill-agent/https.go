@@ -76,26 +76,34 @@ func readPrivateHTTPSFile(path string, limit int64) ([]byte, error) {
 	return raw, nil
 }
 
-func serveHTTPS(address, certFile, keyFile, tokenFile string, handler http.Handler) error {
+func httpsCredentials(address, certFile, keyFile, tokenFile string) (tls.Certificate, string, error) {
 	addr, err := netip.ParseAddrPort(address)
 	if err != nil || addr.Port() == 0 || addr.Addr().Zone() != "" || !(addr.Addr().Unmap().IsPrivate() || addr.Addr().Unmap().IsLoopback()) {
-		return errors.New("HTTPS listener requires an explicit private or loopback IP and port")
+		return tls.Certificate{}, "", errors.New("HTTPS listener requires an explicit private or loopback IP and port")
 	}
 	token, err := readBearerToken(tokenFile)
 	if err != nil {
-		return err
+		return tls.Certificate{}, "", err
 	}
 	privateKey, err := readPrivateHTTPSFile(keyFile, 16<<10)
 	if err != nil {
-		return err
+		return tls.Certificate{}, "", err
 	}
-	certPEM, err := os.ReadFile(certFile)
+	certPEM, err := readPrivateHTTPSFile(certFile, 64<<10)
 	if err != nil {
-		return errors.New("cannot read HTTPS certificate")
+		return tls.Certificate{}, "", err
 	}
 	cert, err := tls.X509KeyPair(certPEM, privateKey)
 	if err != nil {
-		return errors.New("cannot load HTTPS certificate and key")
+		return tls.Certificate{}, "", errors.New("cannot load HTTPS certificate and key")
+	}
+	return cert, token, nil
+}
+
+func serveHTTPS(address, certFile, keyFile, tokenFile string, handler http.Handler) error {
+	cert, token, err := httpsCredentials(address, certFile, keyFile, tokenFile)
+	if err != nil {
+		return err
 	}
 	l, err := net.Listen("tcp", address)
 	if err != nil {

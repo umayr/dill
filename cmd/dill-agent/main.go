@@ -165,9 +165,11 @@ func (d dockerIdentity) InventoryInspect(ctx context.Context, id string) (hostag
 func run() error {
 	listen := flag.String("socket", "", "private agent Unix socket")
 	httpsListen := flag.String("https-listen", "", "read-only HTTPS listener on a private IP:port (alternative to --socket)")
+	httpsDir := flag.String("https-dir", "", "absolute credential directory created by init-https")
 	httpsCert := flag.String("https-cert-file", "", "HTTPS certificate PEM file")
 	httpsKey := flag.String("https-key-file", "", "HTTPS private key PEM file")
 	httpsToken := flag.String("https-token-file", "", "owner-only HTTPS token file")
+	printPairing := flag.Bool("print-https-pairing", false, "print secret HTTPS pairing bundle to stdout and exit without listening")
 	engine := flag.String("engine-socket", "", "absolute Docker Unix socket path")
 	engineID := flag.String("engine-id", "", "enrolled engine UUID")
 	daemon := flag.String("daemon-id", "", "enrolled Docker daemon ID")
@@ -175,6 +177,18 @@ func run() error {
 	key := flag.String("key-file", "", "private file containing hex Ed25519 seed")
 	revealKey := flag.String("reveal-public-key", "", "optional enrolled Brine Ed25519 public key, hex")
 	flag.Parse()
+	if *httpsDir != "" {
+		if *httpsListen == "" || *httpsCert != "" || *httpsKey != "" || *httpsToken != "" || *key != "" {
+			return errors.New("--https-dir requires --https-listen and cannot be mixed with individual credential files")
+		}
+		if err := checkHTTPSDir(*httpsDir); err != nil {
+			return err
+		}
+		*httpsCert = filepath.Join(*httpsDir, "tls-cert.pem")
+		*httpsKey = filepath.Join(*httpsDir, "tls-key.pem")
+		*httpsToken = filepath.Join(*httpsDir, "token")
+		*key = filepath.Join(*httpsDir, "session-seed")
+	}
 	if flag.NArg() != 0 || !filepath.IsAbs(*engine) || filepath.Clean(*engine) != *engine || *key == "" {
 		return errors.New("absolute engine socket path and enrollment flags required")
 	}
@@ -183,7 +197,7 @@ func run() error {
 			return errors.New("HTTPS requires certificate, key and token files, without Unix listener or reveal")
 		}
 	} else {
-		if !filepath.IsAbs(*listen) || *httpsCert != "" || *httpsKey != "" || *httpsToken != "" {
+		if !filepath.IsAbs(*listen) || *httpsCert != "" || *httpsKey != "" || *httpsToken != "" || *printPairing {
 			return errors.New("absolute Unix socket path required; HTTPS files require an HTTPS listener")
 		}
 		parent, err := os.Lstat(filepath.Dir(*listen))
@@ -195,21 +209,12 @@ func run() error {
 			return errors.New("socket directory must be private and owned by agent user")
 		}
 	}
-	f, err := os.Open(*key)
+	seedContent, err := readPrivateHTTPSFile(*key, 256)
 	if err != nil {
-		return err
-	}
-	defer f.Close()
-	info, err := f.Stat()
-	if err != nil {
-		return err
-	}
-	kst, ok := info.Sys().(*syscall.Stat_t)
-	if !ok || !info.Mode().IsRegular() || info.Mode().Perm()&0077 != 0 || int(kst.Uid) != os.Geteuid() || info.Size() > 256 {
-		return errors.New("key file must be private and owned by agent user")
+		return errors.New("session key file must be private and owned by agent user")
 	}
 	var seedText string
-	if _, err = fmt.Fscan(f, &seedText); err != nil {
+	if _, err = fmt.Sscan(string(seedContent), &seedText); err != nil {
 		return err
 	}
 	seed, err := hex.DecodeString(seedText)
@@ -234,6 +239,9 @@ func run() error {
 		return err
 	}
 	if *httpsListen != "" {
+		if *printPairing {
+			return exportPairing(os.Stdout, *httpsListen, *httpsCert, *httpsKey, *httpsToken, cfg)
+		}
 		return serveHTTPS(*httpsListen, *httpsCert, *httpsKey, *httpsToken, server)
 	}
 	// Never remove an existing path, including a stale socket or symlink.
@@ -251,7 +259,13 @@ func run() error {
 	return (&http.Server{Handler: server, ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 15 * time.Second, MaxHeaderBytes: 16 << 10}).Serve(newLimitedListener(l, 32))
 }
 func main() {
-	if err := run(); err != nil {
+	var err error
+	if len(os.Args) > 1 && os.Args[1] == "init-https" {
+		err = initHTTPS(os.Args[2:])
+	} else {
+		err = run()
+	}
+	if err != nil {
 		fmt.Fprintln(os.Stderr, "dill-agent:", strings.ReplaceAll(err.Error(), "\n", " "))
 		os.Exit(1)
 	}
