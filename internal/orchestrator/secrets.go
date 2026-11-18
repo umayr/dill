@@ -58,6 +58,9 @@ func checkedSecretMounts(ctx context.Context, name string, svc *config.Service, 
 	}
 	result, err := secretfile.Preflight(ctx, req)
 	if err != nil {
+		if ctx.Err() != nil {
+			return nil, ctx.Err()
+		}
 		return fail()
 	}
 	mounts, err := result.Mounts(req)

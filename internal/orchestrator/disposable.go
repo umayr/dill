@@ -90,6 +90,9 @@ func checkDisposableImages(ctx context.Context, engine Engine, cfg *config.DillC
 	for _, svc := range cfg.Services {
 		id, volumes, err := inspector.DisposableImage(ctx, svc.Image)
 		if err != nil || id == "" {
+			if ctx.Err() != nil && errors.Is(err, ctx.Err()) {
+				return ctx.Err()
+			}
 			return ErrDisposableUnavailable
 		}
 		// The first pilot does not qualify images with implicit storage, even

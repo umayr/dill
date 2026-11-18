@@ -31,7 +31,9 @@ Endpoint precedence, highest first:
 2. `DILL_ENGINE_SOCKET`, if present in the process environment.
 3. Existing adapter selection, unchanged: Docker SDK environment/default selection
    (`DOCKER_HOST` and its existing TLS/API-version configuration); Podman
-   `PODMAN_SOCKET`, otherwise the platform's existing socket default.
+   `PODMAN_SOCKET`, otherwise the platform's existing socket default. If macOS
+   machine discovery fails, Dill uses `CONTAINER_HOST` when set and pins that
+   same endpoint for SDK and subprocess use; without it, connection fails.
 
 There is no endpoint field in `compose.pkl`, no implicit operator-config search,
 and no named trusted-context file in this slice. Engine-type precedence is still

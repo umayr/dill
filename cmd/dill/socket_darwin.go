@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"os/exec"
 	"strings"
 )
@@ -8,9 +9,9 @@ import (
 // podmanSocket returns the Podman socket URI for macOS.
 // It asks the running Podman machine for its socket path via `podman machine inspect`.
 // If that fails (machine not running, podman not installed), returns an empty string
-// which will cause NewPodmanEngine to fail with a descriptive error.
-func podmanSocket() string {
-	out, err := exec.Command("podman", "machine", "inspect",
+// so the constructor may use an explicit CONTAINER_HOST or report an error.
+func podmanSocket(ctx context.Context) string {
+	out, err := exec.CommandContext(ctx, "podman", "machine", "inspect",
 		"--format", "{{.ConnectionInfo.PodmanSocket.Path}}").Output()
 	if err != nil {
 		return ""
