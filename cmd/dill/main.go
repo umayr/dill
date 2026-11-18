@@ -9,6 +9,7 @@ import (
 	"os"
 	"time"
 
+	"github.com/umayr/dill/internal/agentcmd"
 	"github.com/umayr/dill/internal/config"
 	"github.com/umayr/dill/internal/log"
 )
@@ -38,6 +39,13 @@ type usageError struct{ msg string }
 func (e usageError) Error() string { return e.msg }
 
 func main() {
+	if len(os.Args) > 1 && os.Args[1] == "agent" {
+		os.Exit(agentcmd.Main(os.Args[2:], os.Stdout, os.Stderr, true))
+	}
+	if len(os.Args) > 1 && os.Args[1] == "_managed-operation" {
+		logger.Init(0)
+		os.Exit(exitCodeFor(runManagedOperation(context.Background(), os.Args[2:])))
+	}
 	// Strict named argv must see raw tokens before global verbosity stripping.
 	// In particular, a value that resembles -v or a binding flag is still a value.
 	args := os.Args[1:]
@@ -215,6 +223,7 @@ Commands:
   stacks    List dill-managed stacks (alias: ls)
   doctor    Check local dill, Pkl, and engine readiness
   caps      Show known adapter limitations as JSON
+  agent     Run the experimental host read and snapshot staging agent
   secret-capabilities  Unavailable (strict-secret support is disabled)
   secrets check        Unavailable (strict-secret support is disabled)
   operation-capabilities  Discover the bounded local operation contract

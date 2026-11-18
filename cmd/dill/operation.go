@@ -33,6 +33,7 @@ type operationState struct {
 	named        *namedCapture
 	listed       []string
 	ctx          context.Context
+	managed      *operation.ManagedExpectation
 }
 
 func (s *operationState) release() error {
@@ -146,6 +147,9 @@ func emitOperationResult(w io.Writer, state *operationState, result *operation.R
 		code = 1
 		result.Errors = append(result.Errors, operation.Error{Code: "COORDINATION_RELEASE_FAILED", Message: "Engine outcome was recorded; local coordination cleanup failed."})
 	}
+	if code != 0 || result.Outcome != "succeeded" {
+		result.ManagedResources = nil
+	}
 	if json.NewEncoder(w).Encode(result) != nil {
 		return protocolExit{1}
 	}
@@ -158,6 +162,10 @@ func emitOperationResult(w io.Writer, state *operationState, result *operation.R
 // runOperation is a separate, bounded CLI adapter, not a protocol extension.
 // All negotiation/argument validation precedes evaluation or engine access.
 func runOperation(ctx context.Context, args []string) error {
+	return runOperationWithOwnership(ctx, args, nil)
+}
+
+func runOperationWithOwnership(ctx context.Context, args []string, managed *operation.ManagedExpectation) error {
 	restore := silenceSecretLogs()
 	defer restore()
 	var id [16]byte
@@ -165,7 +173,7 @@ func runOperation(ctx context.Context, args []string) error {
 		return protocolExit{1}
 	}
 	result := operation.Result{Version: operation.Version, OperationID: "op_" + hex.EncodeToString(id[:]), Outcome: "invalid_input", Effects: "none", Resources: []operation.Resource{}, Errors: []operation.Error{}}
-	state := &operationState{recorder: &operation.Recorder{}}
+	state := &operationState{recorder: &operation.Recorder{}, managed: managed}
 	defer state.release()
 	emit := func(code int, errorCode, message string) error {
 		return emitOperationResult(os.Stdout, state, &result, code, errorCode, message)
@@ -350,6 +358,14 @@ func runOperation(ctx context.Context, args []string) error {
 		result.Outcome = "cancelled"
 		return emit(0, "", "")
 	case err == nil:
+		if state.managed != nil {
+			rows, receiptErr := managedReceipt(ctx, state)
+			if receiptErr != nil {
+				result.Outcome = "unknown"
+				return emit(1, "MANAGED_EVIDENCE_UNAVAILABLE", "Exact resource evidence unavailable. Inspect the target before retrying.")
+			}
+			result.ManagedResources = &rows
+		}
 		result.Outcome = "succeeded"
 		return emit(0, "", "")
 	case errors.Is(err, errPlanHasChanges):

@@ -263,6 +263,36 @@ func (c *Catalog) Lookup(ctx context.Context, id string) (Manifest, error) {
 	defer c.mu.Unlock()
 	return c.lookup(ctx, id)
 }
+
+// WithVerifiedEntrypoint runs a trusted local consumer only for a catalogued
+// snapshot matching the reviewed manifest digest (lowercase hex SHA-256).
+// The callback runs under this catalog instance's mutex and must not call the
+// catalog recursively. This serializes cooperating in-process users; it does
+// not freeze a filesystem or protect against external same-UID writers. The
+// operator must keep the published snapshot and its ancestors stable.
+func (c *Catalog) WithVerifiedEntrypoint(ctx context.Context, id, expectedDigest string, use func(entrypoint string) error) error {
+	if use == nil || len(expectedDigest) != sha256.Size*2 {
+		return errors.New("invalid staged project reference")
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	manifest, err := c.lookup(ctx, id)
+	if err != nil {
+		return err
+	}
+	data, err := json.Marshal(manifest)
+	if err != nil {
+		return err
+	}
+	if digest := sha256.Sum256(data); hex.EncodeToString(digest[:]) != expectedDigest {
+		return errors.New("staged project differs from reviewed manifest")
+	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	return use(filepath.Join(c.stagePath, "snapshot-"+id, filepath.FromSlash(manifest.Entrypoint)))
+}
+
 func (c *Catalog) lookup(ctx context.Context, id string) (Manifest, error) {
 	var empty Manifest
 	if ctx == nil || !validID(id) {

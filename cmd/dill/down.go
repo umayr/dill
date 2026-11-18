@@ -106,6 +106,23 @@ func runDown(ctx context.Context, opts commandOptions, args []string) error {
 		if opts.DryRun {
 			return nil
 		}
+		if opts.operation.managed != nil {
+			// Managed removal applies the exact compared container intent only.
+			// Never call RemoveNetwork, even if the network is empty.
+			if capture == nil || opts.operation.managed.Mode != "remove" {
+				return errNamedCaptureUnavailable
+			}
+			var errs []error
+			for _, resource := range intent.Resources {
+				if ctx.Err() != nil {
+					return errors.Join(errors.Join(errs...), ctx.Err())
+				}
+				if err := intent.Remove(ctx, engine, resource); err != nil {
+					errs = append(errs, err)
+				}
+			}
+			return errors.Join(errs...)
+		}
 		return dag.DownIntent(ctx, engine, intent, opts.downProgress(sn))
 	}
 	if opts.DryRun {

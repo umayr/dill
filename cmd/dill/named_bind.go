@@ -57,6 +57,11 @@ func bindNamedOperation(ctx context.Context, opts commandOptions, cfg *config.Di
 	if subtle.ConstantTimeCompare([]byte(digest), []byte(inv.ExpectedPreflight)) != 1 {
 		return errNamedMismatch
 	}
+	if state.managed != nil {
+		if err := checkManagedSelection(*state.managed, selection.Resources); err != nil {
+			return err
+		}
+	}
 	enforcer, ok := any(state.engine).(orchestrator.PreparedImageEnforcer)
 	if !ok {
 		return errNamedCaptureUnavailable
