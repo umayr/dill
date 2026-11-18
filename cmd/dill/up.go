@@ -108,18 +108,11 @@ func runUpConfig(ctx context.Context, opts commandOptions, cfg *config.DillConfi
 		}
 	}
 
-	if opts.AlphaDisposable {
-		if err := validateDisposableTarget(opts, cfg); err != nil {
-			return err
-		}
-		opts.NoPrune = true
-	}
-
 	logger.Debug("loaded config", "engine", cfg.Engine, "services", len(cfg.Services))
 
-	// Checked, secret, disposable and operation-controlled paths retain their
-	// distinct policy and evidence handling below.
-	if !safe && capture == nil && !opts.AlphaDisposable && opts.operation == nil {
+	// Checked, secret and operation-controlled paths retain their distinct
+	// policy and evidence handling below.
+	if !safe && capture == nil && opts.operation == nil {
 		if _, err := selectServices(cfg.Services, names, !noDeps); err != nil {
 			return err
 		}
@@ -168,13 +161,6 @@ func runUpConfig(ctx context.Context, opts commandOptions, cfg *config.DillConfi
 		}
 	}
 
-	var disposableCfg *config.DillConfig
-	if opts.AlphaDisposable {
-		disposableCfg, err = effectiveDisposableConfig(cfg, selected)
-		if err != nil {
-			return err
-		}
-	}
 	if err := orchestrator.ValidateCapabilities(cfg.Engine, selected); err != nil {
 		return fmt.Errorf("capability preflight: %w", err)
 	}
@@ -198,13 +184,6 @@ func runUpConfig(ctx context.Context, opts commandOptions, cfg *config.DillConfi
 		return fmt.Errorf("initialising engine: %w", err)
 	}
 	defer engine.Close()
-
-	if opts.AlphaDisposable {
-		engine, err = orchestrator.WithDisposableGuardrails(ctx, engine, disposableCfg, resolveStackNameWithOptions(cfg, opts))
-		if err != nil {
-			return err
-		}
-	}
 
 	if secret {
 		engine, err = secretEngineWrap(engine, req, evidence)
