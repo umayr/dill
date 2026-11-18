@@ -290,7 +290,9 @@ func serveAgent(args []string, out, diagnostics io.Writer, combined bool) error 
 						return err
 					}
 					defer history.dir.Close()
-					apply = &applyEndpoint{backend, history, cliApply(previewExecutable, *previewPkl, socket, *daemon, *previewState), make(chan struct{}, 1)}
+					apply = &applyEndpoint{previewEndpoint: backend, history: history,
+						down:  cliPreviewFor("down", previewExecutable, *previewPkl, socket, *daemon, *previewState),
+						apply: cliApply(previewExecutable, *previewPkl, socket, *daemon, *previewState), slot: make(chan struct{}, 1)}
 				}
 			}
 		}

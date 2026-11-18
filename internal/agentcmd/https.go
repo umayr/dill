@@ -36,16 +36,19 @@ func authenticatedHTTPS(next, staging, preview, apply http.Handler, token string
 		case "/v1/session", "/v1/inventory", "/v1/inspect", "/v1/logs":
 			next.ServeHTTP(w, r)
 		case "/v1/deploy/preview":
-			if preview != nil && r.Method == http.MethodPost && r.URL.RawPath == "" {
+			if r.Method == http.MethodPost && r.URL.RawPath == "" {
 				if apply != nil {
-					w.Header().Set("X-Dill-Create-Enabled", "1")
+					apply.ServeHTTP(w, r)
+					return
 				}
-				preview.ServeHTTP(w, r)
-				return
+				if preview != nil {
+					preview.ServeHTTP(w, r)
+					return
+				}
 			}
 			http.NotFound(w, r)
 		default:
-			if apply != nil && r.URL.RawPath == "" && (r.Method == http.MethodPost && r.URL.Path == "/v1/deploy/apply" ||
+			if apply != nil && r.URL.RawPath == "" && (r.Method == http.MethodPost && (r.URL.Path == "/v1/deploy/apply" || r.URL.Path == "/v1/deploy/remove" || r.URL.Path == "/v1/deploy/remove-preview") ||
 				r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/v1/deploy/operations/")) {
 				apply.ServeHTTP(w, r)
 				return

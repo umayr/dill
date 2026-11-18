@@ -42,6 +42,10 @@ func main() {
 	if len(os.Args) > 1 && os.Args[1] == "agent" {
 		os.Exit(agentcmd.Main(os.Args[2:], os.Stdout, os.Stderr, true))
 	}
+	if len(os.Args) > 1 && os.Args[1] == "_managed-operation" {
+		logger.Init(0)
+		os.Exit(exitCodeFor(runManagedOperation(context.Background(), os.Args[2:])))
+	}
 	// Strict named argv must see raw tokens before global verbosity stripping.
 	// In particular, a value that resembles -v or a binding flag is still a value.
 	args := os.Args[1:]

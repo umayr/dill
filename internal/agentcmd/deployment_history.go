@@ -9,11 +9,12 @@ import (
 	"path/filepath"
 	"sync"
 
+	"github.com/umayr/dill/internal/operation"
 	"github.com/umayr/dill/internal/preflight"
 	"golang.org/x/sys/unix"
 )
 
-const historyLimit = 1024
+const historyLimit = 128
 
 var errOperationConflict = errors.New("deployment operation conflicts with recorded intent")
 
@@ -25,10 +26,18 @@ type deploymentStatus struct {
 	OperationID string `json:"operationId,omitempty"`
 }
 
+type deploymentRecord struct {
+	deploymentStatus
+	Mode     string                      `json:"mode"`
+	StageID  string                      `json:"stageId"`
+	Manifest string                      `json:"manifest"`
+	Owned    []operation.ManagedResource `json:"owned,omitempty"`
+}
+
 type deploymentHistoryFile struct {
 	Version int                `json:"version"`
 	Target  string             `json:"target"`
-	Rows    []deploymentStatus `json:"operations"`
+	Rows    []deploymentRecord `json:"operations"`
 }
 
 type deploymentHistory struct {
@@ -36,7 +45,7 @@ type deploymentHistory struct {
 	dir      *os.File
 	path     string
 	target   string
-	rows     []deploymentStatus
+	rows     []deploymentRecord
 	active   map[string]bool
 	poisoned bool
 }
@@ -54,7 +63,7 @@ func openDeploymentHistory(path, target string) (*deploymentHistory, error) {
 		dir.Close()
 		return nil, errors.New("deployment history already open or unsupported")
 	}
-	h := &deploymentHistory{dir: dir, path: path, target: target, active: make(map[string]bool), rows: []deploymentStatus{}}
+	h := &deploymentHistory{dir: dir, path: path, target: target, active: make(map[string]bool), rows: []deploymentRecord{}}
 	if err := h.load(); err != nil {
 		dir.Close()
 		return nil, errors.New("deployment history unavailable; inspect private state")
@@ -63,7 +72,7 @@ func openDeploymentHistory(path, target string) (*deploymentHistory, error) {
 }
 
 func (h *deploymentHistory) load() error {
-	const bound = 512 << 10
+	const bound = 16 << 20
 	path := filepath.Join(h.path, "operations.json")
 	raw, err := readPrivateHTTPSFile(path, bound)
 	if err != nil {
@@ -84,17 +93,21 @@ func (h *deploymentHistory) load() error {
 		return errors.New("invalid deployment history encoding")
 	}
 	seen := make(map[string]bool, len(file.Rows))
+	latest := make(map[string]deploymentRecord)
 	for _, r := range file.Rows {
-		if !validApplyID(r.RequestID) || !validDeployStack(r.Stack) || seen[r.RequestID] || !validDeploymentStatus(r) {
+		if seen[r.RequestID] || !validDeploymentRecord(r) || !allowedDeploymentMode(recordNextMode(latest[r.Stack]), r.Mode) {
 			return errors.New("invalid deployment history record")
 		}
 		seen[r.RequestID] = true
+		if r.State != "failed" || r.Effects != "none" {
+			latest[r.Stack] = r
+		}
 	}
 	h.rows = file.Rows
 	return h.dir.Sync()
 }
 
-func (h *deploymentHistory) save(rows []deploymentStatus) error {
+func (h *deploymentHistory) save(rows []deploymentRecord) error {
 	b, err := json.Marshal(deploymentHistoryFile{Version: 1, Target: h.target, Rows: rows})
 	if err != nil {
 		return err
@@ -114,43 +127,76 @@ func (h *deploymentHistory) save(rows []deploymentStatus) error {
 	return h.dir.Sync()
 }
 
-func (h *deploymentHistory) canReserve(id, stack string) bool {
-	h.mu.Lock()
-	defer h.mu.Unlock()
-	return h.canReserveLocked(id, stack)
-}
-
-func (h *deploymentHistory) canReserveLocked(id, stack string) bool {
-	if h.poisoned || len(h.rows) >= historyLimit {
-		return false
+// managedLocked ignores only failures that prove no engine effects. A
+// removal is a tombstone: retained resources are never silently adopted.
+func (h *deploymentHistory) managedLocked(stack string) (deploymentRecord, string) {
+	if h.poisoned {
+		return deploymentRecord{}, ""
 	}
-	for _, r := range h.rows {
-		// V1 creates new stacks only. Do not adopt existing stacks, allow a
-		// second creation, or replay a request with an ambiguous outcome.
-		if r.RequestID == id || (r.Stack == stack && (r.State != "failed" || r.Effects != "none")) {
-			return false
+	for i := len(h.rows) - 1; i >= 0; i-- {
+		r := h.rows[i]
+		if r.Stack != stack || (r.State == "failed" && r.Effects == "none") {
+			continue
 		}
+		return r, recordNextMode(r)
 	}
-	return true
+	return deploymentRecord{}, "create"
 }
 
-func (h *deploymentHistory) reserve(id, stack string) error {
+func recordNextMode(r deploymentRecord) string {
+	if r.RequestID == "" {
+		return "create"
+	}
+	if r.State == "succeeded" && r.Mode != "remove" {
+		return "update"
+	}
+	return ""
+}
+
+func allowedDeploymentMode(next, actual string) bool {
+	return next != "" && (actual == next || (next == "update" && actual == "remove"))
+}
+
+func (h *deploymentHistory) managed(stack string) (deploymentRecord, string) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
-	if !h.canReserveLocked(id, stack) {
+	return h.managedLocked(stack)
+}
+
+func (h *deploymentHistory) reserve(row deploymentRecord, expectedPrevious string) error {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	previous, mode := h.managedLocked(row.Stack)
+	if len(h.rows) >= historyLimit || !allowedDeploymentMode(mode, row.Mode) || previous.RequestID != expectedPrevious || row.State != "pending" || !validDeploymentRecord(row) {
 		return errOperationConflict
 	}
-	rows := append(append([]deploymentStatus{}, h.rows...), deploymentStatus{RequestID: id, Stack: stack, State: "pending", Effects: "unknown"})
+	for _, r := range h.rows {
+		if r.RequestID == row.RequestID {
+			return errOperationConflict
+		}
+	}
+	rows := append(append([]deploymentRecord{}, h.rows...), row)
 	if err := h.save(rows); err != nil {
 		h.poisoned = true
 		return errOperationConflict
 	}
 	h.rows = rows
-	h.active[id] = true
+	h.active[row.RequestID] = true
 	return nil
 }
 
-func (h *deploymentHistory) finish(result deploymentStatus) error {
+func validDeploymentRecord(r deploymentRecord) bool {
+	if !validApplyID(r.RequestID) || !validDeployStack(r.Stack) || !validApplyID(r.StageID) || !preflight.ValidDigest("sha256:"+r.Manifest) || !validDeploymentStatus(r.deploymentStatus) ||
+		(r.Mode != "create" && r.Mode != "update" && r.Mode != "remove") {
+		return false
+	}
+	if r.State == "succeeded" && r.Mode != "remove" {
+		return (operation.ManagedExpectation{Mode: "update", Resources: r.Owned}).Valid()
+	}
+	return len(r.Owned) == 0
+}
+
+func (h *deploymentHistory) finish(result deploymentStatus, owned []operation.ManagedResource) error {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	delete(h.active, result.RequestID)
@@ -159,8 +205,11 @@ func (h *deploymentHistory) finish(result deploymentStatus) error {
 	}
 	for i, row := range h.rows {
 		if row.RequestID == result.RequestID && row.Stack == result.Stack && row.State == "pending" {
-			rows := append([]deploymentStatus{}, h.rows...)
-			rows[i] = result
+			rows := append([]deploymentRecord{}, h.rows...)
+			rows[i].deploymentStatus, rows[i].Owned = result, owned
+			if !validDeploymentRecord(rows[i]) {
+				return errOperationConflict
+			}
 			if err := h.save(rows); err != nil {
 				h.poisoned = true
 				return errOperationConflict
@@ -183,7 +232,7 @@ func (h *deploymentHistory) status(id string) (deploymentStatus, bool) {
 					row.State = "running"
 				}
 			}
-			return row, true
+			return row.deploymentStatus, true
 		}
 	}
 	return deploymentStatus{}, false

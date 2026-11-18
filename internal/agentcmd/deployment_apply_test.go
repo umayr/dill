@@ -34,7 +34,8 @@ func TestDeploymentHistoryRestartNeverReplays(t *testing.T) {
 	if _, err := openDeploymentHistory(path, scope); err == nil {
 		t.Fatal("opened a second writer")
 	}
-	if err := h.reserve(id, "demo"); err != nil {
+	row := deploymentRecord{deploymentStatus: deploymentStatus{RequestID: id, Stack: "demo", State: "pending", Effects: "unknown"}, Mode: "create", StageID: id, Manifest: strings.Repeat("a", 64)}
+	if err := h.reserve(row, ""); err != nil {
 		t.Fatal(err)
 	}
 	if got, ok := h.status(id); !ok || got.State != "running" {
@@ -54,8 +55,75 @@ func TestDeploymentHistoryRestartNeverReplays(t *testing.T) {
 	if got, ok := h.status(id); !ok || got.State != "unknown" || got.Effects != "unknown" {
 		t.Fatal("crash did not remain unknown")
 	}
-	if h.canReserve(id, "different") || h.canReserve(strings.Repeat("2", 32), "demo") {
-		t.Fatal("restart admitted replay")
+	replay := row
+	replay.Stack = "different"
+	if h.reserve(replay, "") == nil {
+		t.Fatal("restart admitted duplicate request")
+	}
+	replay = row
+	replay.RequestID = strings.Repeat("2", 32)
+	if h.reserve(replay, "") == nil {
+		t.Fatal("restart admitted write for blocked stack")
+	}
+}
+
+func TestDeploymentHistoryManagedTransitions(t *testing.T) {
+	p, scope := historyDirectory(t), operation.Digest("bound target")
+	h, err := openDeploymentHistory(p, scope)
+	if err != nil {
+		t.Fatal(err)
+	}
+	owned := []operation.ManagedResource{{Kind: "container", Name: "demo-app", ID: strings.Repeat("a", 64)}, {Kind: "network", Name: "demo", ID: strings.Repeat("b", 64)}}
+	row := func(ch, mode string) deploymentRecord {
+		return deploymentRecord{deploymentStatus: deploymentStatus{RequestID: strings.Repeat(ch, 32), Stack: "demo", State: "pending", Effects: "unknown"}, Mode: mode, StageID: strings.Repeat(ch, 32), Manifest: strings.Repeat(ch, 64)}
+	}
+	create := row("1", "create")
+	if err := h.reserve(create, ""); err != nil {
+		t.Fatal(err)
+	}
+	finished := create.deploymentStatus
+	finished.State, finished.Effects, finished.OperationID = "succeeded", "complete", "op_"+create.RequestID
+	if err := h.finish(finished, owned); err != nil {
+		t.Fatal(err)
+	}
+	if err := h.dir.Close(); err != nil {
+		t.Fatal(err)
+	}
+	h, err = openDeploymentHistory(p, scope)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer h.dir.Close()
+	got, mode := h.managed("demo")
+	if mode != "update" || got.StageID != create.StageID || len(got.Owned) != 2 || got.Owned[1] != owned[1] {
+		t.Fatal("lost persisted ownership")
+	}
+	update := row("2", "update")
+	if h.reserve(update, "") == nil {
+		t.Fatal("unbound predecessor admitted")
+	}
+	if err := h.reserve(update, create.RequestID); err != nil {
+		t.Fatal(err)
+	}
+	finished = update.deploymentStatus
+	finished.State, finished.Effects = "failed", "none"
+	if err := h.finish(finished, nil); err != nil {
+		t.Fatal(err)
+	}
+	remove := row("3", "remove")
+	if err := h.reserve(remove, create.RequestID); err != nil {
+		t.Fatal(err)
+	}
+	finished = remove.deploymentStatus
+	finished.State, finished.Effects, finished.OperationID = "succeeded", "complete", "op_"+remove.RequestID
+	if err := h.finish(finished, nil); err != nil {
+		t.Fatal(err)
+	}
+	if _, mode := h.managed("demo"); mode != "" {
+		t.Fatal("tombstoned project can be adopted")
+	}
+	if h.reserve(row("4", "create"), "") == nil {
+		t.Fatal("tombstoned stack recreated")
 	}
 }
 
@@ -83,13 +151,18 @@ func TestHTTPSApplyRevalidatesAndDoesNotAdopt(t *testing.T) {
 			},
 		},
 		history: history,
-		apply: func(ctx context.Context, path, stack, digest, request, _ string) deploymentStatus {
+		apply: func(ctx context.Context, path, stack, digest, request, _ string, expected operation.ManagedExpectation) (deploymentStatus, []operation.ManagedResource) {
 			calls++
 			got, ok := history.status(id)
 			if !ok || got.State != "running" || ctx.Err() != nil || path != "/stages/sample/main.pkl" || request != id || digest != selection {
 				t.Fatal("launch did not bind durable verified intent")
 			}
-			return deploymentStatus{RequestID: id, Stack: stack, State: "succeeded", Effects: "complete", OperationID: "op_" + id}
+			if expected.Mode != "create" {
+				t.Fatal("wrong expected mode")
+			}
+			return deploymentStatus{RequestID: id, Stack: stack, State: "succeeded", Effects: "complete", OperationID: "op_" + id}, []operation.ManagedResource{
+				{Kind: "container", Name: "demo-app", ID: strings.Repeat("1", 64)}, {Kind: "network", Name: "demo", ID: strings.Repeat("2", 64)},
+			}
 		},
 		slot: make(chan struct{}, 1),
 	}

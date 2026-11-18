@@ -37,17 +37,18 @@ type Error struct {
 }
 
 type Result struct {
-	Version            string     `json:"version"`
-	OperationID        string     `json:"operationId"`
-	Operation          string     `json:"operation"`
-	Target             *Target    `json:"target"`
-	Stack              string     `json:"stack"`
-	Outcome            string     `json:"outcome"`
-	Effects            string     `json:"effects"`
-	ChangesDetected    bool       `json:"changesDetected"`
-	Resources          []Resource `json:"resources"`
-	ResourcesTruncated bool       `json:"resourcesTruncated"`
-	Errors             []Error    `json:"errors"`
+	Version            string             `json:"version"`
+	OperationID        string             `json:"operationId"`
+	Operation          string             `json:"operation"`
+	Target             *Target            `json:"target"`
+	Stack              string             `json:"stack"`
+	Outcome            string             `json:"outcome"`
+	Effects            string             `json:"effects"`
+	ChangesDetected    bool               `json:"changesDetected"`
+	Resources          []Resource         `json:"resources"`
+	ResourcesTruncated bool               `json:"resourcesTruncated"`
+	Errors             []Error            `json:"errors"`
+	ManagedResources   *[]ManagedResource `json:"managedResources,omitempty"` // private managed child only
 }
 
 // Digest avoids echoing caller-controlled identities, paths, image credentials,

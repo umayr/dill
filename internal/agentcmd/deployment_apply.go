@@ -1,6 +1,7 @@
 package agentcmd
 
 import (
+	"bytes"
 	"context"
 	"encoding/hex"
 	"encoding/json"
@@ -22,15 +23,12 @@ func validApplyID(id string) bool {
 	return e == nil && len(v) == 16 && hex.EncodeToString(v) == id
 }
 func validDeployStack(name string) bool { return preflight.ValidName(name) && len(name) <= 128 }
-
 func validDeploymentStatus(r deploymentStatus) bool {
 	if r.OperationID != "" && (!strings.HasPrefix(r.OperationID, "op_") || !validApplyID(strings.TrimPrefix(r.OperationID, "op_"))) {
 		return false
 	}
 	switch r.State {
-	case "pending":
-		return r.Effects == "unknown" && r.OperationID == ""
-	case "unknown":
+	case "pending", "unknown":
 		return r.Effects == "unknown" && r.OperationID == ""
 	case "succeeded":
 		return r.Effects == "complete" && r.OperationID != ""
@@ -43,12 +41,78 @@ func validDeploymentStatus(r deploymentStatus) bool {
 type applyEndpoint struct {
 	previewEndpoint
 	history *deploymentHistory
-	apply   func(context.Context, string, string, string, string, string) deploymentStatus
+	down    func(context.Context, string, string) (preflight.Result, error)
+	apply   func(context.Context, string, string, string, string, string, operation.ManagedExpectation) (deploymentStatus, []operation.ManagedResource)
 	slot    chan struct{}
 }
 
+func ownership(mode string, previous deploymentRecord) operation.ManagedExpectation {
+	resources := previous.Owned
+	if mode == "create" {
+		resources = []operation.ManagedResource{}
+	}
+	return operation.ManagedExpectation{Mode: mode, Resources: resources}
+}
+
+func (h *applyEndpoint) review(w http.ResponseWriter, r *http.Request) {
+	remove := r.URL.Path == "/v1/deploy/remove-preview"
+	var fields map[string]string
+	var ok bool
+	if remove {
+		fields, ok = deploymentFields(w, r, "stack")
+	} else {
+		fields, ok = deploymentFields(w, r, "stack", "stageId", "manifestSha256")
+		ok = ok && validApplyID(fields["stageId"]) && preflight.ValidDigest("sha256:"+fields["manifestSha256"])
+	}
+	stack := fields["stack"]
+	if !ok || !validDeployStack(stack) {
+		http.Error(w, "invalid preview request", 400)
+		return
+	}
+	previous, mode := h.history.managed(stack)
+	stage, manifest, preview := fields["stageId"], fields["manifestSha256"], h.preview
+	if remove {
+		if mode != "update" || h.down == nil {
+			http.Error(w, "managed removal preview unavailable", 409)
+			return
+		}
+		mode, stage, manifest, preview = "remove", previous.StageID, previous.Manifest, h.down
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
+	defer cancel()
+	var result preflight.Result
+	err := h.stages.WithVerifiedEntrypoint(ctx, stage, manifest, func(path string) error {
+		var err error
+		result, err = preview(ctx, path, stack)
+		return err
+	})
+	if err != nil || ctx.Err() != nil {
+		http.Error(w, "deployment preview unavailable", 409)
+		return
+	}
+	if ownership(mode, previous).Matches(result.Resources) {
+		w.Header().Set("X-Dill-Deployment-Mode", mode)
+		if mode == "create" {
+			w.Header().Set("X-Dill-Create-Enabled", "1")
+		}
+		if remove {
+			w.Header().Set("X-Dill-Prior-Request", previous.RequestID)
+		}
+	} else if remove {
+		http.Error(w, "managed ownership no longer matches", 409)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(result)
+}
+
 func (h *applyEndpoint) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	if r.URL.Path != "/v1/deploy/apply" {
+	switch r.URL.Path {
+	case "/v1/deploy/preview", "/v1/deploy/remove-preview":
+		h.review(w, r)
+		return
+	case "/v1/deploy/apply", "/v1/deploy/remove":
+	default:
 		id := strings.TrimPrefix(r.URL.Path, "/v1/deploy/operations/")
 		if !validApplyID(id) || r.URL.RawQuery != "" || r.ContentLength != 0 || len(r.TransferEncoding) != 0 {
 			http.NotFound(w, r)
@@ -62,66 +126,78 @@ func (h *applyEndpoint) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		writeDeploymentStatus(w, status)
 		return
 	}
-	fields, ok := deploymentFields(w, r, "stageId", "manifestSha256", "stack", "selectionDigest", "requestId", "confirm")
-	if !ok || fields["confirm"] != "create" || !validApplyID(fields["stageId"]) || !preflight.ValidDigest("sha256:"+fields["manifestSha256"]) ||
-		!validDeployStack(fields["stack"]) || !preflight.ValidDigest(fields["selectionDigest"]) || !validApplyID(fields["requestId"]) {
-		http.Error(w, "invalid deployment confirmation", http.StatusBadRequest)
+	remove := r.URL.Path == "/v1/deploy/remove"
+	var fields map[string]string
+	var ok bool
+	if remove {
+		fields, ok = deploymentFields(w, r, "stack", "selectionDigest", "requestId", "confirm", "priorRequestId")
+		ok = ok && fields["confirm"] == "remove" && validApplyID(fields["priorRequestId"])
+	} else {
+		fields, ok = deploymentFields(w, r, "stageId", "manifestSha256", "stack", "selectionDigest", "requestId", "confirm")
+		ok = ok && (fields["confirm"] == "create" || fields["confirm"] == "update") && validApplyID(fields["stageId"]) && preflight.ValidDigest("sha256:"+fields["manifestSha256"])
+	}
+	if !ok || !validDeployStack(fields["stack"]) || !preflight.ValidDigest(fields["selectionDigest"]) || !validApplyID(fields["requestId"]) {
+		http.Error(w, "invalid deployment confirmation", 400)
 		return
 	}
 	select {
 	case h.slot <- struct{}{}:
 		defer func() { <-h.slot }()
 	default:
-		http.Error(w, "deployment busy", http.StatusConflict)
+		http.Error(w, "deployment busy", 409)
 		return
 	}
 	id, stack := fields["requestId"], fields["stack"]
-	if !h.history.canReserve(id, stack) {
-		http.Error(w, "creation already recorded or blocked; check operation status", http.StatusConflict)
+	if _, exists := h.history.status(id); exists {
+		http.Error(w, "request already recorded; check operation status", http.StatusConflict)
 		return
 	}
-	// Accept no operation after disconnect until durable admission. Once
-	// admitted, the bounded child and its record are independent of delivery.
+	previous, mode := h.history.managed(stack)
+	stage, manifest, preview := fields["stageId"], fields["manifestSha256"], h.preview
+	if remove && mode == "update" && previous.RequestID == fields["priorRequestId"] {
+		mode, stage, manifest, preview = "remove", previous.StageID, previous.Manifest, h.down
+	}
+	if preview == nil || mode != fields["confirm"] {
+		http.Error(w, "deployment not eligible; check operation status", 409)
+		return
+	}
+	expected := ownership(mode, previous)
+	row := deploymentRecord{deploymentStatus: deploymentStatus{RequestID: id, Stack: stack, State: "pending", Effects: "unknown"}, Mode: mode, StageID: stage, Manifest: manifest}
+	// Revalidate before durable admission and detach only after admission.
 	verifyCtx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
 	defer cancel()
 	var reserved bool
 	var qualifiedTarget string
-	err := h.stages.WithVerifiedEntrypoint(verifyCtx, fields["stageId"], fields["manifestSha256"], func(path string) error {
-		preview, err := h.preview(verifyCtx, path, stack)
-		if err != nil || preview.SelectionDigest == nil || *preview.SelectionDigest != fields["selectionDigest"] || preview.Target == nil || len(preview.Resources) == 0 || verifyCtx.Err() != nil {
+	err := h.stages.WithVerifiedEntrypoint(verifyCtx, stage, manifest, func(path string) error {
+		plan, err := preview(verifyCtx, path, stack)
+		if err != nil || plan.SelectionDigest == nil || *plan.SelectionDigest != fields["selectionDigest"] || plan.Target == nil || !expected.Matches(plan.Resources) || verifyCtx.Err() != nil {
 			return errOperationConflict
 		}
-		for _, resource := range preview.Resources {
-			if resource.Presence != "absent" {
-				return errOperationConflict // Not an adoption path.
-			}
-		}
-		qualifiedTarget = preview.Target.QualifiedIdentityDigest
+		qualifiedTarget = plan.Target.QualifiedIdentityDigest
 		return nil
 	})
 	if err == nil {
-		// Preflight evaluates trusted Pkl. Revalidate the staged bytes again
-		// before reserving and launching the checked operation.
-		err = h.stages.WithVerifiedEntrypoint(verifyCtx, fields["stageId"], fields["manifestSha256"], func(path string) error {
+		err = h.stages.WithVerifiedEntrypoint(verifyCtx, stage, manifest, func(path string) error {
 			if err := verifyCtx.Err(); err != nil {
 				return err
 			}
-			if err := h.history.reserve(id, stack); err != nil {
+			if err := h.history.reserve(row, previous.RequestID); err != nil {
 				return err
 			}
 			reserved = true
 			execCtx, stop := context.WithTimeout(context.WithoutCancel(r.Context()), 5*time.Minute)
 			defer stop()
-			return h.history.finish(h.apply(execCtx, path, stack, fields["selectionDigest"], id, qualifiedTarget))
+			status, owned := h.apply(execCtx, path, stack, fields["selectionDigest"], id, qualifiedTarget, expected)
+			return h.history.finish(status, owned)
 		})
 	}
 	if err != nil && !reserved {
-		http.Error(w, "creation not admitted; review the target and check operation status", http.StatusConflict)
+		http.Error(w, "deployment not admitted; review the target and check operation status", 409)
 		return
 	}
 	status, ok := h.history.status(id)
 	if !ok {
-		http.Error(w, "deployment outcome unavailable", http.StatusServiceUnavailable)
+		http.Error(w, "deployment outcome unavailable", 503)
 		return
 	}
 	writeDeploymentStatus(w, status)
@@ -132,44 +208,58 @@ func writeDeploymentStatus(w http.ResponseWriter, status deploymentStatus) {
 	_ = json.NewEncoder(w).Encode(status)
 }
 
-func cliApply(exe, pkl, socket, daemon, state string) func(context.Context, string, string, string, string, string) deploymentStatus {
-	return func(ctx context.Context, path, stack, selection, id, qualifiedTarget string) deploymentStatus {
+func cliApply(exe, pkl, socket, daemon, state string) func(context.Context, string, string, string, string, string, operation.ManagedExpectation) (deploymentStatus, []operation.ManagedResource) {
+	return func(ctx context.Context, path, stack, selection, id, qualifiedTarget string, expected operation.ManagedExpectation) (deploymentStatus, []operation.ManagedResource) {
 		unknown := deploymentStatus{RequestID: id, Stack: stack, State: "unknown", Effects: "unknown"}
-		cmd := exec.CommandContext(ctx, exe, "operation", "up", "--contract", operation.Version, "-f", path, "-p", stack,
+		action := "up"
+		if expected.Mode == "remove" {
+			action = "down"
+		}
+		args := []string{"_managed-operation", action, "--contract", operation.Version, "-f", path, "-p", stack,
 			"--engine", "docker", "--engine-socket", socket, "--coordination-layout", coordination.NativeDockerLayout,
 			"--coordination-daemon-id", daemon, "--coordination-state-dir", state, "--coordination-source", "brine",
-			"--no-prune", "--pull", "never", "--timeout", "4m30s", "--preflight-contract", preflight.Version, "--expect-preflight", selection)
+			"--timeout", "4m30s", "--preflight-contract", preflight.Version, "--expect-preflight", selection}
+		if action == "up" {
+			args = append(args, "--no-prune", "--pull", "never")
+		}
+		input, err := json.Marshal(expected)
+		if err != nil || !expected.Valid() {
+			return unknown, nil
+		}
+		cmd := exec.CommandContext(ctx, exe, args...)
 		cmd.Dir, cmd.Env, cmd.WaitDelay = filepath.Dir(path), []string{"DILL_PKL_PATH=" + pkl}, 2*time.Second
 		var out limitedPreviewOutput
-		cmd.Stdout, cmd.Stderr = &out, io.Discard
-		err := cmd.Run()
+		cmd.Stdin, cmd.Stdout, cmd.Stderr = bytes.NewReader(input), &out, io.Discard
+		err = cmd.Run()
 		if ctx.Err() != nil {
-			return unknown
+			return unknown, nil
 		}
 		var exit *exec.ExitError
 		if err != nil && (!errors.As(err, &exit) || exit.ExitCode() != 1) {
-			return unknown
+			return unknown, nil
 		}
 		var result operation.Result
 		dec := json.NewDecoder(&out.buf)
 		dec.DisallowUnknownFields()
-		if dec.Decode(&result) != nil || dec.Decode(new(any)) != io.EOF || result.Version != operation.Version || result.Operation != "up" || result.Stack != stack || result.Target == nil ||
+		if dec.Decode(&result) != nil || dec.Decode(new(any)) != io.EOF || result.Version != operation.Version || result.Operation != action || result.Stack != stack || result.Target == nil ||
 			result.Target.Engine != "docker" || result.Target.EndpointDigest != operation.Digest(socket) || result.Target.QualifiedIdentityDigest != qualifiedTarget ||
 			result.Resources == nil || result.Errors == nil || result.ResourcesTruncated || !strings.HasPrefix(result.OperationID, "op_") || !validApplyID(strings.TrimPrefix(result.OperationID, "op_")) {
-			return unknown
+			return unknown, nil
 		}
 		done := deploymentStatus{RequestID: id, Stack: stack, OperationID: result.OperationID, Effects: result.Effects}
 		switch {
-		case err == nil && result.Outcome == "succeeded" && result.Effects == "complete" && len(result.Errors) == 0 && len(result.Resources) > 0:
+		case err == nil && result.Outcome == "succeeded" && result.Effects == "complete" && len(result.Errors) == 0 && len(result.Resources) > 0 && result.ManagedResources != nil:
+			owned := *result.ManagedResources
+			if (action == "down" && len(owned) != 0) || (action == "up" && !(operation.ManagedExpectation{Mode: "update", Resources: owned}).Valid()) {
+				return unknown, nil
+			}
 			done.State = "succeeded"
-		case err != nil && (result.Outcome == "failed" || result.Outcome == "cancelled") && (result.Effects == "none" || result.Effects == "partial") && len(result.Errors) > 0:
+			return done, owned
+		case err != nil && (result.Outcome == "failed" || result.Outcome == "cancelled") && (result.Effects == "none" || result.Effects == "partial") && len(result.Errors) > 0 && result.ManagedResources == nil:
 			done.State = "failed"
+			return done, nil
 		default:
-			return unknown
+			return unknown, nil
 		}
-		if !validDeploymentStatus(done) {
-			return unknown
-		}
-		return done
 	}
 }

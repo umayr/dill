@@ -88,11 +88,19 @@ func (b *limitedPreviewOutput) Write(p []byte) (int, error) {
 // project-selected engine/socket/process/flags are accepted. The executable is
 // the running combined Dill binary, not a command resolved via PATH.
 func cliPreview(executable, pkl, socket, daemon, state string) func(context.Context, string, string) (preflight.Result, error) {
+	return cliPreviewFor("up", executable, pkl, socket, daemon, state)
+}
+
+func cliPreviewFor(action, executable, pkl, socket, daemon, state string) func(context.Context, string, string) (preflight.Result, error) {
 	return func(ctx context.Context, path, stack string) (preflight.Result, error) {
-		cmd := exec.CommandContext(ctx, executable, "preflight", "up", "--contract", preflight.Version,
+		args := []string{"preflight", action, "--contract", preflight.Version,
 			"-f", path, "-p", stack, "--engine", "docker", "--engine-socket", socket,
 			"--coordination-layout", coordination.NativeDockerLayout, "--coordination-daemon-id", daemon,
-			"--coordination-state-dir", state, "--coordination-source", "brine", "--no-prune", "--pull", "never", "--timeout", "25s")
+			"--coordination-state-dir", state, "--coordination-source", "brine", "--timeout", "25s"}
+		if action == "up" {
+			args = append(args, "--no-prune", "--pull", "never")
+		}
+		cmd := exec.CommandContext(ctx, executable, args...)
 		cmd.Dir = filepath.Dir(path)
 		cmd.Env = []string{"DILL_PKL_PATH=" + pkl}
 		cmd.WaitDelay = 2 * time.Second
@@ -105,7 +113,7 @@ func cliPreview(executable, pkl, socket, daemon, state string) func(context.Cont
 		}
 		dec := json.NewDecoder(&out.buf)
 		dec.DisallowUnknownFields()
-		if dec.Decode(&result) != nil || dec.Decode(new(any)) != io.EOF || result.Validate(0) != nil || result.Operation != "up" || result.Stack != stack || result.SelectionDigest == nil || result.Target == nil || result.Target.EndpointDigest != operation.Digest(socket) {
+		if dec.Decode(&result) != nil || dec.Decode(new(any)) != io.EOF || result.Validate(0) != nil || result.Operation != action || result.Stack != stack || result.SelectionDigest == nil || result.Target == nil || result.Target.EndpointDigest != operation.Digest(socket) {
 			return preflight.Result{}, errors.New("invalid Dill preview result")
 		}
 		return result, nil
