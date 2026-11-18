@@ -3,10 +3,13 @@
 package integration
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -68,6 +71,41 @@ config {
 	cleanupStack(t, bin, cfg, stack)
 	runDill(t, true, bin, "-f", cfg, "--timeout", testTimeout(), "up")
 	assertInspectedLimits(128 << 20)
+	if os.Getenv("DILL_TEST_CGROUP_CPU") == "1" {
+		// Opt in only on an isolated disposable cgroup-v2 engine. Verify the
+		// container's own cgroup, applied quota and an actual throttling event;
+		// inspect alone cannot demonstrate enforcement.
+		id := runEngine(t, env.engine, "inspect", "--format", "{{.Id}}", stack+"_app")
+		if id == "" || runEngine(t, env.engine, "inspect", "--format", "{{.HostConfig.CgroupnsMode}}", id) != "private" {
+			t.Fatal("CPU enforcement requires a captured container with a private cgroup namespace")
+		}
+		probeCtx, cancelProbe := context.WithTimeout(context.Background(), 20*time.Second)
+		defer cancelProbe()
+		probe := exec.CommandContext(probeCtx, engineBinaryName(env.engine), "exec", id, "sh", "-c", `set -eu
+[ "$(cat /proc/self/cgroup)" = '0::/' ] || exit 70
+grep -q ' /sys/fs/cgroup .* - cgroup2 ' /proc/self/mountinfo || exit 71
+[ "$(cat /sys/fs/cgroup/cpu.max)" = '12345 100000' ] || exit 72
+cat /sys/fs/cgroup/cpu.max
+awk '$1 == "nr_throttled" {print $2}' /sys/fs/cgroup/cpu.stat
+rc=0; timeout 4 sh -c 'while :; do :; done' || rc=$?
+[ "$rc" = 143 ] || [ "$rc" = 124 ]
+awk '$1 == "nr_throttled" {print $2}' /sys/fs/cgroup/cpu.stat`)
+		probe.Env = os.Environ()
+		output, err := probe.CombinedOutput()
+		if err != nil {
+			t.Fatalf("cgroup CPU probe failed: %v: %s", err, output)
+		}
+		out := string(output)
+		lines := strings.Fields(out)
+		if len(lines) < 4 || lines[0] != "12345" || lines[1] != "100000" {
+			t.Fatalf("unexpected cgroup v2 CPU evidence: %q", out)
+		}
+		before, e1 := strconv.ParseUint(lines[2], 10, 64)
+		after, e2 := strconv.ParseUint(lines[len(lines)-1], 10, 64)
+		if e1 != nil || e2 != nil || after <= before {
+			t.Fatalf("CPU quota did not record throttling: %q", out)
+		}
+	}
 	assertNoopPlan(t, bin, cfg, 1)
 
 	// Preserve the ownership/hash labels while replacing the container with

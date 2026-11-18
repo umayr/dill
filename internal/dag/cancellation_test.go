@@ -137,6 +137,44 @@ func TestRunCancellationAfterFinalReadinessCleansUp(t *testing.T) {
 	}
 }
 
+type cancelPullEngine struct {
+	*cancellationEngine
+	cancel context.CancelFunc
+	pulls  int
+	starts []string
+}
+
+func (e *cancelPullEngine) ImageExists(context.Context, string) (bool, error) { return false, nil }
+func (e *cancelPullEngine) PullImage(ctx context.Context, _ string, _ io.Writer) error {
+	e.pulls++
+	e.cancel()
+	return ctx.Err()
+}
+func (e *cancelPullEngine) StartService(ctx context.Context, name string, svc *config.Service, stack string) (string, error) {
+	e.starts = append(e.starts, name)
+	return e.cancellationEngine.StartService(ctx, name, svc, stack)
+}
+
+func TestCancelDuringPullRollsBackPriorService(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	e := &cancelPullEngine{cancellationEngine: &cancellationEngine{goodReady: make(chan struct{})}, cancel: cancel}
+	g, err := Build(map[string]*config.Service{
+		"good":    {Image: "good", PullPolicy: "never"},
+		"blocked": {Image: "blocked", PullPolicy: "missing", DependsOn: []string{"good"}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	err = g.Run(ctx, e, "stack", time.Second, nil, nil, func(string) PullSink { return discardSink{io.Discard} })
+	if !errors.Is(err, context.Canceled) || e.pulls != 1 || len(e.starts) != 1 || e.starts[0] != "good" {
+		t.Fatalf("err=%v pulls=%d starts=%v", err, e.pulls, e.starts)
+	}
+	if len(e.cleanupErrors) != 0 || len(e.removed) != 1 || e.removed[0] != "good-id" {
+		t.Fatalf("cleanup errors=%v removed=%v", e.cleanupErrors, e.removed)
+	}
+}
+
 func TestRunCancellationAndIndependentRollback(t *testing.T) {
 	for _, mode := range []string{"timeout", "parent cancellation", "sibling failure"} {
 		t.Run(mode, func(t *testing.T) {
