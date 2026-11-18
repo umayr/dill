@@ -1,17 +1,19 @@
-# Qualified local mutation coordination (bounded Alpha)
+# Qualified local mutation coordination
 
-Issue #78 is **not complete**. This slice protects only the explicit opt-in
-operation mode described here, subject to independent review and disposable-host
-qualification. Ordinary Dill commands, unqualified `dill operation`, the existing
-metadata-only protocol, external engine clients and non-native deployments are
-NOT protected. Do not mix those mutation paths into a qualified CLI/Brine layout
-or claim global serialization. There is no distributed locking guarantee.
+This design describes Dill's explicit opt-in operation mode, subject to
+independent review and disposable-host qualification. The retired disposable
+profile is not required for this mode. Brine's local coordinated operation path
+is disabled; this document does not establish Brine support. Ordinary Dill
+commands, unqualified `dill operation`, the metadata-only protocol, external
+engine clients and non-native deployments are not protected. Do not mix those
+mutation paths with coordinated operations or claim global serialization. There
+is no distributed locking guarantee.
 
 ## Supported invocation and trust boundary
 
-The initial layout is native CLI and native Brine co-located on one disposable
-**Linux Docker host**, under one dedicated operator account, sharing one pre-existing
-absolute mode-0700 operator-owned state directory. The filesystem's cross-process
+The documented layout is native Dill CLI on one disposable **Linux Docker
+host**. Coordinated CLI processes run under one dedicated operator account
+and share a pre-existing absolute mode-0700 operator-owned state directory. The filesystem's cross-process
 flock, file/directory sync and atomic local link behavior must be independently
 qualified. `--coordination-layout native-local-docker-v1` explicitly attests those
 facts; a pathname, owner/mode check or layout string alone does not prove them.
@@ -42,11 +44,10 @@ dill operation up --contract dill.operation/1 \
   --coordination-source cli --pull never --timeout 30s
 ```
 
-Brine uses the exact same invocation/state/target/stack and selects
-`--coordination-source brine`. The source is a closed caller assertion, not an
-identity/authentication system. All coordination selector flags are required;
-partial or explicitly empty flags fail rather than falling back to an unlocked
-operation. State initialization/journal writes are local metadata effects,
+The protocol also reserves `--coordination-source brine` as a caller assertion,
+not as authentication or proof of application support. All coordination
+selector flags are required; partial or explicitly empty flags fail rather
+than falling back to an unlocked operation. State initialization/journal writes are local metadata effects,
 separate from the receipt's engine `effects` axis.
 
 Qualified mutation operations: `up`, `down`, `stop`, `start`, `restart`, `rm`.
@@ -89,8 +90,9 @@ Additional conservative restrictions:
   BEFORE any handler write; shared strict guardrails revalidate before create.
   The full inventory budget (at most 256 resource identities) is checked before
   opening a target or creating state metadata.
-  Explicit `--alpha-disposable` may compose with this automatic qualified guard.
-  This does not replace destructive intent enforcement or actual host qualification.
+  Dill rejects explicit use of `--alpha-disposable`, including `false`; the
+  coordinated operation's automatic guard remains in place. This does not replace
+  destructive intent enforcement or actual host qualification.
 - The whole declared inventory is locked even for a subset operation. Live
   ownership/mount/network census runs while holding those same locks, before
   every handler. Actual attached-network metadata must be known and contain
@@ -225,13 +227,13 @@ all callers and forensic repair, not acknowledging guesses about engine effects.
 
 Synthetic tests cover actual Docker SDK use over the qualified Unix transport,
 all six supported handlers, aliases/socket replacement, redirects/proxy/reconnect
-refusal, parallel reads, CLI/Brine process contention, deadline/cancellation,
+refusal, parallel reads, contention between simulated caller types, deadline/cancellation,
 process death, interrupted installs/writes, persistent terminal write failures,
 shared-resource crash blockers, key loss, inode/link checks and offline recovery
 routing (including stack label `protocol`). Mocks are NOT live engine evidence.
 
-Still required: independent final-head review, combined #77/#79 verification,
-opt-in disposable Docker engine and actual native Brine qualification, host/state
-filesystem evidence, and bypass-path exclusion/enforcement for the chosen
-operator workflow. Containerized Brine, Podman-qualified coordination, global
-image deletion, distributed callers and global legacy CLI safety are NOT claimed.
+These tests do not qualify a deployment. Independently verify the exact Dill
+build, disposable Docker target, state filesystem, and exclusion of other
+mutation paths for the chosen operator workflow. Native Brine application
+qualification was not completed. This mode does not cover Podman, global image
+deletion, distributed callers, or ordinary CLI commands.
