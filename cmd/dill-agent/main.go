@@ -1,4 +1,4 @@
-// dill-agent serves only the read-only agent protocol on a private Unix socket.
+// dill-agent serves the experimental host read protocol.
 package main
 
 import (
@@ -164,6 +164,10 @@ func (d dockerIdentity) InventoryInspect(ctx context.Context, id string) (hostag
 }
 func run() error {
 	listen := flag.String("socket", "", "private agent Unix socket")
+	httpsListen := flag.String("https-listen", "", "read-only HTTPS listener on a private IP:port (alternative to --socket)")
+	httpsCert := flag.String("https-cert-file", "", "HTTPS certificate PEM file")
+	httpsKey := flag.String("https-key-file", "", "HTTPS private key PEM file")
+	httpsToken := flag.String("https-token-file", "", "owner-only HTTPS token file")
 	engine := flag.String("engine-socket", "", "absolute Docker Unix socket path")
 	engineID := flag.String("engine-id", "", "enrolled engine UUID")
 	daemon := flag.String("daemon-id", "", "enrolled Docker daemon ID")
@@ -171,16 +175,25 @@ func run() error {
 	key := flag.String("key-file", "", "private file containing hex Ed25519 seed")
 	revealKey := flag.String("reveal-public-key", "", "optional enrolled Brine Ed25519 public key, hex")
 	flag.Parse()
-	if flag.NArg() != 0 || !filepath.IsAbs(*listen) || !filepath.IsAbs(*engine) || filepath.Clean(*engine) != *engine || *key == "" {
-		return errors.New("absolute socket paths and enrollment flags required")
+	if flag.NArg() != 0 || !filepath.IsAbs(*engine) || filepath.Clean(*engine) != *engine || *key == "" {
+		return errors.New("absolute engine socket path and enrollment flags required")
 	}
-	parent, err := os.Lstat(filepath.Dir(*listen))
-	if err != nil {
-		return err
-	}
-	st, ok := parent.Sys().(*syscall.Stat_t)
-	if !ok || !parent.IsDir() || parent.Mode().Perm()&0077 != 0 || int(st.Uid) != os.Geteuid() {
-		return errors.New("socket directory must be private and owned by agent user")
+	if *httpsListen != "" {
+		if *listen != "" || *httpsCert == "" || *httpsKey == "" || *httpsToken == "" || *revealKey != "" {
+			return errors.New("HTTPS requires certificate, key and token files, without Unix listener or reveal")
+		}
+	} else {
+		if !filepath.IsAbs(*listen) || *httpsCert != "" || *httpsKey != "" || *httpsToken != "" {
+			return errors.New("absolute Unix socket path required; HTTPS files require an HTTPS listener")
+		}
+		parent, err := os.Lstat(filepath.Dir(*listen))
+		if err != nil {
+			return err
+		}
+		st, ok := parent.Sys().(*syscall.Stat_t)
+		if !ok || !parent.IsDir() || parent.Mode().Perm()&0077 != 0 || int(st.Uid) != os.Geteuid() {
+			return errors.New("socket directory must be private and owned by agent user")
+		}
 	}
 	f, err := os.Open(*key)
 	if err != nil {
@@ -219,6 +232,9 @@ func run() error {
 	server, err := hostagent.New(cfg)
 	if err != nil {
 		return err
+	}
+	if *httpsListen != "" {
+		return serveHTTPS(*httpsListen, *httpsCert, *httpsKey, *httpsToken, server)
 	}
 	// Never remove an existing path, including a stale socket or symlink.
 	if _, err = os.Lstat(*listen); !os.IsNotExist(err) {
