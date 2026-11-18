@@ -1,4 +1,4 @@
-package main
+package agentcmd
 
 import (
 	"bytes"
@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"io"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -18,7 +19,7 @@ import (
 
 func TestHTTPSProvisionAndExport(t *testing.T) {
 	dir := filepath.Join(t.TempDir(), "credentials")
-	if err := initHTTPS([]string{"--dir", dir}); err != nil {
+	if err := initHTTPS([]string{"--dir", dir}, io.Discard); err != nil {
 		t.Fatal(err)
 	}
 	if err := checkHTTPSDir(dir); err != nil {
@@ -54,7 +55,7 @@ func TestHTTPSProvisionAndExport(t *testing.T) {
 		}
 	}
 	export(&before)
-	if err := initHTTPS([]string{"--dir", dir}); err == nil {
+	if err := initHTTPS([]string{"--dir", dir}, io.Discard); err == nil {
 		t.Fatal("overwrote existing pairing")
 	}
 	export(&after)

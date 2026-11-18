@@ -1,4 +1,4 @@
-package main
+package agentcmd
 
 import (
 	"crypto/sha256"
@@ -19,7 +19,7 @@ func TestAuthenticatedHTTPSReadRoutes(t *testing.T) {
 	const token = "synthetic-token"
 	h := authenticatedHTTPS(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusNoContent)
-	}), nil, token)
+	}), nil, nil, token)
 	for _, tt := range []struct {
 		path   string
 		auth   []string
@@ -33,6 +33,7 @@ func TestAuthenticatedHTTPSReadRoutes(t *testing.T) {
 		{"/v1/inventory", []string{"Bearer " + token}, true, 204},
 		{"/v1/reveal", []string{"Bearer " + token}, true, 404},
 		{"/v1/deploy", []string{"Bearer " + token}, true, 404},
+		{"/v1/deploy/preview", []string{"Bearer " + token}, true, 404},
 		{"/v1/snapshots", []string{"Bearer " + token}, true, 404},
 	} {
 		r := httptest.NewRequest(http.MethodPost, tt.path, nil)
@@ -65,7 +66,7 @@ func TestAuthenticatedHTTPSCataloguedStaging(t *testing.T) {
 	defer stager.Close()
 	h := authenticatedHTTPS(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
 		t.Error("staging unexpectedly called the engine-read handler")
-	}), serve.API{Stager: stager}, "synthetic-token")
+	}), serve.API{Stager: stager}, nil, "synthetic-token")
 	request := func(method, path, token, body string) *httptest.ResponseRecorder {
 		r := httptest.NewRequest(method, "https://test"+path, strings.NewReader(body))
 		r.Header.Set("Content-Type", "application/json")

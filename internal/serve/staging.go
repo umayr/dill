@@ -69,6 +69,15 @@ func NewCataloguedStager(root, catalogRoot string) (*Stager, error) {
 	return s, nil
 }
 
+// WithVerifiedEntrypoint passes a digest-checked, catalogued path only to a
+// trusted local consumer. It never returns the filesystem path over HTTP.
+func (s *Stager) WithVerifiedEntrypoint(ctx context.Context, id, digest string, use func(string) error) error {
+	if s == nil || s.catalog == nil {
+		return errors.New("snapshot catalog unavailable")
+	}
+	return s.catalog.WithVerifiedEntrypoint(ctx, id, digest, use)
+}
+
 // Close releases catalog descriptors; it never deletes stages or records.
 func (s *Stager) Close() error {
 	if s == nil || s.catalog == nil {

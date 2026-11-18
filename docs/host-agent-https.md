@@ -1,6 +1,6 @@
 # Direct HTTPS host agent (experimental read-only)
 
-Run one `dill-agent` per Docker target. This mode is an alternative to the private Unix agent listener and does not use SSH. The default HTTPS routes serve only session, inventory, inspect and logs; the agent cannot deploy, remove or reveal environment values. Docker still uses an explicitly enrolled local Unix socket. Treat log and inspection output as potentially sensitive.
+Run one agent per Docker target. The standard `dill` binary includes `dill agent`, which accepts the same arguments as the standalone `dill-agent` shown below. This mode is an alternative to the private Unix agent listener and does not use SSH. The default HTTPS routes serve only session, inventory, inspect and logs; the agent cannot deploy, remove or reveal environment values. Docker still uses an explicitly enrolled local Unix socket. Treat log and inspection output as potentially sensitive.
 
 1. As the service account, run `dill-agent init-https --dir /absolute/new/credentials` under a trusted parent. This creates an owner-only directory with a TLS certificate/key, session signing seed, and unique bearer credential. Existing directories are never changed. If creation is interrupted, inspect the partial directory rather than reusing it blindly.
 2. Start the agent with `--https-dir /absolute/new/credentials --https-listen <private-ip>:<port>` and the normal `--engine-socket`, `--engine-id`, `--daemon-id` and `--generation` enrollment flags. Supply a literal private address; apply host firewall rules for your network and keep the credential directory and all ancestors protected. Do not run a public listener or forward the Docker socket.
@@ -8,7 +8,13 @@ Run one `dill-agent` per Docker target. This mode is an alternative to the priva
 
 ## Optional catalogued staging
 
-Both `--https-staging-root` and `--https-staging-catalog` must point to distinct existing private roots to add `POST /v1/snapshots` and `GET /v1/snapshots/{id}` to the authenticated listener. Without those flags the routes are unavailable. Staging can store sensitive files, so enable it only when the Brine instance and roots are trusted. It uses the bounded [snapshot staging protocol](snapshot-staging.md) but does not expose `dill-serve` health/status. An ambiguous upload is not safe to retry automatically. No evaluation, engine writes, deployment, or cleanup API follows staging, and there is no automatic removal or quota.
+Both `--https-staging-root` and `--https-staging-catalog` must point to distinct existing private roots to add `POST /v1/snapshots` and `GET /v1/snapshots/{id}` to the authenticated listener. Without those flags the routes are unavailable. Staging can store sensitive files, so enable it only when the Brine instance and roots are trusted. It uses the bounded [snapshot staging protocol](snapshot-staging.md) but does not expose `dill-serve` health/status. An ambiguous upload is not safe to retry automatically. Staging alone never evaluates the project, writes to Docker, or deploys it. There is no automatic removal or quota.
+
+## Optional deployment preview (native Linux Docker)
+
+With the combined `dill agent` entrypoint, supply `--https-preview-state` (the same private coordination directory used by the qualified CLI) and `--https-preview-pkl` (an absolute operator-managed Pkl executable), in addition to the two staging flags. Only enable this for **trusted projects and a trusted Brine instance**: preview evaluates Pkl with the agent account's privileges. This is not a sandbox. Do not expose deployment preview from a network where the bearer credential is not adequately protected.
+
+Authenticated `POST /v1/deploy/preview` accepts exactly `stageId`, `manifestSha256` (the catalog's lowercase hex digest) and `stack`. The agent revalidates the published tree and runs its own binary's `dill preflight up` with the configured engine socket and daemon ID, shared coordination state, no-prune and already-present images (`pull never`). Client-supplied command, paths and overrides are not accepted. The successful response is the existing `dill.preflight/1` result. This preview may write coordination metadata but does not mutate Docker. It has no apply, removal or status API yet and is not an approval.
 
 ## Credential lifecycle
 

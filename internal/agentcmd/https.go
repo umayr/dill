@@ -1,4 +1,4 @@
-package main
+package agentcmd
 
 import (
 	"crypto/sha256"
@@ -18,7 +18,7 @@ import (
 
 // The HTTP allowlist never delegates reveal or engine mutations. A separate
 // host opt-in may expose the existing bounded, catalogued snapshot receiver.
-func authenticatedHTTPS(next, staging http.Handler, token string) http.Handler {
+func authenticatedHTTPS(next, staging, preview http.Handler, token string) http.Handler {
 	want := sha256.Sum256([]byte("Bearer " + token))
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Cache-Control", "no-store")
@@ -35,6 +35,12 @@ func authenticatedHTTPS(next, staging http.Handler, token string) http.Handler {
 		switch r.URL.Path {
 		case "/v1/session", "/v1/inventory", "/v1/inspect", "/v1/logs":
 			next.ServeHTTP(w, r)
+		case "/v1/deploy/preview":
+			if preview != nil && r.Method == http.MethodPost && r.URL.RawPath == "" {
+				preview.ServeHTTP(w, r)
+				return
+			}
+			http.NotFound(w, r)
 		default:
 			if staging != nil && r.URL.RawPath == "" && (r.Method == http.MethodPost && r.URL.Path == "/v1/snapshots" ||
 				r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/v1/snapshots/")) {
@@ -105,7 +111,7 @@ func httpsCredentials(address, certFile, keyFile, tokenFile string) (tls.Certifi
 	return cert, token, nil
 }
 
-func serveHTTPS(address, certFile, keyFile, tokenFile string, handler, staging http.Handler) error {
+func serveHTTPS(address, certFile, keyFile, tokenFile string, handler, staging, preview http.Handler) error {
 	cert, token, err := httpsCredentials(address, certFile, keyFile, tokenFile)
 	if err != nil {
 		return err
@@ -116,7 +122,7 @@ func serveHTTPS(address, certFile, keyFile, tokenFile string, handler, staging h
 	}
 	defer l.Close()
 	server := &http.Server{
-		Handler: authenticatedHTTPS(handler, staging, token), TLSConfig: &tls.Config{MinVersion: tls.VersionTLS13, Certificates: []tls.Certificate{cert}},
+		Handler: authenticatedHTTPS(handler, staging, preview, token), TLSConfig: &tls.Config{MinVersion: tls.VersionTLS13, Certificates: []tls.Certificate{cert}},
 		ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 15 * time.Second, WriteTimeout: 6 * time.Minute,
 		IdleTimeout: 30 * time.Second, MaxHeaderBytes: 16 << 10,
 	}

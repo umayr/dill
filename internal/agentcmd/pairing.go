@@ -1,4 +1,4 @@
-package main
+package agentcmd
 
 import (
 	"crypto/ed25519"
@@ -25,8 +25,9 @@ import (
 // initHTTPS creates a new, owner-only credential directory. On an
 // interrupted or failed write it leaves the directory for inspection and will
 // not overwrite it on retry. The service cannot start with missing material.
-func initHTTPS(args []string) error {
+func initHTTPS(args []string, diagnostics io.Writer) error {
 	fs := flag.NewFlagSet("init-https", flag.ContinueOnError)
+	fs.SetOutput(diagnostics)
 	dir := fs.String("dir", "", "new absolute credential directory under a trusted parent")
 	if err := fs.Parse(args); err != nil {
 		return err
