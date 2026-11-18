@@ -3,13 +3,13 @@ package agentcmd
 import (
 	"bytes"
 	"context"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"io"
 	"net/http"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"time"
 
 	"github.com/umayr/dill/internal/coordination"
@@ -26,40 +26,43 @@ type previewEndpoint struct {
 	preview func(context.Context, string, string) (preflight.Result, error)
 }
 
-func (h previewEndpoint) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+func deploymentFields(w http.ResponseWriter, r *http.Request, names ...string) (map[string]string, bool) {
 	if len(r.Header.Values("Content-Type")) != 1 || r.Header.Get("Content-Type") != "application/json" || r.URL.RawQuery != "" {
-		http.Error(w, "invalid preview request", http.StatusBadRequest)
-		return
+		return nil, false
 	}
 	dec := json.NewDecoder(http.MaxBytesReader(w, r.Body, 4096))
 	first, err := dec.Token()
 	if err != nil || first != json.Delim('{') {
-		http.Error(w, "invalid preview request", http.StatusBadRequest)
-		return
+		return nil, false
 	}
-	fields := make(map[string]string, 3)
+	fields := make(map[string]string, len(names))
 	for dec.More() {
 		key, err := dec.Token()
 		name, ok := key.(string)
 		_, duplicate := fields[name]
 		var value *string
-		if err != nil || !ok || duplicate || (name != "stageId" && name != "manifestSha256" && name != "stack") || dec.Decode(&value) != nil || value == nil {
-			http.Error(w, "invalid preview request", http.StatusBadRequest)
-			return
+		if err != nil || !ok || duplicate || !slices.Contains(names, name) || dec.Decode(&value) != nil || value == nil {
+			return nil, false
 		}
 		fields[name] = *value
 	}
 	last, err := dec.Token()
-	id, idErr := hex.DecodeString(fields["stageId"])
-	if err != nil || last != json.Delim('}') || dec.Decode(new(any)) != io.EOF || len(fields) != 3 || !preflight.ValidDigest("sha256:"+fields["manifestSha256"]) ||
-		idErr != nil || len(id) != 16 || hex.EncodeToString(id) != fields["stageId"] || !preflight.ValidName(fields["stack"]) {
+	if err != nil || last != json.Delim('}') || len(fields) != len(names) || dec.Decode(new(any)) != io.EOF {
+		return nil, false
+	}
+	return fields, true
+}
+
+func (h previewEndpoint) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	fields, ok := deploymentFields(w, r, "stageId", "manifestSha256", "stack")
+	if !ok || !validApplyID(fields["stageId"]) || !preflight.ValidDigest("sha256:"+fields["manifestSha256"]) || !validDeployStack(fields["stack"]) {
 		http.Error(w, "invalid preview request", http.StatusBadRequest)
 		return
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
 	defer cancel()
 	var result preflight.Result
-	err = h.stages.WithVerifiedEntrypoint(ctx, fields["stageId"], fields["manifestSha256"], func(path string) error {
+	err := h.stages.WithVerifiedEntrypoint(ctx, fields["stageId"], fields["manifestSha256"], func(path string) error {
 		var err error
 		result, err = h.preview(ctx, path, fields["stack"])
 		return err

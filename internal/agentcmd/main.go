@@ -20,6 +20,7 @@ import (
 	"time"
 
 	"github.com/umayr/dill/internal/hostagent"
+	"github.com/umayr/dill/internal/operation"
 	"github.com/umayr/dill/internal/serve"
 )
 
@@ -178,6 +179,7 @@ func serveAgent(args []string, out, diagnostics io.Writer, combined bool) error 
 	stagingCatalog := fs.String("https-staging-catalog", "", "private snapshot catalog root; required with staging")
 	previewState := fs.String("https-preview-state", "", "opt-in trusted-project deployment preview with this shared native Docker coordination state")
 	previewPkl := fs.String("https-preview-pkl", "", "absolute operator-managed Pkl executable for deployment preview")
+	applyState := fs.String("https-apply-state", "", "opt-in checked stack creation; separate private operation history directory")
 	engine := fs.String("engine-socket", "", "absolute Docker Unix socket path")
 	engineID := fs.String("engine-id", "", "enrolled engine UUID")
 	daemon := fs.String("daemon-id", "", "enrolled Docker daemon ID")
@@ -200,6 +202,10 @@ func serveAgent(args []string, out, diagnostics io.Writer, combined bool) error 
 			return errors.New("Dill executable path unavailable")
 		}
 		previewExecutable = executable
+	}
+	if *applyState != "" && (previewExecutable == "" || !filepath.IsAbs(*applyState) || filepath.Clean(*applyState) != *applyState ||
+		*applyState == *previewState || *applyState == *stagingRoot || *applyState == *stagingCatalog || *applyState == *httpsDir) {
+		return errors.New("deployment apply requires preview and a separate absolute private operation history directory")
 	}
 	if *httpsDir != "" {
 		if *httpsListen == "" || *httpsCert != "" || *httpsKey != "" || *httpsToken != "" || *key != "" {
@@ -266,7 +272,7 @@ func serveAgent(args []string, out, diagnostics io.Writer, combined bool) error 
 		if *printPairing {
 			return exportPairing(out, *httpsListen, *httpsCert, *httpsKey, *httpsToken, cfg)
 		}
-		var staging, preview http.Handler
+		var staging, preview, apply http.Handler
 		if *stagingRoot != "" {
 			stager, err := serve.NewCataloguedStager(*stagingRoot, *stagingCatalog)
 			if err != nil {
@@ -275,10 +281,20 @@ func serveAgent(args []string, out, diagnostics io.Writer, combined bool) error 
 			defer stager.Close()
 			staging = serve.API{Stager: stager}
 			if previewExecutable != "" {
-				preview = previewEndpoint{stager, cliPreview(previewExecutable, *previewPkl, "unix://"+*engine, *daemon, *previewState)}
+				socket := "unix://" + *engine
+				backend := previewEndpoint{stager, cliPreview(previewExecutable, *previewPkl, socket, *daemon, *previewState)}
+				preview = backend
+				if *applyState != "" {
+					history, err := openDeploymentHistory(*applyState, operation.Digest("dill-agent-deployment/1\x00"+socket+"\x00"+*daemon+"\x00"+*engineID))
+					if err != nil {
+						return err
+					}
+					defer history.dir.Close()
+					apply = &applyEndpoint{backend, history, cliApply(previewExecutable, *previewPkl, socket, *daemon, *previewState), make(chan struct{}, 1)}
+				}
 			}
 		}
-		return serveHTTPS(*httpsListen, *httpsCert, *httpsKey, *httpsToken, server, staging, preview)
+		return serveHTTPS(*httpsListen, *httpsCert, *httpsKey, *httpsToken, server, staging, preview, apply)
 	}
 	// Never remove an existing path, including a stale socket or symlink.
 	if _, err = os.Lstat(*listen); !os.IsNotExist(err) {

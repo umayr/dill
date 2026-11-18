@@ -38,7 +38,7 @@ func TestHTTPSDeploymentPreviewAdmission(t *testing.T) {
 			return preflight.Result{Stack: stack}, nil
 		},
 	}
-	h := authenticatedHTTPS(nil, nil, preview, "test-token")
+	h := authenticatedHTTPS(nil, nil, preview, nil, "test-token")
 	for _, tt := range []struct {
 		method, path, token, body string
 		status                    int
