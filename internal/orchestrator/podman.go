@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"os"
 	"sort"
 	"strconv"
 	"strings"
@@ -55,6 +56,12 @@ func (p *PodmanEngine) EnforcePreparedImages(images map[string]PreparedImage) er
 }
 
 func NewPodmanEngine(ctx context.Context, socket string) (*PodmanEngine, error) {
+	if socket == "" {
+		socket = os.Getenv("CONTAINER_HOST")
+		if socket == "" {
+			return nil, fmt.Errorf("podman endpoint unavailable: set PODMAN_SOCKET or CONTAINER_HOST")
+		}
+	}
 	conn, err := bindings.NewConnection(ctx, socket)
 	if err != nil {
 		return nil, err
@@ -125,6 +132,9 @@ func (p *PodmanEngine) LocalImageID(ctx context.Context, img string) (string, er
 func (p *PodmanEngine) DisposableImage(ctx context.Context, image string) (string, []string, error) {
 	data, err := images.GetImage(p.operationContext(ctx), image, nil)
 	if err != nil || data == nil || data.ImageData == nil || data.ID == "" || data.Config == nil {
+		if err != nil && ctx.Err() != nil {
+			return "", nil, ctx.Err()
+		}
 		return "", nil, ErrDisposableUnavailable
 	}
 	volumes := make([]string, 0, len(data.Config.Volumes))
@@ -145,7 +155,11 @@ func (p *PodmanEngine) StartService(ctx context.Context, name string, svc *confi
 func (p *PodmanEngine) StartServiceChecked(ctx context.Context, name string, svc *config.Service, stackName string, req secretfile.Request) (id string, retErr error) {
 	defer func() {
 		if retErr != nil {
-			retErr = config.ErrSecretUnavailable
+			if ctx.Err() != nil {
+				retErr = ctx.Err()
+			} else {
+				retErr = config.ErrSecretUnavailable
+			}
 		}
 	}()
 	mounts, err := checkedSecretMounts(ctx, name, svc, stackName, "podman", p.socket, req)

@@ -183,6 +183,9 @@ func (d *DockerEngine) LocalImageID(ctx context.Context, img string) (string, er
 func (d *DockerEngine) DisposableImage(ctx context.Context, image string) (string, []string, error) {
 	data, _, err := d.cli.ImageInspectWithRaw(ctx, image)
 	if err != nil || data.ID == "" || data.Config == nil {
+		if err != nil && ctx.Err() != nil {
+			return "", nil, ctx.Err()
+		}
 		return "", nil, ErrDisposableUnavailable
 	}
 	volumes := make([]string, 0, len(data.Config.Volumes))
@@ -203,7 +206,11 @@ func (d *DockerEngine) StartService(ctx context.Context, name string, svc *confi
 func (d *DockerEngine) StartServiceChecked(ctx context.Context, name string, svc *config.Service, stackName string, req secretfile.Request) (id string, retErr error) {
 	defer func() {
 		if retErr != nil {
-			retErr = config.ErrSecretUnavailable
+			if ctx.Err() != nil {
+				retErr = ctx.Err()
+			} else {
+				retErr = config.ErrSecretUnavailable
+			}
 		}
 	}()
 	mounts, err := checkedSecretMounts(ctx, name, svc, stackName, "docker", d.cli.DaemonHost(), req)

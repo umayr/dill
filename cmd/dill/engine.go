@@ -73,7 +73,10 @@ func defaultEngineFactory(ctx context.Context, engineName, endpoint string) (orc
 func newPodmanEngine(ctx context.Context) (orchestrator.Engine, error) {
 	socket := os.Getenv("PODMAN_SOCKET")
 	if socket == "" {
-		socket = podmanSocket()
+		socket = podmanSocket(ctx)
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
 	}
 	logger.Debug("connecting to podman", "socket", socket)
 	return orchestrator.NewPodmanEngine(ctx, socket)
