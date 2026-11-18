@@ -1,6 +1,6 @@
 # Proposed manual Linux host-agent provisioning
 
-**Status: proposal, not a qualified installation procedure.** Only the local synthetic checks listed below have been run. No Linux installation, systemd unit, SSH configuration, forwarding, Docker daemon, or Podman was tested. This does not install or start anything and contains no lifecycle operations. `dill-agent` is experimental, Docker-only, and does not authenticate socket clients; inspection and logs may contain secrets. See `host-agent.md` for protocol limitations. Do not substitute `dill-serve`.
+**Status: proposal, not a generally qualified installation procedure.** The exact commands below have not been qualified as a complete procedure. An adapted installation was exercised on two disposable Colima Linux ARM64 VMs with Docker 29.5.2 and Ubuntu OpenSSH 9.6p1: systemd start/restart, real SSH streamlocal forwarding, and a Brine read-only browser flow. That experiment required the separate [Brine pinned-host-key negotiation correction](https://github.com/umayr/brine/pull/90) and explicit approval of broader local TCP forwarding, as explained below. It does not qualify production security, arbitrary hosts, rootless Docker, Podman, or the literal command examples. This document does not install or start anything and contains no stack lifecycle operations. `dill-agent` is experimental, Docker-only, and does not authenticate socket clients; inspection and logs may contain secrets. See `host-agent.md` for protocol limitations. Do not substitute `dill-serve`.
 
 ## Security decision before provisioning
 
@@ -102,7 +102,11 @@ Do not configure `--reveal-public-key` unless separately authorized and enrolled
 
 ## SSH streamlocal forwarding: conditional example, not qualified
 
-Only if the engine-level trust described above is accepted, a dedicated SSH login using the **same UID** could forward the agent socket. Have an SSH administrator evaluate a dedicated `Match User dillagent` block along these lines, ensuring global configuration does not override it and authentication/authorized keys are root-controlled or otherwise protected from that UID:
+Only if the engine-level trust described above **and local TCP destination access from the target** are accepted, a dedicated SSH login using the **same UID** could forward the agent socket. This is not an agent-socket-only credential.
+
+**Observed compatibility limitation:** on Ubuntu OpenSSH 9.6p1 (Ubuntu-3ubuntu13.16), `AllowTcpForwarding no` together with `AllowStreamLocalForwarding local` denied the Unix-socket channel despite correct same-UID socket access. The OpenSSH permission tables used by streamlocal connection checks are also disabled by the TCP forwarding setting. The disposable experiment worked with `AllowTcpForwarding local`; that enables local TCP forwarding too, not just Unix sockets. Do not silently loosen an existing SSH policy, and do not treat `PermitOpen` as a demonstrated per-Unix-socket restriction. If this broader access is unacceptable, stop and design a separately tested boundary.
+
+Have an SSH administrator evaluate a dedicated `Match User dillagent` block along these lines only after that decision, ensuring global configuration does not override it and authentication/authorized keys are root-controlled or otherwise protected from that UID:
 
 ```text
 Match User dillagent
@@ -112,18 +116,18 @@ Match User dillagent
     PermitTTY no
     X11Forwarding no
     AllowAgentForwarding no
-    AllowTcpForwarding no
+    AllowTcpForwarding local
     AllowStreamLocalForwarding local
     PermitTunnel no
     PermitUserRC no
     ForceCommand /bin/false
 ```
 
-`local` means client-initiated local forwarding to a server-side Unix socket; `ForceCommand` prevents a useful shell but does not prevent forwarding with `ssh -N`. Restrict who can authenticate and protect the authorized key and host keys; verify the actual effective `sshd` configuration and account policy (including whether login is permitted) on the target. These settings do **not** confine destinations or make engine access read-only. SSH server version, configuration, forwarding behavior and account setup are untested. Confirm the server host key through an independent trusted channel and configure strict host-key checking before connecting. For a client-owned private directory (0700) and a non-existing local socket path, the intended shape is:
+`local` means client-initiated local forwarding to a server-side Unix socket; `ForceCommand` prevents a useful shell but does not prevent forwarding with `ssh -N`. Restrict who can authenticate and protect the authorized key and host keys; verify the actual effective `sshd` configuration and account policy (including whether login is permitted) on the target. These settings do **not** confine destinations or make engine access read-only. The adapted disposable profile exercised this behavior on the version identified above; other SSH versions, the exact example account setup and deployment-specific policy remain unqualified. Confirm the server host key through an independent trusted channel and configure strict host-key checking before connecting. For a client-owned private directory (0700) and a non-existing local socket path, the intended shape is:
 
 ```sh
 ssh -N -o ExitOnForwardFailure=yes -o StrictHostKeyChecking=yes \
   -L /absolute/private/client/agent.sock:/run/dill-agent/agent.sock dillagent@HOST
 ```
 
-Use a dedicated protected SSH key, an independently verified known-hosts entry, and client filesystem/ACL controls. The command opens an ongoing tunnel; it has **not** been run. `ExitOnForwardFailure=yes` checks establishment of the local listener, not successful connection to the remote socket, agent availability, or a valid session. No real SSH test, remote connection, session proof verification or end-to-end enrollment has been performed. A tunnel alone does not verify the agent's signed identity: a client must independently verify the session proof against the enrolled public key and binding.
+Use a dedicated protected SSH key, an independently verified known-hosts entry, and client filesystem/ACL controls. The command opens an ongoing tunnel; it has **not** been run. `ExitOnForwardFailure=yes` checks establishment of the local listener, not successful connection to the remote socket, agent availability, or a valid session. The adapted disposable experiment exercised real SSH, session-proof verification and end-to-end enrollment with the separate Brine fix; this literal tunnel command and a general receiving-host procedure remain unqualified. A tunnel alone does not verify the agent's signed identity: a client must independently verify the session proof against the enrolled public key and binding.
