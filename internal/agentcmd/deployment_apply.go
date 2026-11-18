@@ -13,7 +13,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/umayr/dill/internal/coordination"
 	"github.com/umayr/dill/internal/operation"
 	"github.com/umayr/dill/internal/preflight"
 )
@@ -215,18 +214,11 @@ func cliApply(exe, pkl, socket, daemon, state string) func(context.Context, stri
 		if expected.Mode == "remove" {
 			action = "down"
 		}
-		args := []string{"_managed-operation", action, "--contract", operation.Version, "-f", path, "-p", stack,
-			"--engine", "docker", "--engine-socket", socket, "--coordination-layout", coordination.NativeDockerLayout,
-			"--coordination-daemon-id", daemon, "--coordination-state-dir", state, "--coordination-source", "brine",
-			"--timeout", "4m30s", "--preflight-contract", preflight.Version, "--expect-preflight", selection}
-		if action == "up" {
-			args = append(args, "--no-prune", "--pull", "never")
-		}
 		input, err := json.Marshal(expected)
-		if err != nil || !expected.Valid() {
+		if err != nil || !expected.Valid() || !preflight.ValidDigest(selection) {
 			return unknown, nil
 		}
-		cmd := exec.CommandContext(ctx, exe, args...)
+		cmd := exec.CommandContext(ctx, exe, deploymentCLIArgs(action, path, stack, socket, daemon, state, selection)...)
 		cmd.Dir, cmd.Env, cmd.WaitDelay = filepath.Dir(path), []string{"DILL_PKL_PATH=" + pkl}, 2*time.Second
 		var out limitedPreviewOutput
 		cmd.Stdin, cmd.Stdout, cmd.Stderr = bytes.NewReader(input), &out, io.Discard

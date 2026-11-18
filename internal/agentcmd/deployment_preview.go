@@ -84,6 +84,25 @@ func (b *limitedPreviewOutput) Write(p []byte) (int, error) {
 	return b.buf.Write(p)
 }
 
+// deploymentCLIArgs keeps the flags that enter the selection digest identical
+// between preview and apply. Preview's outer context still bounds its runtime.
+func deploymentCLIArgs(action, path, stack, socket, daemon, state, selection string) []string {
+	command, contract := "preflight", preflight.Version
+	if selection != "" {
+		command, contract = "_managed-operation", operation.Version
+	}
+	args := []string{command, action, "--contract", contract, "-f", path, "-p", stack, "--engine", "docker", "--engine-socket", socket,
+		"--coordination-layout", coordination.NativeDockerLayout, "--coordination-daemon-id", daemon,
+		"--coordination-state-dir", state, "--coordination-source", "brine", "--timeout", "4m30s"}
+	if action == "up" {
+		args = append(args, "--no-prune", "--pull", "never")
+	}
+	if selection != "" {
+		args = append(args, "--preflight-contract", preflight.Version, "--expect-preflight", selection)
+	}
+	return args
+}
+
 // cliPreview runs exactly Dill's existing target-checked named preview. No
 // project-selected engine/socket/process/flags are accepted. The executable is
 // the running combined Dill binary, not a command resolved via PATH.
@@ -93,14 +112,7 @@ func cliPreview(executable, pkl, socket, daemon, state string) func(context.Cont
 
 func cliPreviewFor(action, executable, pkl, socket, daemon, state string) func(context.Context, string, string) (preflight.Result, error) {
 	return func(ctx context.Context, path, stack string) (preflight.Result, error) {
-		args := []string{"preflight", action, "--contract", preflight.Version,
-			"-f", path, "-p", stack, "--engine", "docker", "--engine-socket", socket,
-			"--coordination-layout", coordination.NativeDockerLayout, "--coordination-daemon-id", daemon,
-			"--coordination-state-dir", state, "--coordination-source", "brine", "--timeout", "25s"}
-		if action == "up" {
-			args = append(args, "--no-prune", "--pull", "never")
-		}
-		cmd := exec.CommandContext(ctx, executable, args...)
+		cmd := exec.CommandContext(ctx, executable, deploymentCLIArgs(action, path, stack, socket, daemon, state, "")...)
 		cmd.Dir = filepath.Dir(path)
 		cmd.Env = []string{"DILL_PKL_PATH=" + pkl}
 		cmd.WaitDelay = 2 * time.Second
