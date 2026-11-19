@@ -93,6 +93,12 @@ func renderStatusText(dst io.Writer, out core.StatusResult) error {
 	return w.Flush()
 }
 
+type doctorCheck struct {
+	Name   string `json:"name"`
+	OK     bool   `json:"ok"`
+	Detail string `json:"detail,omitempty"`
+}
+
 func runDoctor(ctx context.Context, opts commandOptions, args []string) error {
 	fs := flag.NewFlagSet("doctor", flag.ContinueOnError)
 	addConfigFlags(fs, &opts)
@@ -107,14 +113,9 @@ func runDoctor(ctx context.Context, opts commandOptions, args []string) error {
 		return err
 	}
 
-	type check struct {
-		Name   string `json:"name"`
-		OK     bool   `json:"ok"`
-		Detail string `json:"detail,omitempty"`
-	}
-	checks := []check{}
+	checks := []doctorCheck{}
 	add := func(name string, err error, detail string) {
-		c := check{Name: name, OK: err == nil, Detail: detail}
+		c := doctorCheck{Name: name, OK: err == nil, Detail: detail}
 		if err != nil {
 			c.Detail = err.Error()
 		}
@@ -166,17 +167,28 @@ func runDoctor(ctx context.Context, opts commandOptions, args []string) error {
 		}
 		return nil
 	}
+	return renderDoctorText(os.Stdout, checks)
+}
+
+func renderDoctorText(dst io.Writer, checks []doctorCheck) error {
+	ok := true
 	for _, c := range checks {
 		status := "ok"
 		if !c.OK {
 			status = "fail"
 			ok = false
 		}
-		fmt.Printf("%-10s %s", status, c.Name)
-		if c.Detail != "" {
-			fmt.Printf(" (%s)", c.Detail)
+		if _, err := fmt.Fprintf(dst, "%-10s %s", status, c.Name); err != nil {
+			return err
 		}
-		fmt.Println()
+		if c.Detail != "" {
+			if _, err := fmt.Fprintf(dst, " (%s)", c.Detail); err != nil {
+				return err
+			}
+		}
+		if _, err := fmt.Fprintln(dst); err != nil {
+			return err
+		}
 	}
 	if !ok {
 		return errDoctorFoundIssues
