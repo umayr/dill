@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"os"
 	"reflect"
 	"strings"
 	"testing"
@@ -13,6 +14,32 @@ import (
 	"github.com/umayr/dill/internal/orchestrator"
 	"github.com/umayr/dill/internal/plan"
 )
+
+func TestPlanDiffTextReturnsWriteFailure(t *testing.T) {
+	closed, err := os.CreateTemp(t.TempDir(), "stdout-*")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := closed.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg := testConfig()
+	clear(cfg.Services) // A valid empty stack has no drift; only the summary is rendered.
+	withTestRuntime(t, newFakeEngine(), cfg, func() {
+		for _, command := range []string{"plan", "diff"} {
+			t.Run(command, func(t *testing.T) {
+				stdout := os.Stdout
+				os.Stdout = closed
+				defer func() { os.Stdout = stdout }()
+				err := run([]string{command})
+				if !errors.Is(err, os.ErrClosed) || exitCodeFor(err) != 1 {
+					t.Fatalf("want closed-writer failure and exit 1, got err=%v exit=%d", err, exitCodeFor(err))
+				}
+			})
+		}
+	})
+}
 
 func TestPlanTextAlignsLongFieldNames(t *testing.T) {
 	cfg := testConfig()

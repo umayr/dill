@@ -20,8 +20,11 @@ const (
 	ansiDim    = "\033[2m"
 )
 
-func Render(p *Plan, w io.Writer) {
+// Render writes the text plan and returns the first write error, if any.
+func Render(p *Plan, w io.Writer) error {
 	isTTY := isTerminal(w)
+	output := &planTextWriter{dest: w}
+	w = output
 
 	colour := func(s, code string) string {
 		if !isTTY {
@@ -63,6 +66,22 @@ func Render(p *Plan, w io.Writer) {
 	fmt.Fprintln(w)
 	fmt.Fprintf(w, "Plan: %d to create, %d to recreate, %d to remove, %d unchanged.\n",
 		creates, recreates, removes, noops)
+	return output.err
+}
+
+// Preserve the existing write sequence for callers that render a plan as
+// best-effort output, while allowing read-only commands to report failure.
+type planTextWriter struct {
+	dest io.Writer
+	err  error
+}
+
+func (w *planTextWriter) Write(p []byte) (int, error) {
+	n, err := w.dest.Write(p)
+	if w.err == nil {
+		w.err = err
+	}
+	return n, err
 }
 
 func renderDiff(w io.Writer, d FieldDiff, fieldWidth int, colour func(string, string) string) {
