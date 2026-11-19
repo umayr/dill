@@ -168,7 +168,9 @@ func runValidate(ctx context.Context, opts commandOptions, args []string) (retEr
 	if *stdin {
 		source = "stdin"
 	}
-	fmt.Fprintf(opts.output(), "%s is valid\n", source)
+	if _, err := fmt.Fprintf(opts.output(), "%s is valid\n", source); err != nil {
+		return fmt.Errorf("writing validation result: %w", err)
+	}
 	return nil
 }
 
