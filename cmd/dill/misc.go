@@ -219,8 +219,8 @@ func runFmt(ctx context.Context, opts commandOptions, args []string) error {
 	}
 
 	if opts.DryRun {
-		fmt.Printf("would format %s\n", opts.ConfigFile)
-		return nil
+		_, err := fmt.Printf("would format %s\n", opts.ConfigFile)
+		return err
 	}
 
 	cmd := exec.CommandContext(ctx, bin, "format", "-w", opts.ConfigFile)
