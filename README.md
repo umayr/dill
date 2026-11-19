@@ -332,7 +332,10 @@ CI runs the same integration suite against Docker and Podman on GitHub Actions.
 
 ## Configuration Schema
 
-Dill configs are `.pkl` files that amend the published `dill` schema:
+Dill configs are `.pkl` files that amend the published `dill` schema. See
+[schema release verification](docs/schema-release.md) to check the published URL,
+or use the [basic example](examples/basic/compose.pkl) from a Dill checkout
+without the package registry:
 
 ```pkl
 amends "package://pkg.ushd.ca/dill@0.5.0#/dill.pkl"
