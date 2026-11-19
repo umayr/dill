@@ -190,8 +190,9 @@ func normalizePort(raw json.RawMessage) (PortBinding, error) {
 
 // parsePortString handles: target, published:target, hostIp:published:target,
 // and optional /protocol suffix on target.
-func parsePortString(s string) (PortBinding, error) {
+func parsePortString(spec string) (PortBinding, error) {
 	pb := PortBinding{Protocol: "tcp"}
+	s := spec
 
 	// Strip protocol suffix.
 	if idx := strings.LastIndex(s, "/"); idx != -1 {
@@ -214,7 +215,7 @@ func parsePortString(s string) (PortBinding, error) {
 		pb.Published = parts[1]
 		pb.Target = parts[2]
 	default:
-		return PortBinding{}, fmt.Errorf("invalid port spec %q", s)
+		return PortBinding{}, fmt.Errorf("invalid port spec %q", spec)
 	}
 	if err := validatePort(pb.Target, "target"); err != nil {
 		return PortBinding{}, err
