@@ -57,14 +57,23 @@ func runStatus(ctx context.Context, opts commandOptions, args []string) error {
 		return enc.Encode(out)
 	}
 
-	running := 0
+	var running, notRunning, inspectionFailed int
 	for _, cs := range out.Containers {
-		if cs.State == "running" {
+		switch cs.State {
+		case "running":
 			running++
+		case "error":
+			inspectionFailed++
+		default:
+			notRunning++
 		}
 	}
-	fmt.Printf("Stack: %s\nEngine: %s\nConfig: %s\nServices: %d\nContainers: %d running, %d stopped/missing\n\n",
-		out.Stack, out.Engine, out.ConfigFile, out.Services, running, len(out.Containers)-running)
+	fmt.Printf("Stack: %s\nEngine: %s\nConfig: %s\nServices: %d\nContainers: %d running, %d not running",
+		out.Stack, out.Engine, out.ConfigFile, out.Services, running, notRunning)
+	if inspectionFailed > 0 {
+		fmt.Printf(", %d inspection failed", inspectionFailed)
+	}
+	fmt.Print("\n\n")
 	w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
 	fmt.Fprintln(w, "NAME\tSTATE\tSTATUS\tIMAGE\tPORTS")
 	for _, cs := range out.Containers {

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 	"testing"
 
 	"github.com/umayr/dill/internal/config"
@@ -84,6 +85,20 @@ func TestPsReportsOrdinaryInspectionError(t *testing.T) {
 	}
 	if len(got) != 2 || got[0].Name != "a" || got[0].State != "running" || got[1].Name != "b" || got[1].State != "error" || got[1].Status != "gone" {
 		t.Fatalf("unexpected JSON: %s", out)
+	}
+}
+
+func TestStatusTextSeparatesInspectionErrors(t *testing.T) {
+	oldLoader, oldFactory := configLoader, engineFactory
+	defer func() { configLoader, engineFactory = oldLoader, oldFactory }()
+	configLoader = func(context.Context, string) (*config.DillConfig, error) { return testConfig(), nil }
+	engineFactory = func(context.Context, string, string) (orchestrator.Engine, error) { return &statusCoreEngine{}, nil }
+	out, _, err := captureCommand(t, "", func() error { return run([]string{"status"}) })
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, "Containers: 1 running, 0 not running, 1 inspection failed\n") || !strings.Contains(out, "gone") {
+		t.Fatalf("expected the summary to separate inspection failures and the row to retain its error, got:\n%s", out)
 	}
 }
 
