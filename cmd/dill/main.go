@@ -265,13 +265,12 @@ Flags:
 		}
 	}
 
-	if cmd != cmdSecretCapabilities {
-		if opts.EnvFile != "" {
-			if err := loadEnvFile(opts.EnvFile); err != nil {
-				return fmt.Errorf("loading env file: %w", err)
-			}
+	// Validate loads its effective env file after parsing its own flags so
+	// setup errors use the selected validation output format.
+	if cmd != cmdSecretCapabilities && cmd != cmdValidate && opts.EnvFile != "" {
+		if err := loadEnvFile(opts.EnvFile); err != nil {
+			return fmt.Errorf("loading env file: %w", err)
 		}
-
 	}
 	commandArgs := fs.Args()
 	if len(commandArgs) > 0 {

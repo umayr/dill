@@ -68,6 +68,11 @@ func runValidate(ctx context.Context, opts commandOptions, args []string) (retEr
 	if err := ensureNoArgs(fs.Args(), "validate"); err != nil {
 		return err
 	}
+	if opts.EnvFile != "" {
+		if err := loadEnvFile(opts.EnvFile); err != nil {
+			return fmt.Errorf("loading env file: %w", err)
+		}
+	}
 
 	target := opts.ConfigFile
 	if *stdin {
