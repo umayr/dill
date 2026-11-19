@@ -108,9 +108,6 @@ func ValidateGraph(services map[string]*Service) error {
 	state := make(map[string]uint8, len(names))
 	var visit func(string) error
 	visit = func(name string) error {
-		if state[name] == 1 {
-			return fmt.Errorf("cycle detected involving service %q dependsOn", name)
-		}
 		if state[name] == 2 {
 			return nil
 		}
@@ -122,6 +119,9 @@ func ValidateGraph(services map[string]*Service) error {
 		for i, dep := range svc.DependsOn {
 			if _, ok := services[dep]; !ok {
 				return fmt.Errorf("service %q dependsOn[%d]: %q is not defined", name, i, dep)
+			}
+			if state[dep] == 1 {
+				return fmt.Errorf("cycle detected involving service %q: service %q dependsOn[%d] references %q", dep, name, i, dep)
 			}
 			if err := visit(dep); err != nil {
 				return err

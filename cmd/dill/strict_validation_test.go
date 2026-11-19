@@ -32,6 +32,7 @@ func TestUntrustedPklOutputRejectedBeforeEngine(t *testing.T) {
 		{"missing image", `{"config":{"services":{"app":{}}}}`, `.image`},
 		{"empty image", `{"config":{"services":{"app":{"image":""}}}}`, `.image`},
 		{"bad engine", `{"config":{"engine":"invalid","services":{}}}`, `config.engine`},
+		{"dependency cycle closing edge", `{"config":{"services":{"app":{"image":"x","dependsOn":["db"]},"db":{"image":"x","dependsOn":["worker"]},"worker":{"image":"x","dependsOn":["cache","db"]},"cache":{"image":"x"}}}}`, `service "worker" dependsOn[1] references "db"`},
 		{"bad restart", `{"config":{"services":{"app":{"image":"x","restart":"invalid"}}}}`, `.restart`},
 		{"bad pull policy", `{"config":{"services":{"app":{"image":"x","pullPolicy":"invalid"}}}}`, `.pullPolicy`},
 		{"non-string healthcheck argument", `{"config":{"services":{"app":{"image":"x","healthcheck":{"test":["CMD",42]}}}}}`, `service "app": healthcheck.test[1]:`},
