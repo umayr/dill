@@ -71,10 +71,10 @@ func NormalizeHealthCheckTest(raw json.RawMessage) ([]string, error) {
 	}
 	// Try array first.
 	var arr []string
-	if err := decodeStrict(raw, &arr); err == nil {
+	if err := decodeStrictAt(raw, &arr, "healthcheck.test"); err == nil {
 		return arr, nil
 	} else if strings.HasPrefix(strings.TrimSpace(string(raw)), "[") {
-		return nil, fmt.Errorf("healthcheck test: %w", err)
+		return nil, err
 	}
 	// Fall back to string → CMD-SHELL form.
 	var s string

@@ -28,7 +28,7 @@ func TestCurrentSchemaJSONBoundaries(t *testing.T) {
 		{"labels null value", `"labels":{"X":null}`, `labels["X"]`},
 		{"port null element", `"ports":[null]`, `ports[0]`},
 		{"mount null element", `"volumes":[null]`, `volumes[0]`},
-		{"probe null element", `"healthcheck":{"test":["CMD",null]}`, `healthcheck test`},
+		{"probe null element", `"healthcheck":{"test":["CMD",null]}`, `healthcheck.test[1]: null is not allowed`},
 		{"image null", `"image":null`, `.image`},
 		{"restart null", `"restart":null`, `.restart`},
 		{"pull null", `"pullPolicy":null`, `.pullPolicy`},

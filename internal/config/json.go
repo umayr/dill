@@ -75,6 +75,10 @@ var rawMessageType = reflect.TypeOf(json.RawMessage{})
 // Maps intentionally accept arbitrary keys. Raw union values are checked by
 // their respective normalizers after decoding.
 func decodeStrict(data []byte, out any) error {
+	return decodeStrictAt(data, out, "config")
+}
+
+func decodeStrictAt(data []byte, out any, path string) error {
 	var check func(json.RawMessage, reflect.Type, string, bool) error
 	check = func(raw json.RawMessage, t reflect.Type, path string, nullable bool) error {
 		if bytes.Equal(bytes.TrimSpace(raw), []byte("null")) {
@@ -145,7 +149,7 @@ func decodeStrict(data []byte, out any) error {
 	if t == nil || t.Kind() != reflect.Pointer {
 		return fmt.Errorf("decode destination must be a pointer")
 	}
-	if err := check(data, t.Elem(), "config", false); err != nil {
+	if err := check(data, t.Elem(), path, false); err != nil {
 		return err
 	}
 	return json.Unmarshal(data, out)
