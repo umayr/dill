@@ -94,6 +94,41 @@ func TestTeardownAggregatesDistinctFailuresAndContinues(t *testing.T) {
 	})
 }
 
+type teardownInventoryFailureEngine struct {
+	*failingLifecycleEngine
+	volumeListErr, containerListErr error
+}
+
+func (f *teardownInventoryFailureEngine) ListStackVolumes(context.Context, string) ([]string, error) {
+	return nil, f.volumeListErr
+}
+
+func (f *teardownInventoryFailureEngine) ListStack(context.Context, string) ([]string, error) {
+	return nil, f.containerListErr
+}
+
+func TestTeardownReportsBothInventoryFailures(t *testing.T) {
+	f := &teardownInventoryFailureEngine{
+		failingLifecycleEngine: &failingLifecycleEngine{fakeEngine: newFakeEngine()},
+		volumeListErr:          errors.New("volume inventory denied"),
+		containerListErr:       errors.New("container inventory unavailable"),
+	}
+	withTestRuntime(t, f, testConfig(), func() {
+		for _, args := range [][]string{{"teardown", "--yes"}, {"teardown", "--dry-run"}} {
+			out, _, err := captureCommand(t, "", func() error { return run(args) })
+			if exitCodeFor(err) != 1 || !errors.Is(err, f.volumeListErr) || !errors.Is(err, f.containerListErr) {
+				t.Errorf("%v: expected both inventory failures and exit 1, got %v", args, err)
+			}
+			if err == nil || !strings.Contains(err.Error(), `list volumes for stack "app"`) || !strings.Contains(err.Error(), `listing stack "app" containers`) {
+				t.Errorf("%v: missing inventory scope: %v", args, err)
+			}
+			if out != "" || len(f.calls) != 0 {
+				t.Errorf("%v: unexpected output %q or mutations %v", args, out, f.calls)
+			}
+		}
+	})
+}
+
 func TestTeardownVolumePromptAndDryRun(t *testing.T) {
 	for _, dry := range []bool{false, true} {
 		t.Run(fmt.Sprintf("dry=%t", dry), func(t *testing.T) {
