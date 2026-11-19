@@ -16,14 +16,21 @@ Legacy checksum and unverified-download environment variables now fail explicitl
 
 ## Published URLs and migration
 
-The README and `examples/remote/compose.pkl` use
-`package://pkg.ushd.ca/dill@0.5.0#/dill.pkl`. v0.5.0 is a real GitHub release;
-its HTTPS metadata, metadata checksum, release archive, archive checksum, and
-clean-cache Pkl evaluation were checked using Pkl 0.31.1. The previous remote
-example referenced 0.4.0, which is also a real release with live metadata; users
-are not automatically upgraded. Test and explicitly update their package URI
-and any Pkl project dependency/lockfile as appropriate. These are current schema
-releases, not the experimental roadmap model; no `@NEXT` package is promised.
+The README and `examples/remote/compose.pkl` reference
+`package://pkg.ushd.ca/dill@0.5.0#/dill.pkl`. On 2026-11-18, the registry's
+public HTTPS endpoint returned 404 for the metadata and its checksum. Both
+`PKL=/path/to/pinned/pkl python3 scripts/smoke-schema.py 0.5.0` and evaluation of
+`examples/remote/compose.pkl` with Pkl 0.31.1 and a fresh cache failed. The
+metadata in the registry source repository and the GitHub release archive
+still matched their published SHA-256 files and each other. That confirms the
+artifacts exist; it does not confirm the package URI resolves.
+
+Use the checked-in schema examples while discovery is unavailable. Do not
+republish an existing version or switch to another version based on archive
+availability alone. Once public discovery is restored, rerun the HTTPS smoke
+check with the pinned Pkl before treating the package as usable from a fresh
+cache. These schema releases are not the experimental roadmap model; no
+`@NEXT` package is promised.
 Existing historical archives included the source tree; this change does not
 alter or republish them. Users relying on non-schema files inside an old archive
 must instead obtain those files from source; future archives contain only
@@ -59,6 +66,11 @@ release has been published or smoke-verified as part of this change. Manual
 catalog publication, mirrors, publisher authentication, and cross-repository
 atomicity are not provided.
 
-Run `PKL=/path/to/pkl make validate` for pinned-version packaging, allowlist and
+Run `make validate PKL=/path/to/pinned/pkl` for packaging, allowlist and
 reproducibility checks, mocked immutable publication/retry tests, schema/example
-evaluation and design fixtures. These do not prove engine runtime semantics.
+evaluation and design fixtures. This passed with Pkl 0.31.1 on 2026-11-18 even
+though the clean-cache smoke failed: ordinary example evaluation may reuse the
+local package cache. For #17, the local packaging and simulated immutable
+publication/retry checks pass; clean-cache public discovery remains blocked,
+and no live publication or retry was attempted. These checks do not prove
+engine runtime semantics.
