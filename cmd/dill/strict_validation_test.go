@@ -157,6 +157,47 @@ func TestSupportedSchemaOutputAndExtraModuleFields(t *testing.T) {
 	}
 }
 
+func TestPlanDiffInvalidTargetPortDiagnostic(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "compose.pkl")
+	const body = `output { text = #"""
+{"config":{"services":{"app":{"image":"busybox","ports":[{"target":65536}]}}}}
+"""# }
+`
+	if err := os.WriteFile(path, []byte(body), 0600); err != nil {
+		t.Fatal(err)
+	}
+	oldEngine := engineFactory
+	engineFactory = func(context.Context, string, string) (orchestrator.Engine, error) {
+		t.Error("invalid config must fail before opening an engine")
+		return nil, fmt.Errorf("unexpected engine")
+	}
+	defer func() { engineFactory = oldEngine }()
+	const diagnostic = `invalid target port "65536": must be between 1 and 65535`
+	for _, command := range []string{"plan", "diff"} {
+		for _, format := range []string{"text", "json"} {
+			t.Run(command+"/"+format, func(t *testing.T) {
+				out, _, err := captureCommand(t, "", func() error {
+					return run([]string{"-f", path, command, "--format", format})
+				})
+				if exitCodeFor(err) != 2 || !strings.Contains(err.Error(), diagnostic) {
+					t.Fatalf("unexpected result: exit %d, %v", exitCodeFor(err), err)
+				}
+				if format == "json" {
+					var result struct {
+						Kind  string `json:"kind"`
+						Error string `json:"error"`
+					}
+					if json.Unmarshal([]byte(out), &result) != nil || result.Kind != "invalid_input" || result.Error != err.Error() {
+						t.Fatalf("unexpected JSON failure: %q", out)
+					}
+				} else if out != "" {
+					t.Fatalf("unexpected plan output: %q", out)
+				}
+			})
+		}
+	}
+}
+
 func TestEvaluatorFailureClassification(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "broken.pkl")
 	if err := os.WriteFile(path, []byte("this is not pkl"), 0600); err != nil {
