@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"strconv"
+	"strings"
 
 	"golang.org/x/term"
 )
@@ -61,6 +63,13 @@ func Render(p *Plan, w io.Writer) {
 func renderDiff(w io.Writer, d FieldDiff, isTTY bool, colour func(string, string) string) {
 	const indent = "        "
 	field := fmt.Sprintf("%-16s", d.Field)
+	// Keep multiline values on their own diff row, without changing the plan.
+	if strings.ContainsAny(d.Before, "\r\n") {
+		d.Before = strconv.Quote(d.Before)
+	}
+	if strings.ContainsAny(d.After, "\r\n") {
+		d.After = strconv.Quote(d.After)
+	}
 
 	switch {
 	case d.Before == "" && d.After != "":
