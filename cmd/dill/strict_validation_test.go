@@ -35,6 +35,7 @@ func TestUntrustedPklOutputRejectedBeforeEngine(t *testing.T) {
 		{"bad restart", `{"config":{"services":{"app":{"image":"x","restart":"invalid"}}}}`, `.restart`},
 		{"bad pull policy", `{"config":{"services":{"app":{"image":"x","pullPolicy":"invalid"}}}}`, `.pullPolicy`},
 		{"missing probe", `{"config":{"services":{"app":{"image":"x","healthcheck":{}}}}}`, `.healthcheck.test`},
+		{"sub-nanocpu limit", `{"config":{"services":{"app":{"image":"x","cpus":"0.0000000001"}}}}`, `cpus "0.0000000001" must be at least 0.00001`},
 		{"negative retries", `{"config":{"services":{"app":{"image":"x","healthcheck":{"test":"ok","retries":-1}}}}}`, `healthcheck retries`},
 		{"duration overflow", `{"config":{"services":{"app":{"image":"x","healthcheck":{"test":"ok","interval":{"value":1e30,"unit":"s"}}}}}}`, `healthcheck interval`},
 		{"duplicate service", `{"config":{"services":{"app":{"image":"x"},"app":{"image":"y"}}}}`, `duplicate key "app"`},
