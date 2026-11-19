@@ -35,6 +35,7 @@ func TestUntrustedPklOutputRejectedBeforeEngine(t *testing.T) {
 		{"bad restart", `{"config":{"services":{"app":{"image":"x","restart":"invalid"}}}}`, `.restart`},
 		{"bad pull policy", `{"config":{"services":{"app":{"image":"x","pullPolicy":"invalid"}}}}`, `.pullPolicy`},
 		{"missing probe", `{"config":{"services":{"app":{"image":"x","healthcheck":{}}}}}`, `.healthcheck.test`},
+		{"malformed port spec with protocol", `{"config":{"services":{"app":{"image":"x","ports":["127.0.0.1:8080:80:extra/udp"]}}}}`, `invalid port spec "127.0.0.1:8080:80:extra/udp"`},
 		{"sub-nanocpu limit", `{"config":{"services":{"app":{"image":"x","cpus":"0.0000000001"}}}}`, `cpus "0.0000000001" must be at least 0.00001`},
 		{"negative retries", `{"config":{"services":{"app":{"image":"x","healthcheck":{"test":"ok","retries":-1}}}}}`, `healthcheck retries`},
 		{"duration overflow", `{"config":{"services":{"app":{"image":"x","healthcheck":{"test":"ok","interval":{"value":1e30,"unit":"s"}}}}}}`, `healthcheck interval`},
