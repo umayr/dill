@@ -1,6 +1,7 @@
 package config
 
 import (
+	"errors"
 	"fmt"
 	"math/big"
 	"regexp"
@@ -43,7 +44,9 @@ func NormalizeResources(svc *Service) (ResourceLimits, error) {
 	}
 	if svc.CPUs != "" {
 		n, err := parseScaledDecimal(strings.TrimSpace(svc.CPUs), 1_000_000_000)
-		if err != nil {
+		// A sub-nanocpu positive value is also below the quota floor.
+		// Report that same floor rather than the parser's unit size.
+		if err != nil && !errors.Is(err, errBelowResourceUnit) {
 			return r, fmt.Errorf("cpus %q: %w", svc.CPUs, err)
 		}
 		// Both engines enforce CPU limits using a 100000-microsecond
@@ -109,6 +112,7 @@ func ParseBytes(s string) (int64, error) {
 // floating-point special values. Parse exactly so large integers and decimal
 // fractions cannot round across the int64 boundary.
 var resourceDecimal = regexp.MustCompile(`^\+?([0-9]+(\.[0-9]*)?|\.[0-9]+)$`)
+var errBelowResourceUnit = errors.New("positive quantity is smaller than one unit")
 
 func parseScaledDecimal(s string, multiplier int64) (int64, error) {
 	if !resourceDecimal.MatchString(s) {
@@ -124,7 +128,7 @@ func parseScaledDecimal(s string, multiplier int64) (int64, error) {
 	}
 	n := new(big.Int).Quo(v.Num(), v.Denom()).Int64()
 	if v.Sign() > 0 && n == 0 {
-		return 0, fmt.Errorf("positive quantity is smaller than one unit")
+		return 0, errBelowResourceUnit
 	}
 	return n, nil
 }
