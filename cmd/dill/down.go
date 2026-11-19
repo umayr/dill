@@ -172,6 +172,9 @@ func runTeardown(ctx context.Context, opts commandOptions, args []string) error 
 
 	names, err := engine.ListStack(ctx, sn)
 	if err != nil {
+		if listErr != nil {
+			return errors.Join(listErr, fmt.Errorf("listing stack %q containers: %w", sn, err))
+		}
 		return fmt.Errorf("listing stack: %w", err)
 	}
 	targets := make([]orchestrator.RemovalTarget, 0, len(names))
