@@ -212,6 +212,46 @@ func TestTeardownPromptsAndAbortsByDefault(t *testing.T) {
 	})
 }
 
+func TestInitReportsConfirmationWriteErrorAfterCreation(t *testing.T) {
+	closed, err := os.CreateTemp(t.TempDir(), "stdout-*")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := closed.Close(); err != nil {
+		t.Fatal(err)
+	}
+	stdout := os.Stdout
+	os.Stdout = closed
+	defer func() { os.Stdout = stdout }()
+
+	for _, tc := range []struct {
+		name string
+		args []string
+	}{
+		{name: "confirmation"},
+		{name: "quiet", args: []string{"--quiet"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			path := t.TempDir() + "/compose.pkl"
+			err := runInit(commandOptions{ConfigFile: path}, tc.args)
+			got, readErr := os.ReadFile(path)
+			if readErr != nil || string(got) != starterTemplate {
+				t.Fatalf("starter file not created as expected: read error=%v, init error=%v", readErr, err)
+			}
+			if tc.args != nil {
+				if err != nil {
+					t.Fatalf("quiet init returned %v", err)
+				}
+				return
+			}
+			if !errors.Is(err, os.ErrClosed) || exitCodeFor(err) != 1 ||
+				!strings.Contains(err.Error(), "creation completed, but writing confirmation failed") {
+				t.Fatalf("want confirmation write error after creation and exit 1, got %v (exit %d)", err, exitCodeFor(err))
+			}
+		})
+	}
+}
+
 func TestInitDryRunDoesNotWriteFile(t *testing.T) {
 	dir := t.TempDir()
 	path := dir + "/compose.pkl"
