@@ -36,7 +36,9 @@ func runInit(opts commandOptions, args []string) error {
 		return fmt.Errorf("writing %s: %w", opts.ConfigFile, err)
 	}
 	if !opts.Quiet {
-		fmt.Printf("created %s\n", opts.ConfigFile)
+		if _, err := fmt.Printf("created %s\n", opts.ConfigFile); err != nil {
+			return fmt.Errorf("creation completed, but writing confirmation failed: %w", err)
+		}
 	}
 	return nil
 }
