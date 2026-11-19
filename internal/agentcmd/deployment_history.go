@@ -16,9 +16,19 @@ import (
 	"golang.org/x/sys/unix"
 )
 
-const historyLimit = 128
+const (
+	legacyHistoryLimit = 128
+	historyByteLimit   = 16 << 20
+	// Each valid owned resource encodes fewer than MaxNameBytes + 128 bytes.
+	// Reserve an outcome's worst-case expansion before admitting work. Fences
+	// use the same limit so they cannot consume this space during execution.
+	historyOutcomeSpace = preflight.MaxResources*(preflight.MaxNameBytes+128) + 1024
+)
 
-var errOperationConflict = errors.New("deployment operation conflicts with recorded intent")
+var (
+	errOperationConflict = errors.New("deployment operation conflicts with recorded intent")
+	errHistoryCapacity   = errors.New("deployment journal capacity reached; preserve the journal and inspect agent state")
+)
 
 type deploymentStatus struct {
 	RequestID   string `json:"requestId"`
@@ -31,8 +41,8 @@ type deploymentStatus struct {
 type deploymentRecord struct {
 	deploymentStatus
 	Mode     string                      `json:"mode"`
-	StageID  string                      `json:"stageId"`
-	Manifest string                      `json:"manifest"`
+	StageID  string                      `json:"stageId,omitempty"`
+	Manifest string                      `json:"manifest,omitempty"`
 	Owned    []operation.ManagedResource `json:"owned,omitempty"`
 }
 
@@ -51,6 +61,7 @@ type deploymentHistory struct {
 	journal  string // immutable after load; binds a request to one durable history
 	rows     []deploymentRecord
 	active   map[string]bool
+	bytes    int
 	poisoned bool
 }
 
@@ -76,9 +87,8 @@ func openDeploymentHistory(path, target string) (*deploymentHistory, error) {
 }
 
 func (h *deploymentHistory) load() error {
-	const bound = 16 << 20
 	path := filepath.Join(h.path, "operations.json")
-	raw, err := readPrivateHTTPSFile(path, bound)
+	raw, err := readPrivateHTTPSFile(path, historyByteLimit)
 	if err != nil {
 		if _, statErr := os.Lstat(path); os.IsNotExist(statErr) {
 			// No mutating request is accepted before the first successful sync.
@@ -89,17 +99,17 @@ func (h *deploymentHistory) load() error {
 	var file deploymentHistoryFile
 	dec := json.NewDecoder(bytes.NewReader(raw))
 	dec.DisallowUnknownFields()
-	if dec.Decode(&file) != nil || dec.Decode(new(any)) != io.EOF || file.Version != 1 || file.Target != h.target || file.Rows == nil || len(file.Rows) > historyLimit {
+	if dec.Decode(&file) != nil || dec.Decode(new(any)) != io.EOF || (file.Version != 1 && file.Version != 2) || file.Target != h.target || file.Rows == nil || (file.Version == 1 && len(file.Rows) > legacyHistoryLimit) {
 		return errors.New("invalid deployment history")
 	}
-	canonical, err := json.Marshal(file)
-	if err != nil || !bytes.Equal(canonical, raw) {
+	canonical, err := canonicalHistory(file)
+	if err != nil || !bytes.Equal(canonical, raw) || (file.Version == 2 && !validApplyID(file.Journal)) {
 		return errors.New("invalid deployment history encoding")
 	}
 	seen := make(map[string]bool, len(file.Rows))
 	latest := make(map[string]deploymentRecord)
 	for _, r := range file.Rows {
-		if seen[r.RequestID] || !validDeploymentRecord(r) || (r.Mode != "fence" && !allowedDeploymentMode(recordNextMode(latest[r.Stack]), r.Mode)) {
+		if seen[r.RequestID] || !(validDeploymentRecord(r) || file.Version == 2 && validCompactRecord(r)) || (r.Mode != "fence" && !allowedDeploymentMode(recordNextMode(latest[r.Stack]), r.Mode)) {
 			return errors.New("invalid deployment history record")
 		}
 		seen[r.RequestID] = true
@@ -107,7 +117,13 @@ func (h *deploymentHistory) load() error {
 			latest[r.Stack] = r
 		}
 	}
-	h.rows = file.Rows
+	keep := ownershipPayloads(file.Rows)
+	for _, r := range file.Rows {
+		if keep[r.RequestID] && !validDeploymentRecord(r) {
+			return errors.New("current operation lacks ownership evidence")
+		}
+	}
+	h.rows, h.bytes = file.Rows, len(raw)
 	if file.Journal == "" {
 		// Upgrade existing history without discarding ownership or outcomes.
 		return h.initializeJournal()
@@ -116,7 +132,34 @@ func (h *deploymentHistory) load() error {
 		return errOperationConflict
 	}
 	h.journal = file.Journal
+	if file.Version == 1 {
+		return h.save(compactHistory(h.rows), 0)
+	}
 	return h.dir.Sync()
+}
+
+// The original encoding included empty snapshot fields on fences.
+func canonicalHistory(file deploymentHistoryFile) ([]byte, error) {
+	if file.Version != 1 {
+		return json.Marshal(file)
+	}
+	type legacyRecord struct {
+		deploymentStatus
+		Mode     string                      `json:"mode"`
+		StageID  string                      `json:"stageId"`
+		Manifest string                      `json:"manifest"`
+		Owned    []operation.ManagedResource `json:"owned,omitempty"`
+	}
+	legacy := struct {
+		Version int            `json:"version"`
+		Target  string         `json:"target"`
+		Rows    []legacyRecord `json:"operations"`
+		Journal string         `json:"journalId,omitempty"`
+	}{file.Version, file.Target, make([]legacyRecord, 0, len(file.Rows)), file.Journal}
+	for _, r := range file.Rows {
+		legacy.Rows = append(legacy.Rows, legacyRecord{r.deploymentStatus, r.Mode, r.StageID, r.Manifest, r.Owned})
+	}
+	return json.Marshal(legacy)
 }
 
 func (h *deploymentHistory) initializeJournal() error {
@@ -125,13 +168,16 @@ func (h *deploymentHistory) initializeJournal() error {
 		return err
 	}
 	h.journal = hex.EncodeToString(id[:])
-	return h.save(h.rows)
+	return h.save(compactHistory(h.rows), 0)
 }
 
-func (h *deploymentHistory) save(rows []deploymentRecord) error {
-	b, err := json.Marshal(deploymentHistoryFile{Version: 1, Target: h.target, Rows: rows, Journal: h.journal})
+func (h *deploymentHistory) save(rows []deploymentRecord, headroom int) error {
+	b, err := json.Marshal(deploymentHistoryFile{Version: 2, Target: h.target, Rows: rows, Journal: h.journal})
 	if err != nil {
 		return err
+	}
+	if len(b) > historyByteLimit-headroom {
+		return errHistoryCapacity
 	}
 	f, err := os.CreateTemp(h.path, ".operations-")
 	if err != nil {
@@ -145,7 +191,59 @@ func (h *deploymentHistory) save(rows []deploymentRecord) error {
 	if err := os.Rename(f.Name(), filepath.Join(h.path, "operations.json")); err != nil {
 		return err
 	}
-	return h.dir.Sync()
+	if err := h.dir.Sync(); err != nil {
+		return err
+	}
+	h.rows, h.bytes = rows, len(b)
+	return nil
+}
+
+// Drop snapshot and resource payloads only when they can no longer influence
+// admission. Request IDs, terminal results and the mode chain are permanent.
+func compactHistory(rows []deploymentRecord) []deploymentRecord {
+	keep := ownershipPayloads(rows)
+	for i := range rows {
+		r := &rows[i]
+		if !keep[r.RequestID] {
+			r.StageID, r.Manifest, r.Owned = "", "", nil
+		}
+	}
+	return rows
+}
+
+// Keep unresolved intent and the last established ownership even when a
+// subsequent operation on that stack left its effects unresolved.
+func ownershipPayloads(rows []deploymentRecord) map[string]bool {
+	keep := make(map[string]bool)
+	settled := make(map[string]bool)
+	for i := len(rows) - 1; i >= 0; i-- {
+		r := rows[i]
+		if ignoresOwnership(r) {
+			continue
+		}
+		if r.State != "succeeded" {
+			keep[r.RequestID] = true
+			continue
+		}
+		if !settled[r.Stack] && r.Mode != "remove" {
+			keep[r.RequestID] = true
+		}
+		settled[r.Stack] = true
+	}
+	return keep
+}
+
+func validCompactRecord(r deploymentRecord) bool {
+	return validApplyID(r.RequestID) && validDeployStack(r.Stack) && validDeploymentStatus(r.deploymentStatus) &&
+		(r.Mode == "create" || r.Mode == "update" || r.Mode == "remove") &&
+		r.StageID == "" && r.Manifest == "" && len(r.Owned) == 0 &&
+		(r.State == "succeeded" || r.State == "failed" && r.Effects == "none")
+}
+
+func (h *deploymentHistory) nearCapacity() bool {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return h.bytes >= historyByteLimit*9/10
 }
 
 func ignoresOwnership(r deploymentRecord) bool {
@@ -192,7 +290,7 @@ func (h *deploymentHistory) reserve(row deploymentRecord, expectedPrevious strin
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	previous, mode := h.managedLocked(row.Stack)
-	if len(h.rows) >= historyLimit || !allowedDeploymentMode(mode, row.Mode) || previous.RequestID != expectedPrevious || row.State != "pending" || !validDeploymentRecord(row) {
+	if len(h.active) != 0 || !allowedDeploymentMode(mode, row.Mode) || previous.RequestID != expectedPrevious || row.State != "pending" || !validDeploymentRecord(row) {
 		return errOperationConflict
 	}
 	for _, r := range h.rows {
@@ -201,11 +299,10 @@ func (h *deploymentHistory) reserve(row deploymentRecord, expectedPrevious strin
 		}
 	}
 	rows := append(append([]deploymentRecord{}, h.rows...), row)
-	if err := h.save(rows); err != nil {
-		h.poisoned = true
-		return errOperationConflict
+	if err := h.save(rows, historyOutcomeSpace); err != nil {
+		h.poisoned = !errors.Is(err, errHistoryCapacity)
+		return err
 	}
-	h.rows = rows
 	h.active[row.RequestID] = true
 	return nil
 }
@@ -224,16 +321,12 @@ func (h *deploymentHistory) fence(id, stack string) (deploymentStatus, error) {
 		}
 		return status, nil
 	}
-	if len(h.rows) >= historyLimit {
-		return deploymentStatus{}, errOperationConflict
-	}
 	status := deploymentStatus{RequestID: id, Stack: stack, State: "not-admitted", Effects: "none"}
 	rows := append(append([]deploymentRecord{}, h.rows...), deploymentRecord{deploymentStatus: status, Mode: "fence"})
-	if err := h.save(rows); err != nil {
-		h.poisoned = true
-		return deploymentStatus{}, errOperationConflict
+	if err := h.save(rows, historyOutcomeSpace); err != nil {
+		h.poisoned = !errors.Is(err, errHistoryCapacity)
+		return deploymentStatus{}, err
 	}
-	h.rows = rows
 	return status, nil
 }
 
@@ -265,11 +358,10 @@ func (h *deploymentHistory) finish(result deploymentStatus, owned []operation.Ma
 			if !validDeploymentRecord(rows[i]) {
 				return errOperationConflict
 			}
-			if err := h.save(rows); err != nil {
+			if err := h.save(compactHistory(rows), 0); err != nil {
 				h.poisoned = true
 				return errOperationConflict
 			}
-			h.rows = rows
 			return nil
 		}
 	}
