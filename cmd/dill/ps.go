@@ -9,6 +9,7 @@ import (
 	"strings"
 	"text/tabwriter"
 
+	"github.com/umayr/dill/core"
 	"github.com/umayr/dill/internal/orchestrator"
 )
 
@@ -38,19 +39,11 @@ func runPs(ctx context.Context, opts commandOptions, args []string) error {
 	}
 	defer engine.Close()
 
-	names, err := engine.ListStack(ctx, sn)
+	snapshot, err := core.Status(ctx, engine, sn, cfg.Engine, opts.ConfigFile, len(cfg.Services))
 	if err != nil {
-		return fmt.Errorf("listing stack: %w", err)
+		return err
 	}
-
-	var statuses []*orchestrator.ContainerStatus
-	for _, name := range names {
-		cs, err := engine.ServiceStatus(ctx, name)
-		if err != nil {
-			cs = &orchestrator.ContainerStatus{Name: name, State: "error", Status: err.Error()}
-		}
-		statuses = append(statuses, cs)
-	}
+	statuses := snapshot.Containers
 	if *all {
 		seen := make(map[string]bool, len(statuses))
 		for _, cs := range statuses {
@@ -72,9 +65,6 @@ func runPs(ctx context.Context, opts commandOptions, args []string) error {
 
 	switch *format {
 	case "json":
-		if statuses == nil {
-			statuses = []*orchestrator.ContainerStatus{}
-		}
 		enc := json.NewEncoder(os.Stdout)
 		enc.SetIndent("", "  ")
 		return enc.Encode(statuses)
