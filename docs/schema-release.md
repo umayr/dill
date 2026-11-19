@@ -17,20 +17,20 @@ Legacy checksum and unverified-download environment variables now fail explicitl
 ## Published URLs and migration
 
 The README and `examples/remote/compose.pkl` reference
-`package://pkg.ushd.ca/dill@0.5.0#/dill.pkl`. On 2026-11-18, the registry's
-public HTTPS endpoint returned 404 for the metadata and its checksum. Both
-`PKL=/path/to/pinned/pkl python3 scripts/smoke-schema.py 0.5.0` and evaluation of
-`examples/remote/compose.pkl` with Pkl 0.31.1 and a fresh cache failed. The
-metadata in the registry source repository and the GitHub release archive
-still matched their published SHA-256 files and each other. That confirms the
-artifacts exist; it does not confirm the package URI resolves.
+`package://pkg.ushd.ca/dill@0.5.0#/dill.pkl`. The public endpoint initially
+returned HTTP 404 for metadata and its checksum, even though the registry
+source metadata and GitHub archive matched their published checksums. On
+2026-11-19 at 02:46 UTC, a recheck with Pkl 0.31.1 verified HTTPS metadata,
+archive, checksums, and clean-cache evaluation. The remote example also
+passed with a separate fresh cache. No registry or release changes were made
+as part of this verification.
 
-Use the checked-in schema examples while discovery is unavailable. Do not
-republish an existing version or switch to another version based on archive
-availability alone. Once public discovery is restored, rerun the HTTPS smoke
-check with the pinned Pkl before treating the package as usable from a fresh
-cache. These schema releases are not the experimental roadmap model; no
-`@NEXT` package is promised.
+If discovery fails, use the checked-in schema examples and rerun
+`PKL=/path/to/pinned/pkl python3 scripts/smoke-schema.py 0.5.0` before relying on
+the package URI again. An available GitHub archive or a passing cached
+example does not establish public package discovery. Do not republish an
+existing version to fix an availability problem. These schema releases are
+not the experimental roadmap model; no `@NEXT` package is promised.
 Existing historical archives included the source tree; this change does not
 alter or republish them. Users relying on non-schema files inside an old archive
 must instead obtain those files from source; future archives contain only
@@ -68,9 +68,7 @@ atomicity are not provided.
 
 Run `make validate PKL=/path/to/pinned/pkl` for packaging, allowlist and
 reproducibility checks, mocked immutable publication/retry tests, schema/example
-evaluation and design fixtures. This passed with Pkl 0.31.1 on 2026-11-18 even
-though the clean-cache smoke failed: ordinary example evaluation may reuse the
-local package cache. For #17, the local packaging and simulated immutable
-publication/retry checks pass; clean-cache public discovery remains blocked,
-and no live publication or retry was attempted. These checks do not prove
-engine runtime semantics.
+evaluation and design fixtures. For #17, local packaging and simulated
+immutable publication/retry checks passed with Pkl 0.31.1, as did the separate
+clean-cache public smoke on recheck. No live publication or retry was attempted.
+These checks do not prove engine runtime semantics.
