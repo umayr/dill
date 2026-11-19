@@ -459,8 +459,14 @@ func runPort(ctx context.Context, opts commandOptions, args []string) error {
 		enc.SetIndent("", "  ")
 		return enc.Encode(ports)
 	}
+	return renderPortText(os.Stdout, ports)
+}
+
+func renderPortText(dst io.Writer, ports []string) error {
 	for _, p := range ports {
-		fmt.Println(p)
+		if _, err := fmt.Fprintln(dst, p); err != nil {
+			return err
+		}
 	}
 	return nil
 }
