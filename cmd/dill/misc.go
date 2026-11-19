@@ -230,7 +230,9 @@ func runFmt(ctx context.Context, opts commandOptions, args []string) error {
 		return fmt.Errorf("pkl format: %w", err)
 	}
 	if !opts.Quiet {
-		fmt.Printf("formatted %s\n", opts.ConfigFile)
+		if _, err := fmt.Printf("formatted %s\n", opts.ConfigFile); err != nil {
+			return fmt.Errorf("formatting completed, but writing confirmation failed: %w", err)
+		}
 	}
 	return nil
 }
