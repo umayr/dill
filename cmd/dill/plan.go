@@ -145,7 +145,9 @@ func runPlanNamed(ctx context.Context, opts commandOptions, args []string, name 
 				return fmt.Errorf("rendering plan: %w", err)
 			}
 		default:
-			plan.Render(result, os.Stdout)
+			if err := plan.Render(result, os.Stdout); err != nil {
+				return fmt.Errorf("rendering plan: %w", err)
+			}
 		}
 	}
 
