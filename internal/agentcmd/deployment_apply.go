@@ -105,7 +105,10 @@ func (h *applyEndpoint) review(w http.ResponseWriter, r *http.Request) {
 	_ = json.NewEncoder(w).Encode(result)
 }
 
-const journalHeader = "X-Dill-Journal-Id"
+const (
+	journalHeader         = "X-Dill-Journal-Id"
+	journalCapacityHeader = "X-Dill-Journal-Capacity"
+)
 
 func (h *applyEndpoint) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	journal := r.Header.Values(journalHeader)
@@ -116,6 +119,9 @@ func (h *applyEndpoint) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.Header().Set(journalHeader, h.history.journal)
+	if h.history.nearCapacity() {
+		w.Header().Set(journalCapacityHeader, "low")
+	}
 	if fence {
 		fields, ok := deploymentFields(w, r, "requestId", "stack", "confirm")
 		if !ok || fields["confirm"] != "fence-if-unadmitted" || !validApplyID(fields["requestId"]) || !validDeployStack(fields["stack"]) {
@@ -127,6 +133,11 @@ func (h *applyEndpoint) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		status, err := h.history.fence(fields["requestId"], fields["stack"])
+		if errors.Is(err, errHistoryCapacity) {
+			w.Header().Set(journalCapacityHeader, "low")
+			http.Error(w, errHistoryCapacity.Error(), http.StatusInsufficientStorage)
+			return
+		}
 		if err != nil {
 			http.Error(w, "request could not be fenced; inspect the deployment journal", http.StatusConflict)
 			return
@@ -217,6 +228,11 @@ func (h *applyEndpoint) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			status, owned := h.apply(execCtx, path, stack, fields["selectionDigest"], id, qualifiedTarget, expected)
 			return h.history.finish(status, owned)
 		})
+	}
+	if !reserved && errors.Is(err, errHistoryCapacity) {
+		w.Header().Set(journalCapacityHeader, "low")
+		http.Error(w, errHistoryCapacity.Error(), http.StatusInsufficientStorage)
+		return
 	}
 	if err != nil && !reserved {
 		http.Error(w, "deployment not admitted; review the target and check operation status", 409)
