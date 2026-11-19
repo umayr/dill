@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/umayr/dill/core"
 	"github.com/umayr/dill/internal/config"
 	"github.com/umayr/dill/internal/orchestrator"
 )
@@ -85,6 +86,37 @@ func TestPsReportsOrdinaryInspectionError(t *testing.T) {
 	}
 	if len(got) != 2 || got[0].Name != "a" || got[0].State != "running" || got[1].Name != "b" || got[1].State != "error" || got[1].Status != "gone" {
 		t.Fatalf("unexpected JSON: %s", out)
+	}
+}
+
+type failOnceStatusWriter struct {
+	strings.Builder
+	writes, failAt int
+	err            error
+}
+
+func (w *failOnceStatusWriter) Write(p []byte) (int, error) {
+	w.writes++
+	if w.writes == w.failAt {
+		return 0, w.err
+	}
+	return w.Builder.Write(p)
+}
+
+func TestStatusTextReturnsSummaryWriteFailure(t *testing.T) {
+	out := core.StatusResult{Containers: []*core.ContainerStatus{{Name: "a", State: "error"}}}
+	want := errors.New("synthetic summary write failure")
+	for _, tc := range []struct {
+		name   string
+		failAt int
+	}{{"summary", 1}, {"inspection count", 2}, {"separator", 3}} {
+		t.Run(tc.name, func(t *testing.T) {
+			w := &failOnceStatusWriter{failAt: tc.failAt, err: want}
+			err := renderStatusText(w, out)
+			if !errors.Is(err, want) || w.writes != tc.failAt {
+				t.Fatalf("wanted summary error and no further writes; got err=%v writes=%d, output=%q", err, w.writes, w.String())
+			}
+		})
 	}
 }
 

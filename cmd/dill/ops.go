@@ -6,6 +6,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"strings"
@@ -57,6 +58,10 @@ func runStatus(ctx context.Context, opts commandOptions, args []string) error {
 		return enc.Encode(out)
 	}
 
+	return renderStatusText(os.Stdout, out)
+}
+
+func renderStatusText(dst io.Writer, out core.StatusResult) error {
 	var running, notRunning, inspectionFailed int
 	for _, cs := range out.Containers {
 		switch cs.State {
@@ -68,13 +73,19 @@ func runStatus(ctx context.Context, opts commandOptions, args []string) error {
 			notRunning++
 		}
 	}
-	fmt.Printf("Stack: %s\nEngine: %s\nConfig: %s\nServices: %d\nContainers: %d running, %d not running",
-		out.Stack, out.Engine, out.ConfigFile, out.Services, running, notRunning)
-	if inspectionFailed > 0 {
-		fmt.Printf(", %d inspection failed", inspectionFailed)
+	if _, err := fmt.Fprintf(dst, "Stack: %s\nEngine: %s\nConfig: %s\nServices: %d\nContainers: %d running, %d not running",
+		out.Stack, out.Engine, out.ConfigFile, out.Services, running, notRunning); err != nil {
+		return err
 	}
-	fmt.Print("\n\n")
-	w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
+	if inspectionFailed > 0 {
+		if _, err := fmt.Fprintf(dst, ", %d inspection failed", inspectionFailed); err != nil {
+			return err
+		}
+	}
+	if _, err := fmt.Fprint(dst, "\n\n"); err != nil {
+		return err
+	}
+	w := tabwriter.NewWriter(dst, 0, 0, 2, ' ', 0)
 	fmt.Fprintln(w, "NAME\tSTATE\tSTATUS\tIMAGE\tPORTS")
 	for _, cs := range out.Containers {
 		fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\n", cs.Name, cs.State, cs.Status, cs.Image, strings.Join(cs.Ports, ", "))
