@@ -14,6 +14,35 @@ import (
 	"github.com/umayr/dill/internal/plan"
 )
 
+func TestPlanTextAlignsLongFieldNames(t *testing.T) {
+	cfg := testConfig()
+	cfg.Services["web"].Environment = map[string]string{
+		"MODE":                  "short-value",
+		"APPLICATION_LOG_LEVEL": "long-value",
+	}
+	engine := newFakeEngine()
+	engine.statuses["app_web"] = &orchestrator.ContainerStatus{Name: "app_web", State: "running"}
+	withTestRuntime(t, engine, cfg, func() {
+		out, _, err := captureCommand(t, "", func() error { return run([]string{"plan"}) })
+		if !errors.Is(err, errPlanHasChanges) {
+			t.Fatalf("expected plan drift, got %v", err)
+		}
+		columns := make(map[string]int)
+		for _, line := range strings.Split(out, "\n") {
+			for field, value := range map[string]string{
+				"env.MODE": "short-value", "env.APPLICATION_LOG_LEVEL": "long-value",
+			} {
+				if strings.Contains(line, field+" ") && strings.HasSuffix(line, "[unset] → "+value) {
+					columns[field] = strings.Index(line, "[unset]")
+				}
+			}
+		}
+		if len(columns) != 2 || columns["env.MODE"] != columns["env.APPLICATION_LOG_LEVEL"] {
+			t.Fatalf("expected both fields and aligned values, got columns %v:\n%s", columns, out)
+		}
+	})
+}
+
 func TestPlanDiffTextKeepsMultilineValuesOnOneLine(t *testing.T) {
 	cfg := testConfig()
 	cfg.Services["web"].Environment = map[string]string{"MESSAGE": "first line\nsecond line"}

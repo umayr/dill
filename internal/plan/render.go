@@ -7,6 +7,7 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"unicode/utf8"
 
 	"golang.org/x/term"
 )
@@ -41,8 +42,12 @@ func Render(p *Plan, w io.Writer) {
 			recreates++
 			fmt.Fprintf(w, "  %s %-20s will be recreated\n",
 				colour("~", ansiYellow), ch.Service)
+			fieldWidth := 16
 			for _, d := range ch.Diffs {
-				renderDiff(w, d, isTTY, colour)
+				fieldWidth = max(fieldWidth, utf8.RuneCountInString(d.Field))
+			}
+			for _, d := range ch.Diffs {
+				renderDiff(w, d, fieldWidth, colour)
 			}
 		case KindRemove:
 			removes++
@@ -60,9 +65,9 @@ func Render(p *Plan, w io.Writer) {
 		creates, recreates, removes, noops)
 }
 
-func renderDiff(w io.Writer, d FieldDiff, isTTY bool, colour func(string, string) string) {
+func renderDiff(w io.Writer, d FieldDiff, fieldWidth int, colour func(string, string) string) {
 	const indent = "        "
-	field := fmt.Sprintf("%-16s", d.Field)
+	field := fmt.Sprintf("%-*s", fieldWidth, d.Field)
 	// Keep multiline values on their own diff row, without changing the plan.
 	if strings.ContainsAny(d.Before, "\r\n") {
 		d.Before = strconv.Quote(d.Before)
