@@ -235,11 +235,12 @@ func validatePort(raw, field string) error {
 	if err != nil {
 		return fmt.Errorf("invalid %s port %q", field, raw)
 	}
-	if n < 0 || n > 65535 {
-		return fmt.Errorf("invalid %s port %q: must be between 0 and 65535", field, raw)
+	minPort := 0 // A published port of zero requests a dynamic host port.
+	if field == "target" {
+		minPort = 1
 	}
-	if field == "target" && n == 0 {
-		return fmt.Errorf("invalid target port %q: must be between 1 and 65535", raw)
+	if n < minPort || n > 65535 {
+		return fmt.Errorf("invalid %s port %q: must be between %d and 65535", field, raw, minPort)
 	}
 	return nil
 }
