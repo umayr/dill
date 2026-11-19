@@ -26,8 +26,8 @@ func runInit(opts commandOptions, args []string) error {
 		return err
 	}
 	if opts.DryRun {
-		fmt.Printf("would create %s\n", opts.ConfigFile)
-		return nil
+		_, err := fmt.Printf("would create %s\n", opts.ConfigFile)
+		return err
 	}
 	if _, err := os.Stat(opts.ConfigFile); err == nil {
 		return fmt.Errorf("%s already exists", opts.ConfigFile)

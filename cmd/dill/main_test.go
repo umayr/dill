@@ -224,8 +224,30 @@ func TestInitDryRunDoesNotWriteFile(t *testing.T) {
 	if _, err := os.Stat(path); !os.IsNotExist(err) {
 		t.Fatalf("init --dry-run created file or stat failed: %v", err)
 	}
-	if !strings.Contains(stdout, "would create") {
-		t.Fatalf("init --dry-run stdout = %q", stdout)
+	if want := fmt.Sprintf("would create %s\n", path); stdout != want {
+		t.Fatalf("init --dry-run stdout = %q, want %q", stdout, want)
+	}
+}
+
+func TestInitDryRunReturnsWriteError(t *testing.T) {
+	closed, err := os.CreateTemp(t.TempDir(), "stdout-*")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := closed.Close(); err != nil {
+		t.Fatal(err)
+	}
+	stdout := os.Stdout
+	os.Stdout = closed
+	defer func() { os.Stdout = stdout }()
+
+	path := t.TempDir() + "/compose.pkl"
+	err = runInit(commandOptions{ConfigFile: path}, []string{"--dry-run"})
+	if _, statErr := os.Stat(path); !os.IsNotExist(statErr) {
+		t.Fatalf("init --dry-run created file or stat failed: %v", statErr)
+	}
+	if !errors.Is(err, os.ErrClosed) || exitCodeFor(err) != 1 {
+		t.Fatalf("want closed-writer error and exit 1, got %v (exit %d)", err, exitCodeFor(err))
 	}
 }
 
