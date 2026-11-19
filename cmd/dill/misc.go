@@ -164,7 +164,11 @@ func runValidate(ctx context.Context, opts commandOptions, args []string) (retEr
 	if validateErr != nil {
 		return validateErr
 	}
-	fmt.Fprintf(opts.output(), "%s is valid\n", opts.ConfigFile)
+	source := opts.ConfigFile
+	if *stdin {
+		source = "stdin"
+	}
+	fmt.Fprintf(opts.output(), "%s is valid\n", source)
 	return nil
 }
 
