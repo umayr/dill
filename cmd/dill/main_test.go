@@ -241,6 +241,42 @@ func TestRmDryRunReturnsPreviewWriteError(t *testing.T) {
 	})
 }
 
+func TestRmRunningSkipReturnsOutputErrorAndContinues(t *testing.T) {
+	cfg := testConfig()
+	cfg.Services["worker"] = &config.Service{Image: "busybox"}
+	fake := newFakeEngine()
+	fake.statuses["app_web"] = &orchestrator.ContainerStatus{Name: "app_web", State: "running"}
+	fake.statuses["app_worker"] = &orchestrator.ContainerStatus{Name: "app_worker", State: "exited"}
+	withTestRuntime(t, fake, cfg, func() {
+		rm := func(services ...string) error {
+			return runRm(context.Background(), commandOptions{ConfigFile: "compose.pkl"}, append([]string{"--yes"}, services...))
+		}
+		out, _, err := captureCommand(t, "", func() error { return rm("web") })
+		if err != nil || out != "skipping running container app_web\n" || len(fake.removed) != 0 {
+			t.Fatalf("unexpected skip: output=%q error=%v removed=%v", out, err, fake.removed)
+		}
+
+		closed, err := os.CreateTemp(t.TempDir(), "stdout-*")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := closed.Close(); err != nil {
+			t.Fatal(err)
+		}
+		stdout := os.Stdout
+		os.Stdout = closed
+		defer func() { os.Stdout = stdout }()
+
+		err = rm("web", "worker")
+		if len(fake.removed) != 1 || fake.removed[0] != "app_worker" {
+			t.Fatalf("expected only the later stopped container to be removed, got %v", fake.removed)
+		}
+		if !errors.Is(err, os.ErrClosed) || exitCodeFor(err) != 1 {
+			t.Fatalf("want closed-writer error and exit 1, got %v (exit %d)", err, exitCodeFor(err))
+		}
+	})
+}
+
 func TestRmYesSkipsPrompt(t *testing.T) {
 	fake := newFakeEngine()
 	fake.statuses["app_web"] = &orchestrator.ContainerStatus{Name: "app_web", State: "exited"}
