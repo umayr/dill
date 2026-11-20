@@ -265,9 +265,9 @@ Flags:
 		}
 	}
 
-	// Validate loads its effective env file after parsing its own flags so
-	// setup errors use the selected validation output format.
-	if cmd != cmdSecretCapabilities && cmd != cmdValidate && opts.EnvFile != "" {
+	// These commands load their effective env file after parsing their own
+	// flags so setup errors use the selected output format.
+	if cmd != cmdSecretCapabilities && cmd != cmdValidate && cmd != cmdPlan && cmd != cmdDiff && opts.EnvFile != "" {
 		if err := loadEnvFile(opts.EnvFile); err != nil {
 			return fmt.Errorf("loading env file: %w", err)
 		}
