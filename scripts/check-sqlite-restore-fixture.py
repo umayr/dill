@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 """Run with python3 -I. Offline synthetic evidence, not a Dill restore test.
 
-Only fresh temporary files are used. Distinct files on a local filesystem do
-not prove isolation across mounts, devices, hosts, or failure domains.
+The selected temporary filesystem must support hard links for the alias
+control. Distinct files there do not prove isolation across mounts, devices,
+hosts, or failure domains. Reopen checks do not prove crash durability.
 """
 
 from contextlib import closing
@@ -66,7 +67,14 @@ def main():
             db.commit()
 
             captured.backup(restored)
-            require_rows(restored, captured_rows, "restored snapshot")
+
+        require_distinct(source, backup, destination)
+        with (
+            closing(sqlite3.connect(source)) as db,
+            closing(sqlite3.connect(backup)) as captured,
+            closing(sqlite3.connect(destination)) as restored,
+        ):
+            require_rows(restored, captured_rows, "reopened restored snapshot")
             restored.execute("DELETE FROM samples WHERE id = 2")
             restored.commit()
             require_rows(restored, captured_rows[:1], "updated destination")
