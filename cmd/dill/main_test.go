@@ -55,6 +55,34 @@ func TestJSONUsageFailures(t *testing.T) {
 	}
 }
 
+func TestValidateOperationEarlyFailures(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		args    []string
+		outcome string
+		exit    int
+	}{
+		{"usage", []string{"--format", "operation-v1", "unexpected"}, "invalid_input", 2},
+		{"env-file", []string{"--format", "operation-v1", "--env-file", "/nonexistent/dill-test.env"}, "failed", 1},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			out, _, err := captureCommand(t, "", func() error {
+				return runValidate(context.Background(), commandOptions{}, tc.args)
+			})
+			var result struct {
+				Version       string `json:"version"`
+				Operation     string `json:"operation"`
+				Outcome       string `json:"outcome"`
+				EngineEffects string `json:"engineEffects"`
+				Stack         string `json:"stack"`
+			}
+			if err == nil || exitCodeFor(err) != tc.exit || json.Unmarshal([]byte(out), &result) != nil || result.Version != "dill.validate/1" || result.Operation != "validate" || result.Outcome != tc.outcome || result.EngineEffects != "none" || result.Stack != "" {
+				t.Fatalf("err=%v exit=%d output=%q", err, exitCodeFor(err), out)
+			}
+		})
+	}
+}
+
 func TestPlanJSONOperationalFailure(t *testing.T) {
 	unsetEngineSocket(t)
 	oldLoader, oldEngine := configLoader, engineFactory
