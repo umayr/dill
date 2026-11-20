@@ -51,9 +51,31 @@ func runValidate(ctx context.Context, opts commandOptions, args []string) (retEr
 	addConfigFlags(fs, &opts)
 	format := fs.String("format", "text", "output format: text, json, or operation-v1")
 	stdin := fs.Bool("stdin", false, "read config from stdin instead of file")
+	stack := ""
 	defer func() {
 		if opts.secretMode() {
 			retErr = fixedSecretError(retErr)
+		}
+		if *format == "operation-v1" {
+			outcome := "succeeded"
+			if retErr != nil {
+				outcome = "failed"
+				if errors.Is(retErr, context.Canceled) || errors.Is(retErr, context.DeadlineExceeded) {
+					outcome = "cancelled"
+				} else if failureKind(retErr) == "invalid_input" {
+					outcome = "invalid_input"
+				}
+			}
+			result := struct {
+				Version       string `json:"version"`
+				Operation     string `json:"operation"`
+				Outcome       string `json:"outcome"`
+				EngineEffects string `json:"engineEffects"`
+				Stack         string `json:"stack"`
+			}{"dill.validate/1", "validate", outcome, "none", stack}
+			if err := json.NewEncoder(os.Stdout).Encode(result); err != nil {
+				retErr = fmt.Errorf("rendering failure: %w", err)
+			}
 		}
 		if *format == "json" && retErr != nil {
 			if err := json.NewEncoder(os.Stdout).Encode(map[string]any{"valid": false, "error": retErr.Error(), "kind": failureKind(retErr)}); err != nil {
@@ -129,28 +151,8 @@ func runValidate(ctx context.Context, opts commandOptions, args []string) (retEr
 	}
 
 	if *format == "operation-v1" {
-		outcome := "succeeded"
-		if validateErr != nil {
-			outcome = "failed"
-			if errors.Is(validateErr, context.Canceled) || errors.Is(validateErr, context.DeadlineExceeded) {
-				outcome = "cancelled"
-			} else if failureKind(validateErr) == "invalid_input" {
-				outcome = "invalid_input"
-			}
-		}
-		stack := ""
 		if validateErr == nil {
 			stack = resolveStackNameWithOptions(cfg, opts)
-		}
-		result := struct {
-			Version       string `json:"version"`
-			Operation     string `json:"operation"`
-			Outcome       string `json:"outcome"`
-			EngineEffects string `json:"engineEffects"`
-			Stack         string `json:"stack"`
-		}{"dill.validate/1", "validate", outcome, "none", stack}
-		if err := json.NewEncoder(os.Stdout).Encode(result); err != nil {
-			return fmt.Errorf("rendering failure: %w", err)
 		}
 		return validateErr
 	}
