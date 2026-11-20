@@ -174,6 +174,38 @@ func TestRmPromptsAndAbortsByDefault(t *testing.T) {
 	})
 }
 
+func TestRmDryRunReturnsPreviewWriteError(t *testing.T) {
+	fake := newFakeEngine()
+	fake.statuses["app_web"] = &orchestrator.ContainerStatus{Name: "app_web", State: "exited"}
+	withTestRuntime(t, fake, testConfig(), func() {
+		runDry := func() error {
+			return runRm(context.Background(), commandOptions{ConfigFile: "compose.pkl"}, []string{"--dry-run"})
+		}
+		out, _, err := captureCommand(t, "", runDry)
+		if err != nil || out != "would remove app_web\n" {
+			t.Fatalf("unexpected preview: output=%q error=%v", out, err)
+		}
+		closed, err := os.CreateTemp(t.TempDir(), "stdout-*")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := closed.Close(); err != nil {
+			t.Fatal(err)
+		}
+		stdout := os.Stdout
+		os.Stdout = closed
+		defer func() { os.Stdout = stdout }()
+
+		err = runDry()
+		if len(fake.removed) != 0 {
+			t.Fatalf("dry-run removed containers: %v", fake.removed)
+		}
+		if !errors.Is(err, os.ErrClosed) || exitCodeFor(err) != 1 {
+			t.Fatalf("want closed-writer error and exit 1, got %v (exit %d)", err, exitCodeFor(err))
+		}
+	})
+}
+
 func TestRmYesSkipsPrompt(t *testing.T) {
 	fake := newFakeEngine()
 	fake.statuses["app_web"] = &orchestrator.ContainerStatus{Name: "app_web", State: "exited"}
