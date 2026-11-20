@@ -281,7 +281,8 @@ func runRm(ctx context.Context, opts commandOptions, args []string) error {
 	}
 	if len(names) == 0 {
 		if !opts.Quiet {
-			fmt.Printf("no containers found for stack %s\n", sn)
+			_, err := fmt.Printf("no containers found for stack %s\n", sn)
+			return err
 		}
 		return nil
 	}

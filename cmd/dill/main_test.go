@@ -174,6 +174,41 @@ func TestRmPromptsAndAbortsByDefault(t *testing.T) {
 	})
 }
 
+func TestRmEmptyStackReturnsOutputWriteError(t *testing.T) {
+	fake := newFakeEngine()
+	withTestRuntime(t, fake, testConfig(), func() {
+		rm := func(args ...string) error {
+			return runRm(context.Background(), commandOptions{ConfigFile: "compose.pkl"}, args)
+		}
+		out, _, err := captureCommand(t, "", func() error { return rm() })
+		if err != nil || out != "no containers found for stack app\n" {
+			t.Fatalf("unexpected output: %q, error=%v", out, err)
+		}
+
+		closed, err := os.CreateTemp(t.TempDir(), "stdout-*")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := closed.Close(); err != nil {
+			t.Fatal(err)
+		}
+		stdout := os.Stdout
+		os.Stdout = closed
+		defer func() { os.Stdout = stdout }()
+
+		if err := rm("--quiet"); err != nil {
+			t.Fatalf("quiet rm returned %v with closed stdout", err)
+		}
+		err = rm()
+		if len(fake.removed) != 0 {
+			t.Fatalf("empty rm removed containers: %v", fake.removed)
+		}
+		if !errors.Is(err, os.ErrClosed) || exitCodeFor(err) != 1 {
+			t.Fatalf("want closed-writer error and exit 1, got %v (exit %d)", err, exitCodeFor(err))
+		}
+	})
+}
+
 func TestRmDryRunReturnsPreviewWriteError(t *testing.T) {
 	fake := newFakeEngine()
 	fake.statuses["app_web"] = &orchestrator.ContainerStatus{Name: "app_web", State: "exited"}
