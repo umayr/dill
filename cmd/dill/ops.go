@@ -337,7 +337,9 @@ func runRm(ctx context.Context, opts commandOptions, args []string) error {
 		}
 		if cs.State == "running" {
 			if !opts.Quiet {
-				fmt.Printf("skipping running container %s\n", name)
+				if _, err := fmt.Printf("skipping running container %s\n", name); err != nil {
+					errs = append(errs, err)
+				}
 			}
 			continue
 		}
