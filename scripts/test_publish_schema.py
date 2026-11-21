@@ -39,7 +39,7 @@ class MemoryRegistry:
         self.objects.update({p.name: p.read_bytes() for p in self.files})
 
 
-class ArtifactValidationTests(unittest.TestCase):
+class SchemaArtifactFixture(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self.tmp.cleanup)
@@ -62,6 +62,8 @@ class ArtifactValidationTests(unittest.TestCase):
         metadata.write_text(json.dumps(self.metadata))
         metadata_checksum.write_text(hashlib.sha256(metadata.read_bytes()).hexdigest())
 
+
+class ArtifactValidationTests(SchemaArtifactFixture):
     def test_valid_artifacts(self):
         publisher.validate_schema_artifacts('1.2.3', self.paths)
 

@@ -10,9 +10,27 @@ Dill is a strictly-typed, configuration-as-code orchestrator built with Pkl and 
 
 ## Setup
 
-Install Go and run `make build`. The verified Pkl toolchain pin and release-asset
-SHA-256 digests live in `internal/loader/pkl-toolchain.json`. To install the
-pinned Pkl locally, run `python3 scripts/install-pkl.py /path/to/pkl` and use
+For releases that provide `SHA256SUMS`, download it and the
+`dill-<os>-<arch>` binary for your system from the
+[same GitHub release](https://github.com/umayr/dill/releases). In the download
+directory, verify the binary before renaming or running it (replace the example
+asset name as needed):
+
+```sh
+asset=dill-darwin-arm64
+entry=$(grep -Ex "[0-9a-f]{64}  ${asset}" SHA256SUMS) &&
+  printf '%s\n' "$entry" | shasum -a 256 -c
+```
+
+On Linux, you can use `sha256sum -c -` instead of `shasum -a 256 -c`.
+Proceed only if the check succeeds. The manifest covers the Dill CLI binaries,
+not the Pkl schema or toolchain. It checks the download against the published
+digest; it is not a signature and cannot protect against a compromised release.
+
+To build from source, install Go and run `make build`. The verified Pkl
+toolchain pin and release-asset SHA-256 digests live in
+`internal/loader/pkl-toolchain.json`. To install the pinned Pkl locally, run
+`python3 scripts/install-pkl.py /path/to/pkl` and use
 `PKL=/path/to/pkl make validate`.
 
 Dill uses `DILL_PKL_PATH`, then `pkl` on `PATH`, before downloading the pinned

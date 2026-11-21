@@ -54,8 +54,9 @@ jobs:
             fi
             gh release create "$GITHUB_REF_NAME" --verify-tag --generate-notes
           fi
-      - name: Publish immutable artifacts before registry discovery
+      - name: Publish immutable artifacts and CLI SHA256SUMS before registry discovery
         run: |
+          # The publisher builds SHA256SUMS from the same --binary paths it uploads.
           git -C .registry config user.name 'github-actions[bot]'
           git -C .registry config user.email 'github-actions[bot]@users.noreply.github.com'
           python3 scripts/publish-schema.py --tag "$GITHUB_REF_NAME" --artifacts .out --registry .registry \
