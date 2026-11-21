@@ -8,32 +8,23 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
-	"time"
 
 	"golang.org/x/sys/unix"
 )
 
-type cancelAfter struct {
-	calls int
-	after int
-}
-
-func (c *cancelAfter) Deadline() (time.Time, bool) { return time.Time{}, false }
-func (c *cancelAfter) Done() <-chan struct{}       { return nil }
-func (c *cancelAfter) Value(any) any               { return nil }
-func (c *cancelAfter) Err() error {
-	c.calls++
-	if c.calls >= c.after {
-		return context.Canceled
-	}
-	return nil
-}
 func TestCancellationCleansStage(t *testing.T) {
 	root := t.TempDir()
 	_ = os.Chmod(root, 0700)
 	s := Snapshot{"a/b", []Entry{entry("a/b", "data")}}
-	ctx := &cancelAfter{after: 4}
-	_, err := Receive(ctx, root, s, MaximumLimits())
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	statCreated := func(fd int, name string, st *unix.Stat_t, flags int) error {
+		err := unix.Fstatat(fd, name, st, flags)
+		// Cancel after the new directory exists, not during admission.
+		cancel()
+		return err
+	}
+	_, err := receive(ctx, root, s, MaximumLimits(), renameNoReplace, cleanup, statCreated, identity)
 	if !errors.Is(err, context.Canceled) {
 		t.Fatal(err)
 	}

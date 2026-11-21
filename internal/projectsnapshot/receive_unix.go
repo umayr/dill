@@ -57,8 +57,9 @@ func cleanup(items []created) error {
 // Receive stages a fully validated snapshot under an existing trusted absolute
 // root. Before returning success it syncs files, directories and the publication
 // parent. The guarantees depend on filesystem and OS sync semantics, not an
-// atomic snapshot of the source. A post-publication sync failure is unknown and
-// retains the entire stage; earlier failures attempt identity-checked cleanup.
+// atomic snapshot of the source. The root's aggregate admission budget is
+// enforced before creating a stage. A post-publication sync failure is unknown
+// and retains the entire stage; earlier failures attempt identity-checked cleanup.
 func Receive(ctx context.Context, root string, s Snapshot, limits Limits) (string, error) {
 	return receive(ctx, root, s, limits, renameNoReplace, cleanup, unix.Fstatat, identity)
 }
@@ -73,7 +74,11 @@ func receiveWithSync(ctx context.Context, root string, s Snapshot, limits Limits
 
 // receiveWithRoot optionally opens a duplicate of an already anchored root.
 // Callers supplying rootAnchor must hold its lifetime and coordinate writers.
-func receiveWithRoot(ctx context.Context, root string, rootAnchor int, s Snapshot, limits Limits, publish func(int, string, int, string) error, clean func([]created) error, statAt func(int, string, *unix.Stat_t, int) error, fileIdentity func(int) (uint64, uint64, error), syncFD func(int) error) (result string, err error) {
+func receiveWithRoot(ctx context.Context, root string, rootAnchor int, s Snapshot, limits Limits, publish func(int, string, int, string) error, clean func([]created) error, statAt func(int, string, *unix.Stat_t, int) error, fileIdentity func(int) (uint64, uint64, error), syncFD func(int) error) (string, error) {
+	return receiveWithBudget(ctx, root, rootAnchor, s, limits, publish, clean, statAt, fileIdentity, syncFD, admissionBudget{bytes: stagingBytes, stages: stagingStages})
+}
+
+func receiveWithBudget(ctx context.Context, root string, rootAnchor int, s Snapshot, limits Limits, publish func(int, string, int, string) error, clean func([]created) error, statAt func(int, string, *unix.Stat_t, int) error, fileIdentity func(int) (uint64, uint64, error), syncFD func(int) error, budget admissionBudget) (result string, err error) {
 	if err = Validate(ctx, s, limits); err != nil {
 		return "", err
 	}
@@ -97,6 +102,11 @@ func receiveWithRoot(ctx context.Context, root string, rootAnchor int, s Snapsho
 	}
 	if rst.Mode&077 != 0 || rst.Uid != uint32(os.Geteuid()) {
 		return "", fmt.Errorf("root must be owned by current user and private")
+	}
+	// admit locks rootfd itself. Closing it releases admission only after
+	// publication and sync, or after the request's existing cleanup has run.
+	if e = admit(ctx, rootfd, rst, s, budget); e != nil {
+		return "", e
 	}
 	var b [16]byte
 	if _, e = rand.Read(b[:]); e != nil {
