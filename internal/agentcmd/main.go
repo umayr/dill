@@ -316,9 +316,12 @@ func serveAgent(args []string, out, diagnostics io.Writer, combined bool) error 
 // Main runs the agent CLI without changing process-wide flags or exiting.
 func Main(args []string, out, diagnostics io.Writer, combined bool) int {
 	var err error
-	if len(args) > 0 && args[0] == "init-https" {
+	switch {
+	case len(args) > 0 && args[0] == "init-https":
 		err = initHTTPS(args[1:], diagnostics)
-	} else {
+	case len(args) > 0 && args[0] == "journal-status":
+		err = runJournalStatus(args[1:], out, diagnostics)
+	default:
 		err = serveAgent(args, out, diagnostics, combined)
 	}
 	if errors.Is(err, flag.ErrHelp) {
