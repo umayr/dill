@@ -26,6 +26,15 @@ type Snapshot struct {
 // Any stage remnants must be retained for inspection, not automatically retried.
 var ErrPublicationUnknown = errors.New("snapshot publication durability unknown")
 
+var (
+	// ErrStagingCapacity means the proposed stage cannot fit in the root's budget.
+	ErrStagingCapacity = errors.New("snapshot staging capacity exhausted")
+	// ErrStagingBusy means another receiver holds the root's admission lock.
+	ErrStagingBusy = errors.New("snapshot staging admission busy")
+	// ErrStagingInventory means the receiver could not safely account for the root.
+	ErrStagingInventory = errors.New("snapshot staging inventory unavailable")
+)
+
 // CleanupError distinguishes a failed receive whose identity-bound cleanup
 // also failed. Its wrapped errors can contain paths and must not be logged.
 type CleanupError struct{ Cause, Cleanup error }
