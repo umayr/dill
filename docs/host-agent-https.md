@@ -33,7 +33,7 @@ At the HTTPS authorization boundary:
 
 ## Optional catalogued staging
 
-Both `--https-staging-root` and `--https-staging-catalog` must point to distinct existing private roots. With the deploy credential configured, `--https-deploy-grant stage` enables uploads and `--https-deploy-grant manifest` independently enables lookup. Without the staging flags the routes are unavailable. Staging can store sensitive files, so enable it only when the Brine instance and roots are trusted. It uses the bounded [snapshot staging protocol](snapshot-staging.md) but does not expose `dill-serve` health/status. An ambiguous upload is not safe to retry automatically. Staging alone never evaluates the project, writes to Docker, or deploys it. There is no automatic removal or quota.
+Both `--https-staging-root` and `--https-staging-catalog` must point to distinct existing private roots. With the deploy credential configured, `--https-deploy-grant stage` enables uploads and `--https-deploy-grant manifest` independently enables lookup. Without the staging flags the routes are unavailable. Staging can store sensitive files, so enable it only when the Brine instance and roots are trusted. It uses the bounded [snapshot staging protocol](snapshot-staging.md) but does not expose `dill-serve` health/status. An ambiguous upload is not safe to retry automatically. Staging alone never evaluates the project, writes to Docker, or deploys it. The [staging admission budget](snapshot-admission-budget.md) limits logical file bytes and stage count per root, but does not guarantee physical free space or automatically remove stages.
 
 ## Optional deployment preview (native Linux Docker)
 

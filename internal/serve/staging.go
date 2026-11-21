@@ -252,6 +252,14 @@ func (s *Stager) handle(w http.ResponseWriter, r *http.Request) {
 			reply(w, 500, apiError{"outcome_unknown", "staging outcome unknown; operator inspection required"})
 			return
 		}
+		if errors.Is(err, projectsnapshot.ErrStagingBusy) {
+			reply(w, 429, apiError{"busy", "staging busy"})
+			return
+		}
+		if errors.Is(err, projectsnapshot.ErrStagingCapacity) {
+			reply(w, 507, apiError{"staging_capacity", "snapshot staging capacity exhausted"})
+			return
+		}
 		var cleanupErr *projectsnapshot.CleanupError
 		if errors.As(err, &cleanupErr) {
 			s.diagnostic()
