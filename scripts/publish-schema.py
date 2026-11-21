@@ -4,6 +4,7 @@ import argparse
 import hashlib
 import json
 from pathlib import Path
+import re
 import subprocess
 import tempfile
 import zipfile
@@ -30,6 +31,22 @@ def validate_schema_artifacts(version, paths):
             raise RuntimeError('unexpected schema archive contents')
         if z.testzip() is not None:
             raise RuntimeError('corrupt schema archive')
+
+
+def binary_manifest(binaries):
+    names = [path.name for path in binaries]
+    if len(names) != len(set(names)):
+        raise RuntimeError('duplicate release binary name')
+    lines = []
+    for path in sorted(binaries, key=lambda path: path.name):
+        if not re.fullmatch(r'dill-[a-z0-9]+-[a-z0-9]+', path.name):
+            raise RuntimeError(f'invalid release binary name: {path.name!r}')
+        digest = hashlib.sha256()
+        with path.open('rb') as stream:
+            for chunk in iter(lambda: stream.read(1024 * 1024), b''):
+                digest.update(chunk)
+        lines.append(f'{digest.hexdigest()}  {path.name}\n')
+    return ''.join(lines).encode('ascii')
 
 
 def publish(files, release, registry):
@@ -109,6 +126,10 @@ def main():
     if any(not path.is_file() for path in files):
         raise RuntimeError('missing release artifact')
     validate_schema_artifacts(version, paths)
+    if args.binary:
+        manifest = args.artifacts / 'SHA256SUMS'
+        manifest.write_bytes(binary_manifest(args.binary))
+        files.append(manifest)
     publish(files, GitHubRelease(args.tag), GitRegistry(args.registry, paths[2:]))
 
 

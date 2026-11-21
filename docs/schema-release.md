@@ -50,6 +50,17 @@ changed release asset, a race, permission failure, or non-fast-forward push
 fails closed. Publication is serialized within this repository; external writers
 and manual edits are not made impossible by
 GitHub or Git. Protect release assets, registry branch, and the registry token.
+
+For CLI builds, the publisher generates `SHA256SUMS` from the exact `--binary`
+inputs. It lists lowercase SHA-256 digests and asset basenames sorted by name,
+and is checked and uploaded like any other immutable release asset. It is not
+part of the Pkl package or registry. See the [README](../README.md#setup) for
+user verification. Run the offline manifest regression tests with:
+
+```sh
+python3 -m unittest discover -s scripts -p 'test_release_binary_manifest.py'
+```
+
 Do not delete or replace existing assets to make a retry pass. Re-run the same
 tag workflow with identical source/toolchain after a partial failure; it verifies
 existing objects and fills missing ones. A mismatched version requires a new

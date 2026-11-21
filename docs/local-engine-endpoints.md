@@ -112,7 +112,7 @@ canonical target/stack cross-process locks, durable operation lookup/final/UNKNO
 records, recovery or resumability (#42). A Unix socket can proxy a remote daemon;
 local syntax does not prove target locality, authenticate its peer or make local
 filesystem checks authoritative. Socket permissions and launcher trust remain the
-operator's responsibility. No remote-agent-versus-SSH decision is made here.
+operator's responsibility.
 
 Brine must keep unsupported managed machine mutations disabled until those
 contracts and runtime safety gates exist. Do not substitute a Brine/process-local
