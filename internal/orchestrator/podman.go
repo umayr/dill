@@ -653,7 +653,7 @@ func (p *PodmanEngine) InspectConfig(ctx context.Context, name string) (*LiveCon
 	systemLabels := make(map[string]string)
 	if data.Config != nil {
 		for k, v := range data.Config.Labels {
-			if strings.HasPrefix(k, "dill.") {
+			if strings.HasPrefix(k, config.SystemLabelPrefix) {
 				systemLabels[k] = v
 			} else {
 				userLabels[k] = v

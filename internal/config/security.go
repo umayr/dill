@@ -7,10 +7,12 @@ import (
 	"strings"
 )
 
+// SystemLabelPrefix reserves Dill-owned labels, including ownership and
+// provenance annotations, against service-label overrides.
 const SystemLabelPrefix = "dill."
 
 // ValidateRuntime checks invariants that Pkl's type system cannot express.
-// These checks protect Dill's ownership labels and catch shorthand values that
+// These checks protect Dill's system labels and catch shorthand values that
 // are parsed after Pkl evaluation.
 func ValidateRuntime(cfg *DillConfig) error {
 	if cfg == nil {

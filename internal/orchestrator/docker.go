@@ -583,7 +583,7 @@ func (d *DockerEngine) InspectConfig(ctx context.Context, name string) (*LiveCon
 	userLabels := make(map[string]string)
 	systemLabels := make(map[string]string)
 	for k, v := range info.Config.Labels {
-		if strings.HasPrefix(k, "dill.") {
+		if strings.HasPrefix(k, config.SystemLabelPrefix) {
 			systemLabels[k] = v
 		} else {
 			userLabels[k] = v

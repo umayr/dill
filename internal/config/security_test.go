@@ -9,14 +9,16 @@ import (
 func TestValidateRuntimeRejectsReservedLabels(t *testing.T) {
 	cfg := &DillConfig{
 		Services: map[string]*Service{
-			"web": {
-				Image:  "nginx:alpine",
-				Labels: map[string]string{"dill.stack": "other"},
-			},
+			"web": {Image: "nginx:alpine"},
 		},
 	}
-	if err := ValidateRuntime(cfg); err == nil {
-		t.Fatal("expected reserved label validation error")
+	for _, label := range []string{"dill.stack", "dill.provenance.operation-id", "dill.provenance.snapshot-digest", "dill.provenance.future"} {
+		t.Run(label, func(t *testing.T) {
+			cfg.Services["web"].Labels = map[string]string{label: "override"}
+			if err := ValidateRuntime(cfg); err == nil || !strings.Contains(err.Error(), "reserved prefix") {
+				t.Fatalf("expected reserved label validation error, got %v", err)
+			}
+		})
 	}
 }
 
