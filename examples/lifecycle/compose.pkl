@@ -1,0 +1,22 @@
+amends "../../dill.pkl"
+
+config {
+  name = "lifecycle-demo"
+  jobs {
+    ["check"] {
+      image = "docker.io/library/busybox:1.36"
+      command = List("sh", "-c", "echo checking candidate")
+    }
+  }
+  services {
+    ["app"] {
+      image = "docker.io/library/busybox:1.36"
+      command = List("sleep", "300")
+      hooks {
+        beforeUp {
+          new { job = "check" }
+        }
+      }
+    }
+  }
+}
