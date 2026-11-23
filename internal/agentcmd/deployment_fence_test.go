@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
@@ -41,8 +42,8 @@ func TestFenceWinsWhileApplyIsInPreflight(t *testing.T) {
 		t.Error("fenced apply reached executor")
 		return deploymentStatus{}, nil
 	}}
-	handler := authenticatedHTTPS(nil, nil, nil, h, "credential")
-	request := func(method, path, token, scope, doc string) *httptest.ResponseRecorder {
+	handler := authenticatedHTTPS(nil, nil, nil, h, "synthetic-monitor", "credential", httpsDeployGrants{"fence": true, "status": true, "journal-apply": true, "apply": true})
+	requestWith := func(routes http.Handler, method, path, token, scope, doc string) *httptest.ResponseRecorder {
 		r := httptest.NewRequest(method, "https://agent"+path, strings.NewReader(doc))
 		r.Header.Set("Authorization", "Bearer "+token)
 		r.Header.Set("Content-Type", "application/json")
@@ -50,15 +51,25 @@ func TestFenceWinsWhileApplyIsInPreflight(t *testing.T) {
 			r.Header.Set(journalHeader, scope)
 		}
 		w := httptest.NewRecorder()
-		handler.ServeHTTP(w, r)
+		routes.ServeHTTP(w, r)
 		return w
+	}
+	request := func(method, path, token, scope, doc string) *httptest.ResponseRecorder {
+		return requestWith(handler, method, path, token, scope, doc)
 	}
 	fenceDoc := fmt.Sprintf(`{"requestId":%q,"stack":"demo","confirm":"fence-if-unadmitted"}`, id)
 	fence := func(scope string) *httptest.ResponseRecorder {
 		return request("POST", "/v1/deploy/fence", "credential", scope, fenceDoc)
 	}
-	if w := request("POST", "/v1/deploy/fence", "wrong", journal, fenceDoc); w.Code != 401 {
-		t.Fatalf("unauthenticated fence: %d", w.Code)
+	if w := request("POST", "/v1/deploy/fence", "wrong", journal, fenceDoc); w.Code != http.StatusUnauthorized || w.Header().Get(journalHeader) != "" {
+		t.Fatalf("fence with invalid token: %d", w.Code)
+	}
+	if w := request("POST", "/v1/deploy/fence", "synthetic-monitor", journal, fenceDoc); w.Code != http.StatusForbidden || w.Header().Get(journalHeader) != "" {
+		t.Fatalf("fence with monitor token: %d", w.Code)
+	}
+	statusOnly := authenticatedHTTPS(nil, nil, nil, h, "synthetic-monitor", "credential", httpsDeployGrants{"status": true})
+	if w := requestWith(statusOnly, "POST", "/v1/deploy/fence", "credential", journal, fenceDoc); w.Code != http.StatusForbidden || w.Header().Get(journalHeader) != "" {
+		t.Fatalf("status grant authorized fence: %d", w.Code)
 	}
 	for _, scope := range []string{"", strings.Repeat("5", 32)} {
 		if w := fence(scope); w.Code != 409 {

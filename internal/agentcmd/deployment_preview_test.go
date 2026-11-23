@@ -3,6 +3,7 @@ package agentcmd
 import (
 	"context"
 	"encoding/json"
+	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
@@ -38,7 +39,7 @@ func TestHTTPSDeploymentPreviewAdmission(t *testing.T) {
 			return preflight.Result{Stack: stack}, nil
 		},
 	}
-	h := authenticatedHTTPS(nil, nil, preview, nil, "test-token")
+	h := authenticatedHTTPS(nil, nil, preview, nil, "synthetic-monitor", "test-token", httpsDeployGrants{"preview": true})
 	for _, tt := range []struct {
 		method, path, token, body string
 		status                    int
@@ -62,6 +63,52 @@ func TestHTTPSDeploymentPreviewAdmission(t *testing.T) {
 	}
 	if calls != 1 {
 		t.Fatalf("preview called %d times, want exactly once", calls)
+	}
+}
+
+func TestHTTPSAuthorizedPreviewPreservesJournalChecks(t *testing.T) {
+	history, err := openDeploymentHistory(historyDirectory(t), operation.Digest("synthetic target"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer history.dir.Close()
+	id, digest := strings.Repeat("1", 32), strings.Repeat("a", 64)
+	doc := `{"stageId":"` + id + `","manifestSha256":"` + digest + `","stack":"demo"}`
+	calls := 0
+	managed := &applyEndpoint{history: history, previewEndpoint: previewEndpoint{
+		stages: stageGate(func(_ context.Context, gotID, gotDigest string, use func(string) error) error {
+			if gotID != id || gotDigest != digest {
+				t.Fatal("managed preview lost snapshot binding")
+			}
+			return use("/synthetic/stage/main.pkl")
+		}),
+		preview: func(_ context.Context, _, stack string) (preflight.Result, error) {
+			calls++
+			return preflight.Result{Stack: stack, Resources: []preflight.Resource{{Presence: "absent"}}}, nil
+		},
+	}}
+	unmanaged := http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
+		t.Fatal("managed preview fell back to the standalone handler")
+	})
+	h := authenticatedHTTPS(nil, nil, unmanaged, managed, "synthetic-monitor", "synthetic-deploy", httpsDeployGrants{"preview": true})
+	request := func(token, journal string) *httptest.ResponseRecorder {
+		r := httptest.NewRequest(http.MethodPost, "https://agent/v1/deploy/preview", strings.NewReader(doc))
+		r.Header.Set("Authorization", "Bearer "+token)
+		r.Header.Set("Content-Type", "application/json")
+		r.Header.Set(journalHeader, journal)
+		w := httptest.NewRecorder()
+		h.ServeHTTP(w, r)
+		return w
+	}
+	if w := request("synthetic-monitor", history.journal); w.Code != http.StatusForbidden || w.Header().Get(journalHeader) != "" || calls != 0 {
+		t.Fatal("monitor request reached journal-aware preview", w.Code)
+	}
+	if w := request("synthetic-deploy", strings.Repeat("b", 32)); w.Code != http.StatusConflict || calls != 0 {
+		t.Fatal("authorized preview bypassed journal check", w.Code)
+	}
+	w := request("synthetic-deploy", history.journal)
+	if w.Code != http.StatusOK || w.Header().Get(journalHeader) != history.journal || w.Header().Get("X-Dill-Deployment-Mode") != "create" || calls != 1 {
+		t.Fatal("authorized preview did not return managed journal metadata", w.Code)
 	}
 }
 
