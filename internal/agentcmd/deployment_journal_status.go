@@ -65,36 +65,71 @@ func runJournalStatus(args []string, out, diagnostics io.Writer) error {
 	return nil
 }
 
+func inspectJournalStatus(path string) (journalStatusSummary, error) {
+	file, size, err := readOfflineDeploymentJournal(path)
+	if err != nil {
+		return journalStatusSummary{}, err
+	}
+	ceiling := historyByteLimit - historyOutcomeSpace
+	summary := journalStatusSummary{
+		Version: "dill.agent-journal-status/1", JournalVersion: file.Version,
+		BytesUsed: size, ByteLimit: historyByteLimit, LowCapacity: size >= historyByteLimit*9/10,
+		AdmissionByteCeiling: ceiling, AdmissionHeadroomBytes: max(0, ceiling-size), OutcomeReserveBytes: historyOutcomeSpace,
+		Records: len(file.Rows),
+	}
+	for _, r := range file.Rows {
+		switch r.State {
+		case "not-admitted":
+			summary.NotAdmitted++
+		case "succeeded":
+			summary.Succeeded++
+		case "failed":
+			if r.Effects == "none" {
+				summary.FailedNoEffects++
+			} else {
+				summary.FailedPartial++
+			}
+		case "pending", "unknown":
+			summary.Unresolved++
+		}
+	}
+	return summary, nil
+}
+
 // Do not use openDeploymentHistory here: it can initialize, upgrade, compact,
 // or sync journal state. Hold a shared lock on the existing directory inode so
-// a cooperating agent cannot start writing while we inspect it.
-func inspectJournalStatus(path string) (journalStatusSummary, error) {
+// a cooperating agent cannot start writing while we read and validate it.
+func readOfflineDeploymentJournal(path string) (deploymentHistoryFile, int, error) {
 	if !filepath.IsAbs(path) || filepath.Clean(path) != path {
-		return journalStatusSummary{}, errJournalStatusDir
+		return deploymentHistoryFile{}, 0, errJournalStatusDir
 	}
 	fd, err := unix.Open(path, unix.O_RDONLY|unix.O_DIRECTORY|unix.O_NOFOLLOW|unix.O_CLOEXEC, 0)
 	if err != nil {
-		return journalStatusSummary{}, errJournalStatusDir
+		return deploymentHistoryFile{}, 0, errJournalStatusDir
 	}
 	defer unix.Close(fd)
 	var dir unix.Stat_t
 	if unix.Fstat(fd, &dir) != nil || dir.Mode&077 != 0 || int(dir.Uid) != os.Geteuid() {
-		return journalStatusSummary{}, errJournalStatusDir
+		return deploymentHistoryFile{}, 0, errJournalStatusDir
 	}
 	if err := unix.Flock(fd, unix.LOCK_SH|unix.LOCK_NB); err != nil {
 		if errors.Is(err, unix.EWOULDBLOCK) || errors.Is(err, unix.EAGAIN) {
-			return journalStatusSummary{}, errJournalStatusBusy
+			return deploymentHistoryFile{}, 0, errJournalStatusBusy
 		}
-		return journalStatusSummary{}, errJournalStatusLock
+		return deploymentHistoryFile{}, 0, errJournalStatusLock
 	}
-	raw, err := readJournalStatusFile(fd)
+	raw, err := readOfflineDeploymentJournalFile(fd)
 	if err != nil {
-		return journalStatusSummary{}, err
+		return deploymentHistoryFile{}, 0, err
 	}
-	return summarizeJournalStatus(raw)
+	file, err := parseOfflineDeploymentJournal(raw)
+	if err != nil {
+		return deploymentHistoryFile{}, 0, err
+	}
+	return file, len(raw), nil
 }
 
-func readJournalStatusFile(dir int) ([]byte, error) {
+func readOfflineDeploymentJournalFile(dir int) ([]byte, error) {
 	const name = "operations.json"
 	valid := func(st unix.Stat_t) bool {
 		return st.Mode&unix.S_IFMT == unix.S_IFREG && st.Mode&077 == 0 && int(st.Uid) == os.Geteuid() && st.Size <= historyByteLimit
@@ -127,58 +162,37 @@ func readJournalStatusFile(dir int) ([]byte, error) {
 // Use the live loader's pure record and ownership checks without calling its
 // mutating load path. There is no engine enrollment here, only a digest-shape
 // check rather than a comparison with the agent's configured target.
-func summarizeJournalStatus(raw []byte) (journalStatusSummary, error) {
+func parseOfflineDeploymentJournal(raw []byte) (deploymentHistoryFile, error) {
 	var file deploymentHistoryFile
 	dec := json.NewDecoder(bytes.NewReader(raw))
 	dec.DisallowUnknownFields()
 	if dec.Decode(&file) != nil || dec.Decode(new(any)) != io.EOF || file.Rows == nil || !preflight.ValidDigest(file.Target) ||
 		(file.Version != 1 && file.Version != 2) || (file.Version == 1 && len(file.Rows) > legacyHistoryLimit) ||
 		((file.Version == 2 || file.Journal != "") && !validApplyID(file.Journal)) {
-		return journalStatusSummary{}, errJournalStatusInvalid
+		return deploymentHistoryFile{}, errJournalStatusInvalid
 	}
 	canonical, err := canonicalHistory(file)
 	if err != nil || !bytes.Equal(canonical, raw) {
-		return journalStatusSummary{}, errJournalStatusInvalid
+		return deploymentHistoryFile{}, errJournalStatusInvalid
 	}
 
-	ceiling := historyByteLimit - historyOutcomeSpace
-	summary := journalStatusSummary{
-		Version: "dill.agent-journal-status/1", JournalVersion: file.Version,
-		BytesUsed: len(raw), ByteLimit: historyByteLimit, LowCapacity: len(raw) >= historyByteLimit*9/10,
-		AdmissionByteCeiling: ceiling, AdmissionHeadroomBytes: max(0, ceiling-len(raw)), OutcomeReserveBytes: historyOutcomeSpace,
-		Records: len(file.Rows),
-	}
 	seen := make(map[string]bool, len(file.Rows))
 	latest := make(map[string]deploymentRecord)
 	for _, r := range file.Rows {
 		if seen[r.RequestID] || !(validDeploymentRecord(r) || file.Version == 2 && validCompactRecord(r)) ||
 			(r.Mode != "fence" && !allowedDeploymentMode(recordNextMode(latest[r.Stack]), r.Mode)) {
-			return journalStatusSummary{}, errJournalStatusInvalid
+			return deploymentHistoryFile{}, errJournalStatusInvalid
 		}
 		seen[r.RequestID] = true
 		if !ignoresOwnership(r) {
 			latest[r.Stack] = r
 		}
-		switch r.State {
-		case "not-admitted":
-			summary.NotAdmitted++
-		case "succeeded":
-			summary.Succeeded++
-		case "failed":
-			if r.Effects == "none" {
-				summary.FailedNoEffects++
-			} else {
-				summary.FailedPartial++
-			}
-		case "pending", "unknown":
-			summary.Unresolved++
-		}
 	}
 	keep := ownershipPayloads(file.Rows)
 	for _, r := range file.Rows {
 		if keep[r.RequestID] && !validDeploymentRecord(r) {
-			return journalStatusSummary{}, errJournalStatusInvalid
+			return deploymentHistoryFile{}, errJournalStatusInvalid
 		}
 	}
-	return summary, nil
+	return file, nil
 }
