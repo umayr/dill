@@ -11,6 +11,7 @@ type DillConfig struct {
 	Secrets  []SecretRequirement `json:"secrets"`
 	Engine   string              `json:"engine"`
 	Services map[string]*Service `json:"services"`
+	Jobs     map[string]*Job     `json:"jobs"`
 }
 
 type Service struct {
@@ -19,6 +20,7 @@ type Service struct {
 	// Relative bind-mount paths are resolved against it.
 	BaseDir string `json:"-"`
 
+	Hooks          *LifecycleHooks   `json:"hooks"`
 	Secrets        []SecretGrant     `json:"secrets"`
 	Image          string            `json:"image"`
 	ContainerName  string            `json:"containerName"`
