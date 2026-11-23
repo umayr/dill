@@ -7,6 +7,8 @@ import (
 	"io"
 	"strings"
 	"testing"
+	"testing/synctest"
+	"time"
 
 	"github.com/umayr/dill/internal/metricsmodel"
 )
@@ -143,6 +145,82 @@ func TestHostCancellationClosesFile(t *testing.T) {
 	unavailable(t, s, err)
 	if file.closed != 1 || r.calls != 0 {
 		t.Fatalf("closes=%d reads=%d", file.closed, r.calls)
+	}
+}
+
+type readerFunc func([]byte) (int, error)
+
+func (f readerFunc) Read(p []byte) (int, error) { return f(p) }
+
+func TestHostCancellationDuringMeteredRead(t *testing.T) {
+	for _, cooperates := range []bool{true, false} {
+		t.Run(fmt.Sprintf("cooperates=%t", cooperates), func(t *testing.T) {
+			synctest.Test(t, func(t *testing.T) {
+				ctx, cancel := context.WithCancel(context.Background())
+				defer cancel()
+				entered, release := make(chan struct{}), make(chan struct{}, 1)
+				defer close(release)
+				file := &hostFile{}
+				var reads, opens, releases int
+				c := New(func(context.Context, ReadBudget, string) (BoundSources, error) {
+					return BoundSources{
+						Host: NewHostMemorySource(true, func(callCtx context.Context) (io.ReadCloser, error) {
+							opens++
+							file.Reader = readerFunc(func(p []byte) (int, error) {
+								reads++
+								close(entered)
+								if cooperates {
+									<-callCtx.Done()
+									return 0, callCtx.Err()
+								}
+								<-release // Ignores the context; the meter cannot interrupt Read.
+								return copy(p, goodMeminfo), io.EOF
+							})
+							return file, nil
+						}),
+						Release: func() { releases++ },
+					}, nil
+				})
+				done := make(chan struct{})
+				var s metricsmodel.Snapshot
+				var err error
+				go func() {
+					defer close(done)
+					s, err = c.Collect(ctx, daemonID)
+				}()
+				select {
+				case <-entered:
+				case <-time.After(time.Second):
+					t.Fatal("metered read did not start")
+				}
+				canceledAt := time.Now()
+				cancel()
+				if !cooperates {
+					synctest.Wait()
+					select {
+					case <-done:
+						t.Fatal("acquisition escaped a blocked reader")
+					default:
+					}
+					if file.closed != 0 || releases != 0 {
+						t.Fatal("cleanup ran before the read returned")
+					}
+					release <- struct{}{}
+				}
+				select {
+				case <-done:
+				case <-time.After(CallTimeout):
+					t.Fatal("canceled acquisition did not return promptly")
+				}
+				if cooperates && time.Since(canceledAt) != 0 {
+					t.Fatal("cooperating read waited for a timer instead of cancellation")
+				}
+				unavailable(t, s, err)
+				if opens != 1 || reads != 1 || file.closed != 1 || releases != 1 {
+					t.Fatalf("opens=%d reads=%d closes=%d binding releases=%d", opens, reads, file.closed, releases)
+				}
+			})
+		})
 	}
 }
 

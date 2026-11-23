@@ -10,6 +10,38 @@ import (
 	"github.com/umayr/dill/internal/metricsmodel"
 )
 
+func TestCallBudgetCancellationBeforeAndAfterAdmission(t *testing.T) {
+	upstream := upstreamBudget{callsLeft: 1}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	b := ReadBudget{ctx: ctx, upstream: &upstream}
+	unexpected := func(context.Context) error {
+		t.Fatal("canceled operation unexpectedly started")
+		return nil
+	}
+	if err := b.Do(unexpected); err != context.Canceled || upstream.callsLeft != 1 || upstream.breach != nil {
+		t.Fatalf("cancellation before admission: err=%v remaining=%d breach=%v", err, upstream.callsLeft, upstream.breach)
+	}
+
+	ctx, cancel = context.WithTimeout(context.Background(), CallTimeout)
+	defer cancel()
+	b.ctx = ctx
+	if err := b.Do(func(callCtx context.Context) error {
+		if callCtx != ctx || upstream.callsLeft != 0 {
+			t.Fatal("operation did not receive the budget context or was not charged before invocation")
+		}
+		cancel()
+		return callCtx.Err()
+	}); err != context.Canceled || upstream.callsLeft != 0 || upstream.breach != nil {
+		t.Fatalf("cancellation after admission: err=%v remaining=%d breach=%v", err, upstream.callsLeft, upstream.breach)
+	}
+	// Cancellation takes precedence over exhaustion at zero remaining. A
+	// canceled follow-up is neither started nor treated as a budget breach.
+	if err := b.Do(unexpected); err != context.Canceled || upstream.callsLeft != 0 || upstream.breach != nil {
+		t.Fatalf("canceled follow-up: err=%v remaining=%d breach=%v", err, upstream.callsLeft, upstream.breach)
+	}
+}
+
 func TestSharedCallBudgetFullScrapeAndOverspend(t *testing.T) {
 	for _, extra := range []bool{false, true} {
 		t.Run(fmt.Sprintf("extra_binding_read=%t", extra), func(t *testing.T) {
