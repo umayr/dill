@@ -5,7 +5,9 @@ package integration
 import (
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -18,13 +20,14 @@ func TestFailedBeforeUpdatePreservesRunningVersion(t *testing.T) {
 	bin := dillBinary(t, root)
 	stack := fmt.Sprintf("dill-hooks-%d", time.Now().UnixNano())
 	cfg := filepath.Join(t.TempDir(), "compose.pkl")
-	write := func(version string) {
+	write := func(version, down string) {
 		t.Helper()
 		body := fmt.Sprintf(`amends %q
 config {
  name = %q
  engine = %q
  jobs {
+   ["finish"] { image = "docker.io/library/busybox:1.36"; command = List("true") }
    ["reject"] {
      image = "docker.io/library/busybox:1.36"
      command = List("sh", "-c", "exit 3")
@@ -35,20 +38,33 @@ config {
      image = "docker.io/library/busybox:1.36"
      command = List("sleep", "300")
      environment { ["PUBLIC"] = %q }
-     hooks { beforeUpdate { new { job = "reject" } } }
+     hooks { beforeUpdate { new { job = "reject" } }; beforeDown { new { job = "finish" } }; afterDown { new { job = %q } } }
    }
  }
 }
-`, filepath.ToSlash(filepath.Join(root, "dill.pkl")), stack, env.engine, version)
+`, filepath.ToSlash(filepath.Join(root, "dill.pkl")), stack, env.engine, version, down)
 		if err := os.WriteFile(cfg, []byte(body), 0600); err != nil {
 			t.Fatal(err)
 		}
 	}
-	write("old")
+	write("old", "reject")
 	cleanupStack(t, bin, cfg, stack)
 	runDill(t, true, bin, "-f", cfg, "--timeout", testTimeout(), "up")
 	assertExecOutput(t, bin, cfg, "old\n")
-	write("new")
-	runDill(t, false, bin, "-f", cfg, "--timeout", testTimeout(), "up")
+	write("new", "reject")
+	expectFailure := func(want string, args ...string) {
+		t.Helper()
+		out, err := exec.Command(bin, append([]string{"-f", cfg, "--timeout", testTimeout()}, args...)...).CombinedOutput()
+		if err == nil || !strings.Contains(string(out), want) {
+			t.Fatalf("%v: err=%v output=%s", args, err, out)
+		}
+	}
+	expectFailure("exited 3", "up")
 	assertExecOutput(t, bin, cfg, "old\n")
+	write("old", "finish")
+	expectFailure("definition unavailable or changed", "down")
+	assertExecOutput(t, bin, cfg, "old\n")
+	write("old", "reject")
+	expectFailure("afterDown failed", "down")
+	assertEmptyStack(t, bin, cfg)
 }

@@ -2,6 +2,7 @@ package core
 
 import (
 	"context"
+	"crypto/sha256"
 	"errors"
 	"fmt"
 	"github.com/umayr/dill/internal/config"
@@ -159,7 +160,7 @@ func (r *jobRun) execute(ctx context.Context, n string, j *config.Job) error {
 		env = append(env, k+"="+v)
 	}
 	sort.Strings(env)
-	id, err := e.CreateJob(ctx, orchestrator.JobSpec{Image: j.Image, Command: j.Command, Env: env, User: j.User, Network: r.stack})
+	id, err := e.CreateJob(ctx, orchestrator.JobSpec{Name: fmt.Sprintf("dill-job-%x", sha256.Sum256([]byte(r.stack+"\x00"+n))), Image: j.Image, Command: j.Command, Env: env, User: j.User, Network: r.stack})
 	if err != nil {
 		return fmt.Errorf("create job %q: %w", n, err)
 	}
@@ -170,13 +171,14 @@ func (r *jobRun) execute(ctx context.Context, n string, j *config.Job) error {
 	if err != nil || !result.Known {
 		return fmt.Errorf("job %q outcome unknown; inspect %s", n, id)
 	}
-	if result.ExitCode != 0 {
-		return fmt.Errorf("job %q exited %d; inspect %s", n, result.ExitCode, id)
-	}
+
 	cleanup, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
 	defer cancel()
 	if err = e.RemoveJob(cleanup, id); err != nil {
-		return fmt.Errorf("job %q succeeded; cleanup of %s failed", n, id)
+		return fmt.Errorf("job %q exited %d; cleanup of %s failed", n, result.ExitCode, id)
+	}
+	if result.ExitCode != 0 {
+		return fmt.Errorf("job %q exited %d", n, result.ExitCode)
 	}
 	return nil
 }

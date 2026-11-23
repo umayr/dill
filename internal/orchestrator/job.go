@@ -14,6 +14,7 @@ import (
 // JobSpec is deliberately independent of service configuration. Image must be
 // locally available; no pull or retry is performed. Values are never logged.
 type JobSpec struct {
+	Name    string
 	Image   string
 	Network string
 	User    string
@@ -41,7 +42,7 @@ var jobID = regexp.MustCompile(`^[a-f0-9]{64}$`)
 func validJobID(id string) bool { return jobID.MatchString(id) }
 
 func (d *DockerEngine) CreateJob(ctx context.Context, s JobSpec) (string, error) {
-	r, e := d.cli.ContainerCreate(ctx, &container.Config{Image: s.Image, User: s.User, Cmd: s.Command, Env: s.Env}, &container.HostConfig{NetworkMode: container.NetworkMode(s.Network), RestartPolicy: container.RestartPolicy{Name: container.RestartPolicyDisabled}}, nil, nil, "")
+	r, e := d.cli.ContainerCreate(ctx, &container.Config{Image: s.Image, User: s.User, Cmd: s.Command, Env: s.Env}, &container.HostConfig{NetworkMode: container.NetworkMode(s.Network), RestartPolicy: container.RestartPolicy{Name: container.RestartPolicyDisabled}}, nil, nil, s.Name)
 	if e != nil || !validJobID(r.ID) {
 		return "", errJob
 	}
@@ -85,6 +86,7 @@ func (d *DockerEngine) RemoveJob(ctx context.Context, id string) error {
 
 func (p *PodmanEngine) CreateJob(ctx context.Context, s JobSpec) (string, error) {
 	spec := specgen.NewSpecGenerator(s.Image, false)
+	spec.Name = s.Name
 	spec.Command = s.Command
 	spec.User = s.User
 	if s.Network != "" {

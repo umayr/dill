@@ -150,6 +150,9 @@ func validateLifecycle(cfg *DillConfig) error {
 			}
 		}
 	}
+	if len(cfg.Jobs) == 0 {
+		return nil
+	} // Preserve ordinary service graph diagnostics.
 	state := map[string]int{}
 	var visit func(string) error
 	visit = func(n string) error {

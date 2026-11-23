@@ -238,6 +238,7 @@ func Deploy(ctx context.Context, cfg *Config, o DeployOptions) error {
 			filtered.Changes = append(filtered.Changes, ch)
 		}
 	}
+	filtered.PopulateHooks(cfg)
 	if o.Planned != nil {
 		o.Planned(filtered)
 	}

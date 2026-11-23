@@ -63,6 +63,9 @@ func Render(p *Plan, w io.Writer) error {
 		}
 	}
 
+	for _, step := range p.Hooks {
+		fmt.Fprintf(w, "  hook %s %s: %s\n", step.Phase, step.Job, strings.Join(step.Services, ", "))
+	}
 	fmt.Fprintln(w)
 	fmt.Fprintf(w, "Plan: %d to create, %d to recreate, %d to remove, %d unchanged.\n",
 		creates, recreates, removes, noops)
@@ -119,8 +122,9 @@ func RenderJSON(p *Plan, w io.Writer) error {
 		Noop     int `json:"noop"`
 	}
 	type output struct {
-		Changes []Change `json:"changes"`
-		Summary summary  `json:"summary"`
+		Hooks   []HookStep `json:"hooks,omitempty"`
+		Changes []Change   `json:"changes"`
+		Summary summary    `json:"summary"`
 	}
 
 	var s summary
@@ -144,7 +148,7 @@ func RenderJSON(p *Plan, w io.Writer) error {
 
 	enc := json.NewEncoder(w)
 	enc.SetIndent("", "  ")
-	return enc.Encode(output{Changes: changes, Summary: s})
+	return enc.Encode(output{Changes: changes, Summary: s, Hooks: p.Hooks})
 }
 
 func isTerminal(w io.Writer) bool {

@@ -22,8 +22,9 @@ type OwnedResource struct{ Name, Service, ID string }
 // not a persisted authorization token, rollback plan, or permission to delete
 // volumes/images/networks. Capture it before requesting destructive confirmation.
 type RemovalIntent struct {
-	Stack     string
-	Resources []OwnedResource
+	Stack           string
+	Resources       []OwnedResource
+	DownHookDigests map[string]string
 }
 
 func CaptureRemovalIntent(ctx context.Context, engine RemovalEngine, stack string, targets []RemovalTarget) (*RemovalIntent, error) {
@@ -53,6 +54,12 @@ func CaptureRemovalIntent(ctx context.Context, engine RemovalEngine, stack strin
 		}
 		if live.ID == "" {
 			return nil, &ResourceError{"capture removal intent", target.Name, "", errors.New("empty container ID")}
+		}
+		if digest := live.SystemLabels["dill.down-hooks-sha256"]; digest != "" {
+			if intent.DownHookDigests == nil {
+				intent.DownHookDigests = map[string]string{}
+			}
+			intent.DownHookDigests[live.ID] = digest
 		}
 		intent.Resources = append(intent.Resources, OwnedResource{target.Name, service, live.ID})
 	}
