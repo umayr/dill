@@ -337,6 +337,9 @@ func DownWithHookEvents(ctx context.Context, engine DownEngine, stackName string
 	// failed ownership target. All identities are captured before any mutation.
 	var after func() error
 	if prepare != nil {
+		if len(errs) > 0 && len(intent.DownHookDigests) > 0 {
+			return errors.Join(errs...)
+		}
 		after, err = prepare(intent)
 		if err != nil {
 			return errors.Join(errors.Join(errs...), err)

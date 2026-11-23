@@ -60,6 +60,12 @@ config {
 		}
 	}
 	expectFailure("exited 3", "up")
+	expectFailure("exited 3", "job", "reject")
+	runDill(t, true, bin, "-f", cfg, "job", "finish")
+	out, _ := exec.Command(bin, "-f", cfg, "plan", "--format", "json").Output()
+	if !strings.Contains(string(out), `"beforeUp"`) || !strings.Contains(string(out), `"reject"`) {
+		t.Fatalf("missing hook in plan: %s", out)
+	}
 	assertExecOutput(t, bin, cfg, "old\n")
 	write("old", "finish")
 	expectFailure("definition unavailable or changed", "down")

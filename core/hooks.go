@@ -160,9 +160,10 @@ func (r *jobRun) execute(ctx context.Context, n string, j *config.Job) error {
 		env = append(env, k+"="+v)
 	}
 	sort.Strings(env)
-	id, err := e.CreateJob(ctx, orchestrator.JobSpec{Name: fmt.Sprintf("dill-job-%x", sha256.Sum256([]byte(r.stack+"\x00"+n))), Image: j.Image, Command: j.Command, Env: env, User: j.User, Network: r.stack})
+	identity := fmt.Sprintf("dill-job-%x", sha256.Sum256([]byte(r.stack+"\x00"+n)))
+	id, err := e.CreateJob(ctx, orchestrator.JobSpec{Name: identity, Image: j.Image, Command: j.Command, Env: env, User: j.User, Network: r.stack})
 	if err != nil {
-		return fmt.Errorf("create job %q: %w", n, err)
+		return fmt.Errorf("create job %q: outcome unknown; inspect container name %s before retry: %w", n, identity, err)
 	}
 	if err = e.StartJob(ctx, id); err != nil {
 		return fmt.Errorf("job %q outcome unknown; inspect %s: %w", n, id, err)

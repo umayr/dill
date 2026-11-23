@@ -295,7 +295,7 @@ func Deploy(ctx context.Context, cfg *Config, o DeployOptions) error {
 	}
 	after := jobRun{cfg: cfg, engine: engine, stack: o.Stack}
 	if err := after.run(runCtx, post); err != nil {
-		return fmt.Errorf("applied; verification failed: %w", err)
+		return fmt.Errorf("applied; verification failed (a no-op up does not rerun checks; inspect the target and use dill job for reviewed verification): %w", err)
 	}
 	return nil
 }
