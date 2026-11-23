@@ -92,12 +92,13 @@ func Prepare(cfg Config, hooks Hooks) (*http.Server, error) {
 			Certificates:           []tls.Certificate{certificate},
 			SessionTicketsDisabled: true,
 		},
-		Protocols:         protocols,
-		ReadHeaderTimeout: 2 * time.Second,
-		ReadTimeout:       2 * time.Second,
-		WriteTimeout:      2 * time.Second,
-		IdleTimeout:       5 * time.Second,
-		MaxHeaderBytes:    8 << 10,
+		DisableGeneralOptionsHandler: true,
+		Protocols:                    protocols,
+		ReadHeaderTimeout:            2 * time.Second,
+		ReadTimeout:                  2 * time.Second,
+		WriteTimeout:                 2 * time.Second,
+		IdleTimeout:                  5 * time.Second,
+		MaxHeaderBytes:               8 << 10,
 	}, nil
 }
 

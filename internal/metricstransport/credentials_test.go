@@ -124,6 +124,15 @@ func TestPrepareUnstartedAndOptIn(t *testing.T) {
 		server.ReadHeaderTimeout <= 0 || server.ReadTimeout <= 0 || server.WriteTimeout <= 0 || server.IdleTimeout <= 0 || server.MaxHeaderBytes <= 0 {
 		t.Fatal("unexpected insecure or unbounded server configuration")
 	}
+	if !server.DisableGeneralOptionsHandler {
+		t.Fatal("OPTIONS * must be dispatched to the scrape handler")
+	}
+	r := scrapeRequest()
+	r.Method, r.RequestURI, r.URL.Path = http.MethodOptions, "*", "*"
+	r.Header.Del("Authorization")
+	if w := record(server.Handler, r); w.Code != http.StatusNotFound || w.Header().Get("Cache-Control") != "no-store" {
+		t.Fatalf("OPTIONS *: status %d, Cache-Control %q", w.Code, w.Header().Get("Cache-Control"))
+	}
 	if w := record(server.Handler, scrapeRequest()); w.Code != 200 {
 		t.Fatalf("unstarted server handler status: %d", w.Code)
 	}
