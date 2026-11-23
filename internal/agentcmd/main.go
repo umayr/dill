@@ -335,6 +335,8 @@ func Main(args []string, out, diagnostics io.Writer, combined bool) int {
 		err = initHTTPS(args[1:], diagnostics)
 	case len(args) > 0 && args[0] == "journal-status":
 		err = runJournalStatus(args[1:], out, diagnostics)
+	case len(args) > 0 && args[0] == "journal-recovery":
+		err = runJournalRecovery(args[1:], out, diagnostics)
 	default:
 		err = serveAgent(args, out, diagnostics, combined)
 	}
