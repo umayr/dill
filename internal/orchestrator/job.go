@@ -85,11 +85,16 @@ func (d *DockerEngine) RemoveJob(ctx context.Context, id string) error {
 }
 
 func (p *PodmanEngine) CreateJob(ctx context.Context, s JobSpec) (string, error) {
-	spec := specgen.NewSpecGenerator(s.Image, false)
+	image, err := p.LocalImageID(ctx, s.Image)
+	if err != nil || image == "" {
+		return "", errors.New("job image not available locally")
+	}
+	spec := specgen.NewSpecGenerator(image, false)
 	spec.Name = s.Name
 	spec.Command = s.Command
 	spec.User = s.User
 	if s.Network != "" {
+		spec.NetNS = specgen.Namespace{NSMode: specgen.Bridge}
 		spec.Networks = map[string]nettypes.PerNetworkOptions{s.Network: {}}
 	}
 	spec.Env = map[string]string{}
