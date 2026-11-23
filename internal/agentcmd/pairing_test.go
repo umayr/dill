@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"crypto/ed25519"
 	"crypto/sha256"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"io"
@@ -86,11 +87,77 @@ func TestHTTPSProvisionAndExport(t *testing.T) {
 		bundle.Generation != cfg.Generation || bundle.EngineKind != cfg.EngineKind || bundle.EngineSocket != cfg.EngineSocket || bundle.DaemonID != cfg.DaemonID {
 		t.Fatal("pairing bundle does not bind the generated credentials and configured target")
 	}
+	deployFile := filepath.Join(t.TempDir(), "deploy-token")
+	deployToken := base64.RawURLEncoding.EncodeToString(bytes.Repeat([]byte{17}, 32))
+	if err := os.WriteFile(deployFile, []byte(deployToken+"\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	var withDeploy bytes.Buffer
+	args := []string{"--https-dir", dir, "--https-listen", "127.0.0.1:9211", "--engine-socket", "/run/docker.sock",
+		"--engine-id", cfg.EngineID, "--daemon-id", cfg.DaemonID, "--generation", "1", "--https-deploy-token-file", deployFile,
+		"--https-staging-root", "/test/stage", "--https-staging-catalog", "/test/catalog", "--https-deploy-grant", "stage", "--print-https-pairing"}
+	if err := serveAgent(args, &withDeploy, io.Discard, false); err != nil || !bytes.Equal(before.Bytes(), withDeploy.Bytes()) {
+		t.Fatal("deploy configuration changed v1 monitor pairing output", err)
+	}
 	if err := os.Chmod(tokenPath, 0644); err != nil {
 		t.Fatal(err)
 	}
 	var denied bytes.Buffer
 	if err := exportPairing(&denied, "127.0.0.1:9211", certPath, keyPath, tokenPath, cfg); err == nil || denied.Len() != 0 {
 		t.Fatal("exported an insecure credential")
+	}
+}
+
+func TestHTTPSInvalidDeployConfigFailsBeforeStaging(t *testing.T) {
+	root := t.TempDir()
+	dir := filepath.Join(root, "credentials")
+	if err := initHTTPS([]string{"--dir", dir}, io.Discard); err != nil {
+		t.Fatal(err)
+	}
+	args := []string{"--https-dir", dir, "--https-listen", "127.0.0.1:9211", "--engine-socket", "/run/docker.sock",
+		"--engine-id", "11111111-1111-4111-8111-111111111111", "--daemon-id", "synthetic-daemon", "--generation", "1",
+		"--https-staging-root", filepath.Join(root, "absent-stage"), "--https-staging-catalog", filepath.Join(root, "absent-catalog")}
+	deploy := base64.RawURLEncoding.EncodeToString(bytes.Repeat([]byte{17}, 32)) + "\n"
+	makeFile := func(name, value string, perm os.FileMode) string {
+		t.Helper()
+		p := filepath.Join(root, name)
+		if err := os.WriteFile(p, []byte(value), perm); err != nil {
+			t.Fatal(err)
+		}
+		return p
+	}
+	valid := makeFile("valid", deploy, 0600)
+	public := makeFile("public", deploy, 0644)
+	malformed := makeFile("malformed", "not-canonical", 0600)
+	monitor := filepath.Join(dir, "token")
+	monitorBytes, err := os.ReadFile(monitor)
+	if err != nil {
+		t.Fatal(err)
+	}
+	duplicate := makeFile("duplicate", string(monitorBytes), 0600)
+	symlink := filepath.Join(root, "symlink")
+	if err := os.Symlink(valid, symlink); err != nil {
+		t.Fatal(err)
+	}
+	for _, tt := range []struct {
+		name, grant, tokenFile, want string
+	}{
+		{"missing", "stage", "", "require --https-deploy-token-file"},
+		{"monitor file", "stage", monitor, "must differ from the monitor token"},
+		{"duplicated contents", "stage", duplicate, "must differ from the monitor token"},
+		{"public", "stage", public, "must be an owner-only regular file"},
+		{"malformed", "stage", malformed, "must be an owner-only regular file"},
+		{"symlink", "stage", symlink, "must be an owner-only regular file"},
+		{"relative", "stage", "relative", "must be an absolute path"},
+		{"unknown grant", "*", valid, "unknown HTTPS deploy grant"},
+		{"monitor is not a deploy grant", "monitor", valid, "unknown HTTPS deploy grant"},
+		{"valid token and grant reach existing staging checks", "stage", valid, "cannot initialize private HTTPS snapshot staging"},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			argv := append(append([]string(nil), args...), "--https-deploy-grant", tt.grant, "--https-deploy-token-file", tt.tokenFile)
+			if err := serveAgent(argv, io.Discard, io.Discard, false); err == nil || !strings.Contains(err.Error(), tt.want) {
+				t.Fatalf("got %v, want %q", err, tt.want)
+			}
+		})
 	}
 }
