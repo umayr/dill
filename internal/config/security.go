@@ -16,6 +16,9 @@ func ValidateRuntime(cfg *DillConfig) error {
 	if cfg == nil {
 		return fmt.Errorf("config is nil")
 	}
+	if err := validateLifecycle(cfg); err != nil {
+		return err
+	}
 	if err := ValidateSecrets(cfg); err != nil {
 		return err
 	}
