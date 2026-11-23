@@ -4,8 +4,10 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"sync"
 	"sync/atomic"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/umayr/dill/internal/metricsmodel"
@@ -352,6 +354,99 @@ func TestNoncooperativeCallRetainsAdmissionThroughCancellation(t *testing.T) {
 			t.Fatalf("binding released %d times", n)
 		}
 		checkMeasurements(t, collect(t, c), true, metricsmodel.UintReading{}, metricsmodel.UintReading{})
+	})
+}
+
+func TestReleaseRetainsAdmissionPastAcquisitionDeadline(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		const waitLimit = 5 * time.Second
+		entered, gate := make(chan struct{}), make(chan struct{})
+		unblock := sync.OnceFunc(func() { close(gate) })
+		defer unblock()
+
+		var verifies, reads, releases atomic.Int32
+		c := New(func(context.Context, ReadBudget, string) (BoundSources, error) {
+			attempt := verifies.Add(1)
+			return BoundSources{
+				Host: func(ctx context.Context, b ReadBudget) (metricsmodel.HostObservation, error) {
+					reads.Add(1)
+					h, err := host(ctx, b)
+					// Distinguish the next acquisition from the expired reading.
+					h.AvailableKB = reading(uint64(attempt))
+					return h, err
+				},
+				Release: func() {
+					releases.Add(1)
+					if attempt == 1 {
+						close(entered)
+						<-gate
+					}
+				},
+			}, nil
+		})
+
+		type result struct {
+			snapshot metricsmodel.Snapshot
+			err      error
+		}
+		start := func() <-chan result {
+			done := make(chan result, 1)
+			go func() {
+				s, err := c.Collect(context.Background(), daemonID)
+				done <- result{s, err}
+			}()
+			return done
+		}
+		wait := func(done <-chan result) result {
+			t.Helper()
+			timer := time.NewTimer(waitLimit)
+			defer timer.Stop()
+			select {
+			case r := <-done:
+				return r
+			case <-timer.C:
+				t.Fatal("acquisition did not return")
+				return result{}
+			}
+		}
+
+		first := start()
+		select {
+		case <-entered:
+		case <-time.After(waitLimit):
+			t.Fatal("release hook did not start")
+		}
+		if reads.Load() != 1 {
+			t.Fatal("release started before the host was observed")
+		}
+		// Advance fake monotonic time past the acquisition limit while Release
+		// is still blocked. The first host reading was fresh before cleanup.
+		<-time.After(AcquisitionTimeout)
+		synctest.Wait()
+		select {
+		case <-first:
+			t.Fatal("acquisition returned before synchronous release finished")
+		default:
+		}
+		overlap := wait(start())
+		if overlap.snapshot != (metricsmodel.Snapshot{}) || overlap.err != ErrBusy {
+			t.Fatalf("overlap during release = %v (%v), want zero snapshot and ErrBusy", overlap.snapshot, overlap.err)
+		}
+		if v, r, l := verifies.Load(), reads.Load(), releases.Load(); v != 1 || r != 1 || l != 1 {
+			t.Fatalf("overlap ran work: verifications=%d reads=%d releases=%d", v, r, l)
+		}
+
+		unblock()
+		expired := wait(first)
+		unavailable(t, expired.snapshot, expired.err)
+
+		fresh := wait(start())
+		if total, available, ok := fresh.snapshot.HostMemoryBytes(); fresh.err != nil || !ok || total != 100*1024 || available != 2*1024 {
+			t.Fatalf("later acquisition = %d, %d, %v (%v); want fresh host pair", total, available, ok, fresh.err)
+		}
+		if v, r, l := verifies.Load(), reads.Load(), releases.Load(); v != 2 || r != 2 || l != 2 {
+			t.Fatalf("expected exactly one later acquisition: verifications=%d reads=%d releases=%d", v, r, l)
+		}
 	})
 }
 
