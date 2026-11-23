@@ -3,6 +3,7 @@ package orchestrator
 import (
 	"context"
 	"errors"
+	nettypes "github.com/containers/common/libnetwork/types"
 	"regexp"
 
 	"github.com/containers/podman/v5/pkg/bindings/containers"
@@ -14,6 +15,8 @@ import (
 // locally available; no pull or retry is performed. Values are never logged.
 type JobSpec struct {
 	Image   string
+	Network string
+	User    string
 	Command []string
 	Env     []string
 }
@@ -38,7 +41,7 @@ var jobID = regexp.MustCompile(`^[a-f0-9]{64}$`)
 func validJobID(id string) bool { return jobID.MatchString(id) }
 
 func (d *DockerEngine) CreateJob(ctx context.Context, s JobSpec) (string, error) {
-	r, e := d.cli.ContainerCreate(ctx, &container.Config{Image: s.Image, Cmd: s.Command, Env: s.Env}, &container.HostConfig{RestartPolicy: container.RestartPolicy{Name: container.RestartPolicyDisabled}}, nil, nil, "")
+	r, e := d.cli.ContainerCreate(ctx, &container.Config{Image: s.Image, User: s.User, Cmd: s.Command, Env: s.Env}, &container.HostConfig{NetworkMode: container.NetworkMode(s.Network), RestartPolicy: container.RestartPolicy{Name: container.RestartPolicyDisabled}}, nil, nil, "")
 	if e != nil || !validJobID(r.ID) {
 		return "", errJob
 	}
@@ -83,6 +86,10 @@ func (d *DockerEngine) RemoveJob(ctx context.Context, id string) error {
 func (p *PodmanEngine) CreateJob(ctx context.Context, s JobSpec) (string, error) {
 	spec := specgen.NewSpecGenerator(s.Image, false)
 	spec.Command = s.Command
+	spec.User = s.User
+	if s.Network != "" {
+		spec.Networks = map[string]nettypes.PerNetworkOptions{s.Network: {}}
+	}
 	spec.Env = map[string]string{}
 	for _, v := range s.Env {
 		for i := 0; i < len(v); i++ {

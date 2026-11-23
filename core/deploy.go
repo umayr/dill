@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"reflect"
+	"sort"
 	"strings"
 	"time"
 
@@ -79,6 +80,11 @@ func Deploy(ctx context.Context, cfg *Config, o DeployOptions) error {
 	copyCfg.Services = make(map[string]*config.Service, len(cfg.Services))
 	for n, s := range cfg.Services {
 		cp := *s
+		digest, err := config.DownHookDigest(cfg, n)
+		if err != nil {
+			return err
+		}
+		cp.DownHookDigest = digest
 		copyCfg.Services[n] = &cp
 	}
 	selected := make(map[string]*config.Service)
@@ -92,6 +98,11 @@ func Deploy(ctx context.Context, cfg *Config, o DeployOptions) error {
 			return nil
 		}
 		selected[n] = s
+		for _, dep := range hookPrerequisites(cfg, s.Hooks) {
+			if err := add(dep); err != nil {
+				return err
+			}
+		}
 		if !o.NoDeps {
 			for _, dep := range s.DependsOn {
 				if err := add(dep); err != nil {
@@ -126,6 +137,11 @@ func Deploy(ctx context.Context, cfg *Config, o DeployOptions) error {
 	}
 	if err := orchestrator.ValidateCapabilities(cfg.Engine, selected); err != nil {
 		return fmt.Errorf("capability preflight: %w", err)
+	}
+	for n, s := range selected {
+		cp := *s
+		cp.DependsOn = append(append([]string(nil), s.DependsOn...), hookPrerequisites(cfg, s.Hooks)...)
+		selected[n] = &cp
 	}
 	graph, err := dag.Build(selected)
 	if err != nil {
@@ -251,7 +267,36 @@ func Deploy(ctx context.Context, cfg *Config, o DeployOptions) error {
 			actions[ch.Service] = dag.ActionNoop
 		}
 	}
-	return graph.Run(ctx, engine, o.Stack, o.Timeout, actions, o.Progress, sink)
+	before := jobRun{cfg: cfg, engine: engine, stack: o.Stack}
+	var post []string
+	var ordered []string
+	for n := range actions {
+		ordered = append(ordered, n)
+	}
+	sort.Strings(ordered)
+	for _, n := range ordered {
+		a := actions[n]
+		if a == dag.ActionNoop {
+			continue
+		}
+		post = append(post, config.MatchedJobs(selected[n].Hooks, "afterUp", hookChange(a))...)
+	}
+	graph.BeforeAction(func(c context.Context, n string, a dag.Action) error {
+		if a == dag.ActionNoop {
+			return nil
+		}
+		return before.run(c, config.MatchedJobs(selected[n].Hooks, "beforeUp", hookChange(a)))
+	})
+	runCtx, cancel := context.WithTimeout(ctx, o.Timeout)
+	defer cancel()
+	if err := graph.Run(runCtx, engine, o.Stack, o.Timeout, actions, o.Progress, sink); err != nil {
+		return err
+	}
+	after := jobRun{cfg: cfg, engine: engine, stack: o.Stack}
+	if err := after.run(runCtx, post); err != nil {
+		return fmt.Errorf("applied; verification failed: %w", err)
+	}
+	return nil
 }
 
 // OpenDeployEngine opens an explicitly selected endpoint. Caller owns the result.

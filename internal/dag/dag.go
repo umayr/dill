@@ -52,8 +52,9 @@ type node struct {
 
 // Graph is a validated dependency graph of services.
 type Graph struct {
-	nodes []*node
-	index map[string]*node
+	nodes  []*node
+	index  map[string]*node
+	before func(context.Context, string, Action) error
 }
 
 // Build constructs a Graph from the services map.
@@ -93,6 +94,9 @@ func Build(services map[string]*config.Service) (*Graph, error) {
 
 	return g, nil
 }
+
+// BeforeAction installs the deployment's pre-mutation job callback before Run.
+func (g *Graph) BeforeAction(f func(context.Context, string, Action) error) { g.before = f }
 
 // Run starts all services according to the provided action map. Services with
 // no shared dependencies start concurrently; each goroutine waits for its
@@ -150,6 +154,11 @@ func (g *Graph) run(ctx context.Context, engine orchestrator.Engine, stackName s
 				}
 			}
 
+			if g.before != nil {
+				if err := g.before(egCtx, n.name, actions[n.name]); err != nil {
+					return err
+				}
+			}
 			containerName := n.svc.ContainerName
 			if containerName == "" {
 				containerName = stackName + "_" + n.name
