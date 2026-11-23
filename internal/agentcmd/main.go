@@ -169,12 +169,15 @@ func serveAgent(args []string, out, diagnostics io.Writer, combined bool) error 
 	fs := flag.NewFlagSet("dill agent", flag.ContinueOnError)
 	fs.SetOutput(diagnostics)
 	listen := fs.String("socket", "", "private agent Unix socket")
-	httpsListen := fs.String("https-listen", "", "read-only HTTPS listener on a private IP:port (alternative to --socket)")
-	httpsDir := fs.String("https-dir", "", "absolute credential directory created by init-https")
+	httpsListen := fs.String("https-listen", "", "HTTPS listener on a private IP:port, read-only by default (alternative to --socket)")
+	httpsDir := fs.String("https-dir", "", "absolute monitor credential directory created by init-https")
 	httpsCert := fs.String("https-cert-file", "", "HTTPS certificate PEM file")
 	httpsKey := fs.String("https-key-file", "", "HTTPS private key PEM file")
-	httpsToken := fs.String("https-token-file", "", "owner-only HTTPS token file")
-	printPairing := fs.Bool("print-https-pairing", false, "print secret HTTPS pairing bundle to stdout and exit without listening")
+	httpsToken := fs.String("https-token-file", "", "owner-only HTTPS monitor token file")
+	httpsDeployToken := fs.String("https-deploy-token-file", "", "separately provisioned absolute owner-only HTTPS deploy token file; required for staging and deployment")
+	deployGrants := make(httpsDeployGrants)
+	fs.Func("https-deploy-grant", "enable one HTTPS deploy operation (repeatable; none by default)", deployGrants.add)
+	printPairing := fs.Bool("print-https-pairing", false, "print secret v1 HTTPS monitor pairing bundle to stdout and exit without listening")
 	stagingRoot := fs.String("https-staging-root", "", "opt-in private snapshot staging root (no deployment)")
 	stagingCatalog := fs.String("https-staging-catalog", "", "private snapshot catalog root; required with staging")
 	previewState := fs.String("https-preview-state", "", "opt-in trusted-project deployment preview with this shared native Docker coordination state")
@@ -191,6 +194,9 @@ func serveAgent(args []string, out, diagnostics io.Writer, combined bool) error 
 	}
 	if (*stagingRoot == "") != (*stagingCatalog == "") || (*stagingRoot != "" && *httpsListen == "") {
 		return errors.New("snapshot staging requires HTTPS and both private staging and catalog roots")
+	}
+	if len(deployGrants) != 0 && *stagingRoot == "" {
+		return errors.New("HTTPS deploy grants require HTTPS staging configuration")
 	}
 	var previewExecutable string
 	if *previewState != "" || *previewPkl != "" {
@@ -227,7 +233,7 @@ func serveAgent(args []string, out, diagnostics io.Writer, combined bool) error 
 			return errors.New("HTTPS requires certificate, key and token files, without Unix listener or reveal")
 		}
 	} else {
-		if !filepath.IsAbs(*listen) || *httpsCert != "" || *httpsKey != "" || *httpsToken != "" || *printPairing {
+		if !filepath.IsAbs(*listen) || *httpsCert != "" || *httpsKey != "" || *httpsToken != "" || *httpsDeployToken != "" || *printPairing {
 			return errors.New("absolute Unix socket path required; HTTPS files require an HTTPS listener")
 		}
 		parent, err := os.Lstat(filepath.Dir(*listen))
@@ -272,8 +278,16 @@ func serveAgent(args []string, out, diagnostics io.Writer, combined bool) error 
 		if *printPairing {
 			return exportPairing(out, *httpsListen, *httpsCert, *httpsKey, *httpsToken, cfg)
 		}
+		cert, monitorToken, err := httpsCredentials(*httpsListen, *httpsCert, *httpsKey, *httpsToken)
+		if err != nil {
+			return err
+		}
+		deployToken, err := readHTTPSDeployToken(*httpsDeployToken, monitorToken, *stagingRoot != "")
+		if err != nil {
+			return err
+		}
 		var staging, preview, apply http.Handler
-		if *stagingRoot != "" {
+		if len(deployGrants) != 0 {
 			stager, err := serve.NewCataloguedStager(*stagingRoot, *stagingCatalog)
 			if err != nil {
 				return errors.New("cannot initialize private HTTPS snapshot staging")
@@ -296,7 +310,7 @@ func serveAgent(args []string, out, diagnostics io.Writer, combined bool) error 
 				}
 			}
 		}
-		return serveHTTPS(*httpsListen, *httpsCert, *httpsKey, *httpsToken, server, staging, preview, apply)
+		return serveHTTPS(*httpsListen, cert, authenticatedHTTPS(server, staging, preview, apply, monitorToken, deployToken, deployGrants))
 	}
 	// Never remove an existing path, including a stale socket or symlink.
 	if _, err = os.Lstat(*listen); !os.IsNotExist(err) {
@@ -321,6 +335,8 @@ func Main(args []string, out, diagnostics io.Writer, combined bool) int {
 		err = initHTTPS(args[1:], diagnostics)
 	case len(args) > 0 && args[0] == "journal-status":
 		err = runJournalStatus(args[1:], out, diagnostics)
+	case len(args) > 0 && args[0] == "journal-recovery":
+		err = runJournalRecovery(args[1:], out, diagnostics)
 	default:
 		err = serveAgent(args, out, diagnostics, combined)
 	}

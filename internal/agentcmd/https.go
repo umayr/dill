@@ -11,15 +11,68 @@ import (
 	"net/http"
 	"net/netip"
 	"os"
+	"path/filepath"
 	"strings"
 	"syscall"
 	"time"
 )
 
-// The HTTP allowlist never delegates reveal. Host opt-ins progressively add
-// staging, preview, and checked creation for the authenticated operator.
-func authenticatedHTTPS(next, staging, preview, apply http.Handler, token string) http.Handler {
-	want := sha256.Sum256([]byte("Bearer " + token))
+type httpsBackend uint8
+
+const (
+	httpsMonitor httpsBackend = iota + 1
+	httpsStaging
+	httpsPreview
+	httpsApply
+)
+
+const monitorGrant = "monitor"
+
+// The matrix is also the source of valid host-local deploy grant names. There
+// is no default route, wildcard grant, or inheritance between operations.
+var httpsRoutes = [...]struct {
+	method, path string // a trailing slash denotes exactly one ID segment
+	grant        string
+	backend      httpsBackend
+}{
+	{http.MethodPost, "/v1/session", monitorGrant, httpsMonitor},
+	{http.MethodPost, "/v1/inventory", monitorGrant, httpsMonitor},
+	{http.MethodPost, "/v1/inspect", monitorGrant, httpsMonitor},
+	{http.MethodPost, "/v1/logs", monitorGrant, httpsMonitor},
+	{http.MethodPost, "/v1/snapshots", "stage", httpsStaging},
+	{http.MethodGet, "/v1/snapshots/", "manifest", httpsStaging},
+	{http.MethodPost, "/v1/deploy/preview", "preview", httpsPreview},
+	{http.MethodPost, "/v1/deploy/apply", "apply", httpsApply},
+	{http.MethodPost, "/v1/deploy/journal-apply", "journal-apply", httpsApply},
+	{http.MethodPost, "/v1/deploy/fence", "fence", httpsApply},
+	{http.MethodPost, "/v1/deploy/remove-preview", "remove-preview", httpsApply},
+	{http.MethodPost, "/v1/deploy/remove", "remove", httpsApply},
+	{http.MethodGet, "/v1/deploy/operations/", "status", httpsApply},
+}
+
+type httpsDeployGrants map[string]bool
+
+func (g httpsDeployGrants) add(name string) error {
+	for _, route := range httpsRoutes {
+		if route.backend != httpsMonitor && name != "" && name != monitorGrant && route.grant == name {
+			g[name] = true
+			return nil
+		}
+	}
+	return errors.New("unknown HTTPS deploy grant")
+}
+
+func authenticatedHTTPS(monitor, staging, preview, apply http.Handler, monitorToken, deployToken string, deployGrants httpsDeployGrants) http.Handler {
+	if apply != nil {
+		// Managed preview must continue through the journal-aware handler.
+		preview = apply
+	}
+	backends := [...]http.Handler{httpsMonitor: monitor, httpsStaging: staging, httpsPreview: preview, httpsApply: apply}
+	monitorHash := sha256.Sum256([]byte("Bearer " + monitorToken))
+	deployHash := sha256.Sum256([]byte("Bearer " + deployToken))
+	// Startup rejects duplicate credentials. Also fail closed at dispatch if
+	// called without distinct credentials (including a missing monitor token).
+	deployEnabled := monitorToken != "" && deployToken != "" && subtle.ConstantTimeCompare(monitorHash[:], deployHash[:]) != 1
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Cache-Control", "no-store")
 		headers := r.Header.Values("Authorization")
@@ -28,39 +81,66 @@ func authenticatedHTTPS(next, staging, preview, apply http.Handler, token string
 			return
 		}
 		got := sha256.Sum256([]byte(headers[0]))
-		if subtle.ConstantTimeCompare(got[:], want[:]) != 1 {
+		isMonitor := monitorToken != "" && subtle.ConstantTimeCompare(got[:], monitorHash[:]) == 1
+		isDeploy := deployEnabled && subtle.ConstantTimeCompare(got[:], deployHash[:]) == 1
+		if !isMonitor && !isDeploy {
 			http.Error(w, "unauthorized", http.StatusUnauthorized)
 			return
 		}
-		switch r.URL.Path {
-		case "/v1/session", "/v1/inventory", "/v1/inspect", "/v1/logs":
-			next.ServeHTTP(w, r)
-		case "/v1/deploy/preview":
-			if r.Method == http.MethodPost && r.URL.RawPath == "" {
-				if apply != nil {
-					apply.ServeHTTP(w, r)
+		if r.URL.RawPath == "" {
+			for _, route := range httpsRoutes {
+				if r.Method != route.method || !httpsPathMatches(route.path, r.URL.Path) {
+					continue
+				}
+				handler := backends[route.backend]
+				if handler == nil || route.backend != httpsMonitor && !deployEnabled {
+					break
+				}
+				allowed := false
+				switch {
+				case route.grant == monitorGrant && route.backend == httpsMonitor:
+					allowed = isMonitor
+				case route.grant != "" && route.grant != monitorGrant && route.backend != httpsMonitor:
+					allowed = isDeploy && deployGrants[route.grant]
+				}
+				if !allowed {
+					http.Error(w, "forbidden", http.StatusForbidden)
 					return
 				}
-				if preview != nil {
-					preview.ServeHTTP(w, r)
-					return
-				}
-			}
-			http.NotFound(w, r)
-		default:
-			if apply != nil && r.URL.RawPath == "" && (r.Method == http.MethodPost && (r.URL.Path == "/v1/deploy/apply" || r.URL.Path == "/v1/deploy/journal-apply" || r.URL.Path == "/v1/deploy/fence" || r.URL.Path == "/v1/deploy/remove" || r.URL.Path == "/v1/deploy/remove-preview") ||
-				r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/v1/deploy/operations/")) {
-				apply.ServeHTTP(w, r)
+				handler.ServeHTTP(w, r)
 				return
 			}
-			if staging != nil && r.URL.RawPath == "" && (r.Method == http.MethodPost && r.URL.Path == "/v1/snapshots" ||
-				r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/v1/snapshots/")) {
-				staging.ServeHTTP(w, r)
-				return
-			}
-			http.NotFound(w, r)
 		}
+		http.NotFound(w, r)
 	})
+}
+
+func httpsPathMatches(pattern, path string) bool {
+	if !strings.HasSuffix(pattern, "/") {
+		return pattern == path
+	}
+	id, ok := strings.CutPrefix(path, pattern)
+	return ok && id != "" && !strings.Contains(id, "/")
+}
+
+func readHTTPSDeployToken(path, monitorToken string, required bool) (string, error) {
+	if path == "" {
+		if required {
+			return "", errors.New("HTTPS staging and deployment require --https-deploy-token-file")
+		}
+		return "", nil
+	}
+	if !filepath.IsAbs(path) || filepath.Clean(path) != path {
+		return "", errors.New("HTTPS deploy token file must be an absolute path")
+	}
+	token, err := readBearerToken(path)
+	if err != nil {
+		return "", errors.New("HTTPS deploy token must be an owner-only regular file with a canonical 32-byte base64url credential")
+	}
+	if subtle.ConstantTimeCompare([]byte(token), []byte(monitorToken)) == 1 {
+		return "", errors.New("HTTPS deploy token must differ from the monitor token")
+	}
+	return token, nil
 }
 
 func readBearerToken(path string) (string, error) {
@@ -122,18 +202,14 @@ func httpsCredentials(address, certFile, keyFile, tokenFile string) (tls.Certifi
 	return cert, token, nil
 }
 
-func serveHTTPS(address, certFile, keyFile, tokenFile string, handler, staging, preview, apply http.Handler) error {
-	cert, token, err := httpsCredentials(address, certFile, keyFile, tokenFile)
-	if err != nil {
-		return err
-	}
+func serveHTTPS(address string, cert tls.Certificate, handler http.Handler) error {
 	l, err := net.Listen("tcp", address)
 	if err != nil {
 		return err
 	}
 	defer l.Close()
 	server := &http.Server{
-		Handler: authenticatedHTTPS(handler, staging, preview, apply, token), TLSConfig: &tls.Config{MinVersion: tls.VersionTLS13, Certificates: []tls.Certificate{cert}},
+		Handler: handler, TLSConfig: &tls.Config{MinVersion: tls.VersionTLS13, Certificates: []tls.Certificate{cert}},
 		ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 15 * time.Second, WriteTimeout: 6 * time.Minute,
 		IdleTimeout: 30 * time.Second, MaxHeaderBytes: 16 << 10,
 	}
