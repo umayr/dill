@@ -20,6 +20,47 @@ type Hook struct {
 	OnChange string `json:"onChange,omitempty"`
 }
 
+// MatchedJobs returns jobs in declaration order for an event and change.
+// Create and update aliases correspond to create and replace respectively.
+func MatchedJobs(h *LifecycleHooks, phase, change string) []string {
+	if h == nil {
+		return nil
+	}
+	var canonical, alias []Hook
+	switch phase {
+	case "beforeUp":
+		canonical = h.BeforeUp
+		if change == "create" {
+			alias = h.BeforeCreate
+		} else if change == "replace" {
+			alias = h.BeforeUpdate
+		}
+	case "afterUp":
+		canonical = h.AfterUp
+		if change == "create" {
+			alias = h.AfterCreate
+		} else if change == "replace" {
+			alias = h.AfterUpdate
+		}
+	case "beforeDown":
+		canonical = h.BeforeDown
+	case "afterDown":
+		canonical = h.AfterDown
+	default:
+		return nil
+	}
+	var jobs []string
+	for _, hook := range canonical {
+		if phase == "beforeDown" || phase == "afterDown" || ((change == "create" || change == "replace") && (hook.OnChange == "" || hook.OnChange == "createOrReplace" || hook.OnChange == change)) {
+			jobs = append(jobs, hook.Job)
+		}
+	}
+	for _, hook := range alias {
+		jobs = append(jobs, hook.Job)
+	}
+	return jobs
+}
+
 // LifecycleHooks holds the canonical events and their compatibility aliases.
 type LifecycleHooks struct {
 	BeforeUp     []Hook `json:"beforeUp"`
