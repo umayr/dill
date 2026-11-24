@@ -335,6 +335,9 @@ func (d *DockerEngine) startService(ctx context.Context, name string, svc *confi
 		return "", fmt.Errorf("service %s: %w", name, err)
 	} else {
 		labels["dill.config-hash"] = hash
+		if svc.DownHookDigest != "" {
+			labels["dill.down-hooks-sha256"] = svc.DownHookDigest
+		}
 	}
 	if len(secrets) > 0 {
 		labels[SecretEnabledLabel] = "true"

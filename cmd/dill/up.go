@@ -97,6 +97,9 @@ func runUpConfig(ctx context.Context, opts commandOptions, cfg *config.DillConfi
 	if captureErr != nil {
 		return captureErr
 	}
+	if (capture != nil || opts.operation != nil) && len(cfg.Jobs) != 0 {
+		return errors.New("jobs require ordinary deploy; checked job execution is unavailable")
+	}
 	if capture != nil {
 		if len(names) != 0 || noDeps || opts.DryRun || capture.upPlan == nil || capture.serviceIDs == nil {
 			return errNamedCaptureUnavailable

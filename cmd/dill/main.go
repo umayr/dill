@@ -216,6 +216,7 @@ Commands:
   pull      Pull service images without starting
   images    List images used by the config
   volumes   List stack-owned volumes
+  job       Run a named one-shot job (does not start missing prerequisites)
   exec      Execute a command in a running container
   plan      Show what would change if you ran up
   diff      Show desired vs live changes
@@ -309,6 +310,8 @@ Flags:
 		return runImages(ctx, opts, commandArgs)
 	case cmdVolumes:
 		return runVolumes(ctx, opts, commandArgs)
+	case "job":
+		return runJob(ctx, opts, commandArgs)
 	case cmdExec:
 		return runExec(ctx, opts, commandArgs)
 	case cmdPlan:

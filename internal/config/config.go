@@ -11,14 +11,17 @@ type DillConfig struct {
 	Secrets  []SecretRequirement `json:"secrets"`
 	Engine   string              `json:"engine"`
 	Services map[string]*Service `json:"services"`
+	Jobs     map[string]*Job     `json:"jobs"`
 }
 
 type Service struct {
+	DownHookDigest string `json:"-"`
 	// BaseDir is the directory of the config file that declared this service.
 	// It is set programmatically after loading and is not part of the Pkl schema.
 	// Relative bind-mount paths are resolved against it.
 	BaseDir string `json:"-"`
 
+	Hooks          *LifecycleHooks   `json:"hooks"`
 	Secrets        []SecretGrant     `json:"secrets"`
 	Image          string            `json:"image"`
 	ContainerName  string            `json:"containerName"`

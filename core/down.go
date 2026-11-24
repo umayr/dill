@@ -43,6 +43,10 @@ type DownResult struct{ Events []DownEvent }
 // authorization requirement. Service integration is not yet authorized.
 // Progress, if non-nil, runs synchronously before removal.
 func Down(ctx context.Context, engine DownEngine, stack string, progress func(string, string)) (DownResult, error) {
+	return DownWithConfig(ctx, engine, stack, nil, progress)
+}
+
+func DownWithConfig(ctx context.Context, engine DownEngine, stack string, cfg *Config, progress func(string, string)) (DownResult, error) {
 	var result DownResult
 	if ctx == nil {
 		return result, fmt.Errorf("context is required")
@@ -60,7 +64,9 @@ func Down(ctx context.Context, engine DownEngine, stack string, progress func(st
 	if stack == "" {
 		return result, fmt.Errorf("stack name is required")
 	}
-	err := dag.DownWithEvents(ctx, engine, stack, progress, func(phase, name string, err error) {
+	err := dag.DownWithHookEvents(ctx, engine, stack, progress, func(i *orchestrator.RemovalIntent) (func() error, error) {
+		return PrepareDownHooks(ctx, engine, i, cfg)
+	}, func(phase, name string, err error) {
 		result.Events = append(result.Events, DownEvent{Phase: phase, Name: name, Err: err})
 	})
 	return result, err

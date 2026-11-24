@@ -48,8 +48,41 @@ type Change struct {
 	Diffs   []FieldDiff `json:"diffs"`
 }
 
+type HookStep struct {
+	Phase    string   `json:"phase"`
+	Job      string   `json:"job"`
+	Services []string `json:"services"`
+}
+
+func (p *Plan) PopulateHooks(cfg *config.DillConfig) {
+	p.Hooks = nil
+	for _, phase := range []string{"beforeUp", "afterUp"} {
+		ids := map[string]int{}
+		for _, ch := range p.Changes {
+			svc := cfg.Services[ch.Service]
+			if svc == nil || (ch.Kind != KindCreate && ch.Kind != KindRecreate) {
+				continue
+			}
+			change := "create"
+			if ch.Kind == KindRecreate {
+				change = "replace"
+			}
+			for _, j := range config.MatchedJobs(svc.Hooks, phase, change) {
+				i, ok := ids[j]
+				if !ok {
+					i = len(p.Hooks)
+					ids[j] = i
+					p.Hooks = append(p.Hooks, HookStep{Phase: phase, Job: j})
+				}
+				p.Hooks[i].Services = append(p.Hooks[i].Services, ch.Service)
+			}
+		}
+	}
+}
+
 type Plan struct {
-	Changes []Change `json:"changes"`
+	Hooks   []HookStep `json:"hooks,omitempty"`
+	Changes []Change   `json:"changes"`
 }
 
 // Source is the read-only engine capability required for planning.
@@ -154,6 +187,13 @@ func compute(ctx context.Context, cfg *config.DillConfig, engine Source, stackNa
 		if err != nil {
 			return nil, fmt.Errorf("diff %s: %w", name, err)
 		}
+		digest, err := config.DownHookDigest(cfg, name)
+		if err != nil {
+			return nil, err
+		}
+		if digest != live.SystemLabels[config.DownHookLabel] {
+			diffs = append(diffs, FieldDiff{Field: "downHooks", Before: "previous definition", After: "changed definition"})
+		}
 		if len(diffs) == 0 {
 			changes = append(changes, Change{Service: name, Kind: KindNoop})
 		} else {
@@ -206,7 +246,9 @@ func compute(ctx context.Context, cfg *config.DillConfig, engine Source, stackNa
 		return changes[i].Service < changes[j].Service
 	})
 
-	return &Plan{Changes: changes}, nil
+	p := &Plan{Changes: changes}
+	p.PopulateHooks(cfg)
+	return p, nil
 }
 
 func isNotFound(err error) bool {

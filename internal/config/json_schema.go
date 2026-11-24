@@ -23,6 +23,8 @@ func nullableSchemaField(t reflect.Type, name string) bool {
 		return name == "name"
 	case reflect.TypeOf(Service{}):
 		return name != "image" && name != "restart" && name != "pullPolicy" && name != "secrets"
+	case reflect.TypeOf(Job{}):
+		return name == "user" || name == "environment" || name == "volumes" || name == "dependsOn" || name == "afterJobs"
 	case reflect.TypeOf(Port{}):
 		return name == "published" || name == "hostIp"
 	case reflect.TypeOf(Mount{}):
