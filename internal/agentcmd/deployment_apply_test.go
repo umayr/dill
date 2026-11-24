@@ -166,7 +166,7 @@ func TestHTTPSApplyRevalidatesAndDoesNotAdopt(t *testing.T) {
 		},
 		slot: make(chan struct{}, 1),
 	}
-	routes := authenticatedHTTPS(nil, nil, nil, h, "secret-token")
+	routes := authenticatedHTTPS(nil, nil, nil, h, "synthetic-monitor", "secret-token", httpsDeployGrants{"apply": true, "status": true})
 	request := func(method, path, token, body string) *httptest.ResponseRecorder {
 		r := httptest.NewRequest(method, "https://agent"+path, strings.NewReader(body))
 		r.Header.Set("Authorization", "Bearer "+token)

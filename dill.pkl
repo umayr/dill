@@ -46,7 +46,39 @@ class SecretGrant {
   mode: Int = 256
 }
 
+typealias UpChange = "create" | "replace" | "createOrReplace"
+
+open class Hook {
+  job: String
+}
+
+class UpHook extends Hook {
+  onChange: UpChange = "createOrReplace"
+}
+
+class LifecycleHooks {
+  beforeUp: Listing<UpHook> = new {}
+  afterUp: Listing<UpHook> = new {}
+  beforeDown: Listing<Hook> = new {}
+  afterDown: Listing<Hook> = new {}
+  beforeCreate: Listing<Hook> = new {}
+  afterCreate: Listing<Hook> = new {}
+  beforeUpdate: Listing<Hook> = new {}
+  afterUpdate: Listing<Hook> = new {}
+}
+
+class Job {
+  image: String
+  command: List<String>
+  user: String?
+  pullPolicy: "always" | "missing" | "never" = "missing"
+  environment: Mapping<String, String>?
+  dependsOn: List<String>?
+  afterJobs: List<String>?
+}
+
 class Service {
+  hooks: LifecycleHooks?
   image: String
   secrets: Listing<SecretGrant> = new {}
   containerName: String?
@@ -88,6 +120,7 @@ class DillConfig {
   /// When omitted, a deterministic adjective-animal name is derived from the config file path.
   name: String?
   secrets: Listing<SecretRequirement> = new {}
+  jobs: Mapping<String, Job> = new {}
   services: Mapping<String, Service>
   /// Specify the container engine to use for this deployment
   engine: "podman" | "docker" = "podman"

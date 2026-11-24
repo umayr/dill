@@ -65,6 +65,13 @@ func runDown(ctx context.Context, opts commandOptions, args []string) error {
 			return err
 		}
 		if !opts.DryRun {
+			if opts.operation != nil && len(cfg.Jobs) > 0 {
+				return errors.New("checked down hooks unavailable")
+			}
+			after, err := core.PrepareDownHooks(ctx, engine, intent, cfg)
+			if err != nil {
+				return err
+			}
 			var errs []error
 			for _, resource := range intent.Resources {
 				if !opts.Quiet {
@@ -73,6 +80,9 @@ func runDown(ctx context.Context, opts commandOptions, args []string) error {
 				if err := intent.Remove(ctx, engine, resource); err != nil {
 					errs = append(errs, err)
 				}
+			}
+			if len(errs) == 0 && after != nil {
+				return after()
 			}
 			return errors.Join(errs...)
 		}
@@ -83,6 +93,9 @@ func runDown(ctx context.Context, opts commandOptions, args []string) error {
 	}
 
 	if opts.operation != nil {
+		if st.Config != nil && len(st.Config.Jobs) > 0 {
+			return errors.New("checked down hooks unavailable")
+		}
 		var intent *orchestrator.RemovalIntent
 		if capture != nil {
 			intent = capture.removal
@@ -105,6 +118,9 @@ func runDown(ctx context.Context, opts commandOptions, args []string) error {
 		}
 		if opts.DryRun {
 			return nil
+		}
+		if _, err := core.PrepareDownHooks(ctx, engine, intent, nil); err != nil {
+			return err
 		}
 		if opts.operation.managed != nil {
 			// Managed removal applies the exact compared container intent only.
@@ -135,7 +151,7 @@ func runDown(ctx context.Context, opts commandOptions, args []string) error {
 		}
 		return nil
 	}
-	_, err = core.Down(ctx, engine, sn, opts.downProgress(sn))
+	_, err = core.DownWithConfig(ctx, engine, sn, st.Config, opts.downProgress(sn))
 	return err
 }
 

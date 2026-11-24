@@ -107,6 +107,11 @@ func decodeStrictAt(data []byte, out any, path string) error {
 					allowed[name] = f.Type
 				}
 			}
+			if t == reflect.TypeOf(Hook{}) {
+				if err := requireJSONFields(raw, "job"); err != nil {
+					return fmt.Errorf("%s: %w", path, err)
+				}
+			}
 			names := sortedJSONKeys(fields)
 			for _, name := range names {
 				value := fields[name]
