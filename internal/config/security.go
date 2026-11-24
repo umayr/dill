@@ -3,6 +3,7 @@ package config
 import (
 	"encoding/json"
 	"fmt"
+	"reflect"
 	"sort"
 	"strings"
 )
@@ -15,6 +16,11 @@ const SystemLabelPrefix = "dill."
 func ValidateRuntime(cfg *DillConfig) error {
 	if cfg == nil {
 		return fmt.Errorf("config is nil")
+	}
+	for _, svc := range cfg.Services {
+		if svc != nil && !reflect.DeepEqual(cfg.Volumes, svc.DeclaredVolumes) && (len(cfg.Volumes) != 0 || len(svc.DeclaredVolumes) != 0) {
+			return fmt.Errorf("unbound volume declarations")
+		}
 	}
 	if err := validateLifecycle(cfg); err != nil {
 		return err
@@ -70,7 +76,7 @@ func ValidateRuntime(cfg *DillConfig) error {
 		if _, err := NormalizePorts(svc.Ports); err != nil {
 			return fmt.Errorf("service %q: %w", name, err)
 		}
-		if _, err := NormalizeVolumes(svc.Volumes, svc.BaseDir); err != nil {
+		if _, err := svc.NormalizedVolumes(); err != nil {
 			return fmt.Errorf("service %q: %w", name, err)
 		}
 		if _, err := NormalizeResources(svc); err != nil {

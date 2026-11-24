@@ -33,6 +33,9 @@ func Render(p *Plan, w io.Writer) error {
 		return code + s + ansiReset
 	}
 
+	for _, v := range p.Volumes {
+		fmt.Fprintf(w, "%s volume %s\n", v.Action, v.Name)
+	}
 	var creates, recreates, removes, noops int
 
 	for _, ch := range p.Changes {
@@ -122,9 +125,10 @@ func RenderJSON(p *Plan, w io.Writer) error {
 		Noop     int `json:"noop"`
 	}
 	type output struct {
-		Hooks   []HookStep `json:"hooks,omitempty"`
-		Changes []Change   `json:"changes"`
-		Summary summary    `json:"summary"`
+		Volumes []VolumeAction `json:"volumes,omitempty"`
+		Hooks   []HookStep     `json:"hooks,omitempty"`
+		Changes []Change       `json:"changes"`
+		Summary summary        `json:"summary"`
 	}
 
 	var s summary
@@ -148,7 +152,7 @@ func RenderJSON(p *Plan, w io.Writer) error {
 
 	enc := json.NewEncoder(w)
 	enc.SetIndent("", "  ")
-	return enc.Encode(output{Changes: changes, Summary: s, Hooks: p.Hooks})
+	return enc.Encode(output{Volumes: p.Volumes, Changes: changes, Summary: s, Hooks: p.Hooks})
 }
 
 func isTerminal(w io.Writer) bool {

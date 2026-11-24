@@ -266,7 +266,7 @@ func (d *DockerEngine) startService(ctx context.Context, name string, svc *confi
 	if err != nil {
 		return "", fmt.Errorf("service %s: %w", name, err)
 	}
-	volumes, err := config.NormalizeVolumes(svc.Volumes, svc.BaseDir)
+	volumes, err := svc.NormalizedVolumes()
 	if err != nil {
 		return "", fmt.Errorf("service %s: %w", name, err)
 	}
@@ -298,7 +298,11 @@ func (d *DockerEngine) startService(ctx context.Context, name string, svc *confi
 		source := v.Source
 		if v.Type == "volume" {
 			source = v.EngineName(stackName)
-			if !v.External && source != "" {
+			if v.Declaration != nil {
+				if _, err := declared(ctx, d, source, stackName, *v.Declaration, true); err != nil {
+					return "", err
+				}
+			} else if !v.External && source != "" {
 				if err := d.EnsureVolume(ctx, source, stackName); err != nil {
 					return "", fmt.Errorf("service %s: %w", name, err)
 				}

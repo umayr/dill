@@ -18,6 +18,22 @@ import (
 // shared with the CLI; callers constructing them must provide normalized Pkl
 // equivalents, including BaseDir for relative mounts.
 type Config = config.DillConfig
+type VolumeDeclaration = config.VolumeDeclaration
+type VolumeOwnership = config.VolumeOwnership
+
+const (
+	VolumeManaged  = config.VolumeManaged
+	VolumeExternal = config.VolumeExternal
+)
+
+// BindVolumes validates volume declarations in a programmatically built config.
+func BindVolumes(cfg *Config) error {
+	if cfg == nil {
+		return errors.New("config is required")
+	}
+	return config.BindVolumes(cfg)
+}
+
 type Service = config.Service
 type HealthCheck = config.HealthCheck
 type SecretRequirement = config.SecretRequirement

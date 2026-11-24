@@ -92,6 +92,9 @@ func runUpConfig(ctx context.Context, opts commandOptions, cfg *config.DillConfi
 	if captureErr != nil {
 		return captureErr
 	}
+	if (capture != nil || opts.operation != nil) && len(cfg.Volumes) > 0 {
+		return errors.New("declared volumes require ordinary deployment")
+	}
 	if (capture != nil || opts.operation != nil) && len(cfg.Jobs) != 0 {
 		return errors.New("jobs require ordinary deploy; checked job execution is unavailable")
 	}

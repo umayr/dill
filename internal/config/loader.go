@@ -162,6 +162,9 @@ func load(ctx context.Context, path string, applyLock bool) (result *DillConfig,
 			svc.BaseDir = baseDir
 		}
 	}
+	if err := BindVolumes(&cfg); err != nil {
+		return nil, &InvalidError{Err: err}
+	}
 	if err := ValidateRuntime(&cfg); err != nil {
 		return nil, &InvalidError{Err: err}
 	}

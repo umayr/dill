@@ -22,14 +22,14 @@ var (
 // Selecting this profile attests that all stack data and credentials are synthetic
 // and disposable; it cannot infer whether ordinary environment values are secrets.
 func ValidateDisposableConfig(cfg *config.DillConfig) error {
-	if cfg == nil || len(cfg.Secrets) > 0 {
+	if cfg == nil || len(cfg.Secrets) > 0 || len(cfg.Volumes) > 0 {
 		return ErrDisposableUnsupported
 	}
 	for _, svc := range cfg.Services {
-		if svc == nil || svc.PullPolicy != "never" || len(svc.Secrets) > 0 || svc.NetworkMode != "" || len(svc.Devices) > 0 || len(svc.CapAdd) > 0 || len(svc.Conditions) > 0 {
+		if svc == nil || len(svc.DeclaredVolumes) > 0 || len(svc.Conditions) > 0 || svc.PullPolicy != "never" || len(svc.Secrets) > 0 || svc.NetworkMode != "" || len(svc.Devices) > 0 || len(svc.CapAdd) > 0 {
 			return ErrDisposableUnsupported
 		}
-		mounts, err := config.NormalizeVolumes(svc.Volumes, svc.BaseDir)
+		mounts, err := svc.NormalizedVolumes()
 		if err != nil {
 			return ErrDisposableUnsupported
 		}
@@ -48,7 +48,7 @@ func disposableVolumes(cfg *config.DillConfig, stack string) ([]string, error) {
 	}
 	names := map[string]bool{}
 	for _, svc := range cfg.Services {
-		mounts, _ := config.NormalizeVolumes(svc.Volumes, svc.BaseDir)
+		mounts, _ := svc.NormalizedVolumes()
 		for _, m := range mounts {
 			names[m.EngineName(stack)] = true
 		}

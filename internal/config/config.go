@@ -7,15 +7,17 @@ package config
 import "encoding/json"
 
 type DillConfig struct {
-	Name     string              `json:"name"`
-	Secrets  []SecretRequirement `json:"secrets"`
-	Engine   string              `json:"engine"`
-	Services map[string]*Service `json:"services"`
-	Jobs     map[string]*Job     `json:"jobs"`
+	Volumes  map[string]VolumeDeclaration `json:"volumes,omitempty"`
+	Name     string                       `json:"name"`
+	Secrets  []SecretRequirement          `json:"secrets"`
+	Engine   string                       `json:"engine"`
+	Services map[string]*Service          `json:"services"`
+	Jobs     map[string]*Job              `json:"jobs"`
 }
 
 type Service struct {
-	DownHookDigest string `json:"-"`
+	DeclaredVolumes map[string]VolumeDeclaration `json:"-"`
+	DownHookDigest  string                       `json:"-"`
 	// BaseDir is the directory of the config file that declared this service.
 	// It is set programmatically after loading and is not part of the Pkl schema.
 	// Relative bind-mount paths are resolved against it.
