@@ -47,7 +47,7 @@ func ValidateRuntime(cfg *DillConfig) error {
 				if err != nil || len(probe) < 2 || probe[0] == "NONE" {
 					return fmt.Errorf("healthy dependency %q requires an enabled healthcheck", dep)
 				}
-			case CompletedSuccessfully:
+			case Completed:
 				if d.Restart != "" && d.Restart != "no" {
 					return fmt.Errorf("completion dependency %q requires restart=no", dep)
 				}

@@ -86,7 +86,7 @@ func Build(services map[string]*config.Service) (*Graph, error) {
 				return nil, fmt.Errorf("service %q depends on %q which is not defined", n.name, dep)
 			}
 			switch n.svc.Conditions[dep] {
-			case config.CompletedSuccessfully:
+			case config.Completed:
 				d.waitCompletion = true
 			case config.Started:
 			default:
@@ -166,7 +166,7 @@ func (g *Graph) run(ctx context.Context, engine orchestrator.Engine, stackName s
 				switch n.svc.Conditions[dep.name] {
 				case config.Started:
 					gate = dep.launched
-				case config.CompletedSuccessfully:
+				case config.Completed:
 					gate = dep.completed
 				}
 				select {

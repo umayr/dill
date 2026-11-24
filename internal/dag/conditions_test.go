@@ -46,7 +46,7 @@ func TestDependencyGates(t *testing.T) {
 		condition config.DependencyCondition
 		result    orchestrator.JobResult
 		ok        bool
-	}{{config.Started, orchestrator.JobResult{}, true}, {config.Healthy, orchestrator.JobResult{}, true}, {config.CompletedSuccessfully, orchestrator.JobResult{Known: true}, true}, {config.CompletedSuccessfully, orchestrator.JobResult{Known: true, ExitCode: 3}, false}, {config.CompletedSuccessfully, orchestrator.JobResult{}, false}} {
+	}{{config.Started, orchestrator.JobResult{}, true}, {config.Healthy, orchestrator.JobResult{}, true}, {config.Completed, orchestrator.JobResult{Known: true}, true}, {config.Completed, orchestrator.JobResult{Known: true, ExitCode: 3}, false}, {config.Completed, orchestrator.JobResult{}, false}} {
 		t.Run(string(tc.condition), func(t *testing.T) {
 			e := &gateEngine{app: make(chan struct{}), checking: make(chan struct{}), release: make(chan struct{}), result: tc.result}
 			g, err := Build(map[string]*config.Service{"dep": {PullPolicy: "never", HealthCheck: &config.HealthCheck{}}, "app": {PullPolicy: "never", DependsOn: []string{"dep"}, Conditions: map[string]config.DependencyCondition{"dep": tc.condition}}})

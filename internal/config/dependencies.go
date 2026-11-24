@@ -9,9 +9,9 @@ import (
 type DependencyCondition string
 
 const (
-	Started               DependencyCondition = "started"
-	Healthy               DependencyCondition = "healthy"
-	CompletedSuccessfully DependencyCondition = "completedSuccessfully"
+	Started   DependencyCondition = "started"
+	Healthy   DependencyCondition = "healthy"
+	Completed DependencyCondition = "completed"
 )
 
 type dependency struct {
@@ -60,7 +60,7 @@ func decodeDependencies(raw json.RawMessage) (json.RawMessage, map[string]map[st
 					return nil, nil, err
 				}
 				switch d.Condition {
-				case Started, Healthy, CompletedSuccessfully:
+				case Started, Healthy, Completed:
 				default:
 					return nil, nil, fmt.Errorf("invalid dependency condition for %q", name)
 				}

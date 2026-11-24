@@ -77,7 +77,7 @@ class Job {
   afterJobs: List<String>?
 }
 
-typealias DependencyCondition = "started" | "healthy" | "completedSuccessfully"
+typealias DependencyCondition = "started" | "healthy" | "completed"
 class Dependency {
   service: String
   condition: DependencyCondition

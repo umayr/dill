@@ -26,7 +26,7 @@ config {
  engine = %q
  services {
  ["migration"] { image = "docker.io/library/busybox:1.36"; command = List("sh", "-c", "exit %d") }
- ["app"] { image = "docker.io/library/busybox:1.36"; command = List("sleep", "300"); dependsOn = List(new Dependency { service = "migration"; condition = "completedSuccessfully" }) }
+ ["app"] { image = "docker.io/library/busybox:1.36"; command = List("sleep", "300"); dependsOn = List(new Dependency { service = "migration"; condition = "completed" }) }
  }
 }`, filepath.Join(root, "dill.pkl"), stack, env.engine, exit)
 		if err := os.WriteFile(cfg, []byte(s), 0600); err != nil {
