@@ -240,9 +240,35 @@ func TestDillPartialUpKeepsOtherServices(t *testing.T) {
 		t.Fatalf("other state = %q after partial up, want running", got)
 	}
 
-	// A full up still removes services deleted from the config.
+	// Full up retains omitted services, even if a replacement cannot start.
 	writePartialConfig(t, cfg, root, env.engine, stack, false)
+	good, err := os.ReadFile(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	broken := string(good)
+	at := strings.LastIndex(broken, `command = List("sleep", "300")`)
+	if at < 0 {
+		t.Fatal("missing app command in fixture")
+	}
+	broken = broken[:at] + strings.Replace(broken[at:], `command = List("sleep", "300")`, `command = List("/no-such-dill-command")`, 1)
+	if err := os.WriteFile(cfg, []byte(broken), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if out, err := exec.Command(bin, "-f", cfg, "--timeout", testTimeout(), "up").CombinedOutput(); err == nil {
+		t.Fatalf("broken replacement started: %s", out)
+	}
+	if got := containerState(t, env.engine, stack+"_other"); got != "running" {
+		t.Fatal("failed replacement pruned omitted service")
+	}
+	if err := os.WriteFile(cfg, good, 0600); err != nil {
+		t.Fatal(err)
+	}
 	runDill(t, true, bin, "-f", cfg, "--timeout", testTimeout(), "up")
+	if got := containerState(t, env.engine, stack+"_other"); got != "running" {
+		t.Fatal("ordinary full up pruned omitted service")
+	}
+	runDill(t, true, bin, "-f", cfg, "--timeout", testTimeout(), "up", "--prune")
 	out := runDill(t, true, bin, "-f", cfg, "ps", "--format", "json")
 	var rows []struct {
 		Name string `json:"name"`
