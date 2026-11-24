@@ -80,6 +80,10 @@ func NewDockerEngineWithClient(endpoint string, httpClient *http.Client) (*Docke
 }
 
 func (d *DockerEngine) PullImage(ctx context.Context, img string, w io.Writer) error {
+	if err := pullSlots.Acquire(ctx, 1); err != nil {
+		return err
+	}
+	defer pullSlots.Release(1)
 	if d.disposable {
 		return ErrDisposableUnsupported
 	}

@@ -36,13 +36,18 @@ func runUp(ctx context.Context, opts commandOptions, args []string) (retErr erro
 	addActionFlags(fs, &opts)
 	addTimeoutFlag(fs, &opts)
 	fs.BoolVar(&opts.ForceRecreate, "force-recreate", opts.ForceRecreate, "force recreate containers even if nothing changed")
-	fs.BoolVar(&opts.NoPrune, "no-prune", opts.NoPrune, "retain omitted services during full-stack up")
+	prune := fs.Bool("prune", false, "remove owned containers for omitted services during full-stack up")
+	retain := fs.Bool("no-prune", false, "retain omitted services (the default)")
 	fs.BoolVar(&opts.AlphaDisposable, "alpha-disposable", opts.AlphaDisposable, "restrict up to the isolated disposable-volume Alpha profile (implies no-prune)")
 	noDeps := fs.Bool("no-deps", false, "do not include service dependencies when selecting services")
 	pullPolicy := fs.String("pull", "", "temporarily override pull policy: always, missing, or never")
 	if err := fs.Parse(args); err != nil {
 		return usageError{err.Error()}
 	}
+	if *prune && (*retain || opts.NoPrune) {
+		return usageError{"--prune conflicts with a retain-only invocation"}
+	}
+	opts.NoPrune = !*prune
 	alphaRequested := opts.AlphaDisposable
 	fs.Visit(func(f *flag.Flag) {
 		if f.Name == "alpha-disposable" {

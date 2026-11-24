@@ -136,6 +136,7 @@ func TestHTTPSApplyRevalidatesAndDoesNotAdopt(t *testing.T) {
 	id, stage, manifest := strings.Repeat("8", 32), strings.Repeat("1", 32), strings.Repeat("4", 64)
 	selection := "sha256:" + strings.Repeat("a", 64)
 	calls, validations := 0, 0
+	var disconnect context.CancelFunc
 	presence := "present"
 	h := &applyEndpoint{
 		previewEndpoint: previewEndpoint{
@@ -153,6 +154,9 @@ func TestHTTPSApplyRevalidatesAndDoesNotAdopt(t *testing.T) {
 		history: history,
 		apply: func(ctx context.Context, path, stack, digest, request, _ string, expected operation.ManagedExpectation) (deploymentStatus, []operation.ManagedResource) {
 			calls++
+			// net/http cancels the request context when the client disconnects.
+			// Inject that event after admission, before the executor completes.
+			disconnect()
 			got, ok := history.status(id)
 			if !ok || got.State != "running" || ctx.Err() != nil || path != "/stages/sample/main.pkl" || request != id || digest != selection {
 				t.Fatal("launch did not bind durable verified intent")
@@ -169,6 +173,10 @@ func TestHTTPSApplyRevalidatesAndDoesNotAdopt(t *testing.T) {
 	routes := authenticatedHTTPS(nil, nil, nil, h, "synthetic-monitor", "secret-token", httpsDeployGrants{"apply": true, "status": true})
 	request := func(method, path, token, body string) *httptest.ResponseRecorder {
 		r := httptest.NewRequest(method, "https://agent"+path, strings.NewReader(body))
+		clientCtx, cancel := context.WithCancel(r.Context())
+		defer cancel()
+		disconnect = cancel
+		r = r.WithContext(clientCtx)
 		r.Header.Set("Authorization", "Bearer "+token)
 		r.Header.Set("Content-Type", "application/json")
 		w := httptest.NewRecorder()

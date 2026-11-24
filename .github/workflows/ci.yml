@@ -81,6 +81,12 @@ jobs:
           go-version-file: go.mod
       - name: Provision protected synthetic secret fixtures
         run: sudo install -d -m 0700 -o "$(id -u)" -g "$(id -g)" /srv/dill-secretfile-tests
+      - name: Verify recovery from snapshot filesystem exhaustion
+        run: |
+          mount=$(mktemp -d)
+          sudo mount -t tmpfs -o "size=2m,mode=0700,uid=$(id -u),gid=$(id -g)" tmpfs "$mount"
+          trap 'sudo umount "$mount" && rmdir "$mount"' EXIT
+          DILL_TEST_SMALL_TMPFS="$mount" go test ./internal/projectsnapshot -run '^TestSmallFilesystemAdmissionRecovers$' -count=1 -v
       - run: make test
         env:
           DILL_TEST_SECRET_DIR: /srv/dill-secretfile-tests
@@ -154,6 +160,10 @@ jobs:
           "$RUNNER_TEMP/pkl" --version
       - name: Verify Docker
         run: docker version
+      - name: Verify journal recovery after process death following an engine mutation
+        env:
+          DILL_TEST_DISPOSABLE_CRASH: "1"
+        run: go test -tags containers_image_openpgp,exclude_graphdriver_devicemapper,exclude_graphdriver_btrfs ./internal/agentcmd -run '^TestCrashAfterDockerEffect$' -count=1 -v
       - name: Run integration tests
         env:
           DILL_TEST_ENGINE: docker

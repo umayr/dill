@@ -90,6 +90,10 @@ func (p *PodmanEngine) operationContext(ctx context.Context) context.Context {
 }
 
 func (p *PodmanEngine) PullImage(ctx context.Context, img string, w io.Writer) error {
+	if err := pullSlots.Acquire(ctx, 1); err != nil {
+		return err
+	}
+	defer pullSlots.Release(1)
 	if p.disposable {
 		return ErrDisposableUnsupported
 	}
