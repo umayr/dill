@@ -115,7 +115,17 @@ class Service {
   pidsLimit: Int?
 }
 
+typealias VolumeOwnership = "managed" | "external"
+class Volume {
+  ownership: VolumeOwnership = "managed"
+  name: String?
+  driver: String?
+  driverOptions: Mapping<String,String>?
+  labels: Mapping<String,String>?
+}
+
 class DillConfig {
+  volumes: Mapping<String,Volume> = new {}
   /// Stack name used for container labels and network naming.
   /// When omitted, a deterministic adjective-animal name is derived from the config file path.
   name: String?

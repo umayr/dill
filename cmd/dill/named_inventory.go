@@ -84,7 +84,7 @@ func (n *namedInventory) complete(ctx context.Context, engine orchestrator.Engin
 			return bad
 		}
 		n.prepared[service] = "sha256:" + id
-		mounts, err := config.NormalizeVolumes(svc.Volumes, svc.BaseDir)
+		mounts, err := svc.NormalizedVolumes()
 		if err != nil {
 			return bad
 		}

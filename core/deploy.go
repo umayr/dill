@@ -223,7 +223,7 @@ func Deploy(ctx context.Context, cfg *Config, o DeployOptions) error {
 			}
 		}
 	}
-	filtered := &plan.Plan{Changes: make([]plan.Change, 0, len(p.Changes))}
+	filtered := &plan.Plan{Volumes: p.Volumes, Changes: make([]plan.Change, 0, len(p.Changes))}
 	for _, ch := range p.Changes {
 		if ch.Kind == plan.KindRemove {
 			if len(o.Services) == 0 && !o.NoPrune {

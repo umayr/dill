@@ -28,7 +28,7 @@ func serviceHashPayload(stackName, name string, svc *Service) ([]byte, error) {
 	if err != nil {
 		return nil, fmt.Errorf("normalizing ports: %w", err)
 	}
-	volumes, err := NormalizeVolumes(svc.Volumes, svc.BaseDir)
+	volumes, err := svc.NormalizedVolumes()
 	if err != nil {
 		return nil, fmt.Errorf("normalizing volumes: %w", err)
 	}

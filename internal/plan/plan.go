@@ -80,9 +80,14 @@ func (p *Plan) PopulateHooks(cfg *config.DillConfig) {
 	}
 }
 
+type VolumeAction struct {
+	Name   string `json:"name"`
+	Action string `json:"action"`
+}
 type Plan struct {
-	Hooks   []HookStep `json:"hooks,omitempty"`
-	Changes []Change   `json:"changes"`
+	Volumes []VolumeAction `json:"volumes,omitempty"`
+	Hooks   []HookStep     `json:"hooks,omitempty"`
+	Changes []Change       `json:"changes"`
 }
 
 // Source is the read-only engine capability required for planning.
@@ -96,7 +101,48 @@ func Compute(ctx context.Context, cfg *config.DillConfig, engine Source, stackNa
 	if config.RejectUncheckedSecretDelivery(cfg) != nil {
 		return nil, config.ErrSecretUnavailable
 	}
-	return compute(ctx, cfg, engine, stackName, nil, nil, "")
+	p, err := compute(ctx, cfg, engine, stackName, nil, nil, "")
+	if err != nil {
+		return nil, err
+	}
+	claims := map[string]string{}
+	seen := map[string]bool{}
+	for _, svc := range cfg.Services {
+		mounts, err := svc.NormalizedVolumes()
+		if err != nil {
+			return nil, err
+		}
+		for _, m := range mounts {
+			if m.Type != "volume" {
+				continue
+			}
+			n := m.EngineName(stackName)
+			if n == "" {
+				continue
+			}
+			if prior, ok := claims[n]; ok && prior != m.Source && len(cfg.Volumes) > 0 {
+				return nil, fmt.Errorf("ambiguous volume identity %q", n)
+			}
+			claims[n] = m.Source
+			if m.Declaration == nil || seen[n] {
+				continue
+			}
+			seen[n] = true
+			v, ok := engine.(interface {
+				PlanVolume(context.Context, string, string, config.VolumeDeclaration) (string, error)
+			})
+			if !ok {
+				return nil, fmt.Errorf("cannot verify declared volumes")
+			}
+			a, err := v.PlanVolume(ctx, n, stackName, *m.Declaration)
+			if err != nil {
+				return nil, err
+			}
+			p.Volumes = append(p.Volumes, VolumeAction{n, a})
+		}
+	}
+	sort.Slice(p.Volumes, func(i, j int) bool { return p.Volumes[i].Name < p.Volumes[j].Name })
+	return p, nil
 }
 
 // ComputeChecked consumes opaque point-in-time evidence and only inspects the
@@ -318,7 +364,7 @@ func diffConfigsChecked(name string, svc *config.Service, live *orchestrator.Liv
 	diffs = append(diffs, diffPorts(desiredPorts, live.Ports)...)
 
 	// volumes
-	desiredVols, err := config.NormalizeVolumes(svc.Volumes, svc.BaseDir)
+	desiredVols, err := svc.NormalizedVolumes()
 	if err != nil {
 		return nil, fmt.Errorf("normalizing volumes: %w", err)
 	}

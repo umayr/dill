@@ -32,7 +32,7 @@ func ValidateSecrets(cfg *DillConfig) error {
 		}
 		names := map[string]bool{}
 		targets := []string{}
-		mounts, err := NormalizeVolumes(svc.Volumes, svc.BaseDir)
+		mounts, err := svc.NormalizedVolumes()
 		if err != nil {
 			return err
 		}

@@ -205,6 +205,7 @@ func run(args []string) (retErr error) {
 		fmt.Fprintf(os.Stderr, `Usage: dill [flags] <command>
 
 Commands:
+  diagnostics  Export a local private support bundle; application logs are opt-in
   lock        Pin project images; --update NAME refreshes a service or job
   up        Start all services (default)
   down      Stop and remove services; retain networks
@@ -262,7 +263,7 @@ Flags:
 	// Reject before any local parser, env-file, evaluator or SDK access.
 	if safe {
 		switch cmd {
-		case "lock", cmdInit, cmdFmt, cmdDoctor, cmdStacks, cmdLs:
+		case "diagnostics", "lock", cmdInit, cmdFmt, cmdDoctor, cmdStacks, cmdLs:
 			return config.ErrSecretUnavailable
 		}
 	}
@@ -327,6 +328,8 @@ Flags:
 		return err
 	case cmdStatus:
 		return runStatus(ctx, opts, commandArgs)
+	case "diagnostics":
+		return runDiagnostics(ctx, opts, commandArgs)
 	case cmdDoctor:
 		return runDoctor(ctx, opts, commandArgs)
 	case cmdCaps:

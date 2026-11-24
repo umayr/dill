@@ -214,7 +214,7 @@ func (p *PodmanEngine) startService(ctx context.Context, name string, svc *confi
 	if err != nil {
 		return "", fmt.Errorf("service %s: %w", name, err)
 	}
-	volumes, err := config.NormalizeVolumes(svc.Volumes, svc.BaseDir)
+	volumes, err := svc.NormalizedVolumes()
 	if err != nil {
 		return "", fmt.Errorf("service %s: %w", name, err)
 	}
@@ -272,7 +272,11 @@ func (p *PodmanEngine) startService(ctx context.Context, name string, svc *confi
 		switch vm.Type {
 		case "volume":
 			name := vm.EngineName(stackName)
-			if !vm.External && name != "" {
+			if vm.Declaration != nil {
+				if _, err := declared(ctx, p, name, stackName, *vm.Declaration, true); err != nil {
+					return "", err
+				}
+			} else if !vm.External && name != "" {
 				if err := p.EnsureVolume(ctx, name, stackName); err != nil {
 					return "", fmt.Errorf("service %s: %w", name, err)
 				}

@@ -112,7 +112,7 @@ func (c *operationCoordination) prepare(ctx context.Context, opts commandOptions
 		container := serviceContainerName(stack, service, svc)
 		containers[container] = true
 		resources = append(resources, coordination.ResourceInput{Kind: "container", Name: container, Action: "reconcile"})
-		mounts, err := config.NormalizeVolumes(svc.Volumes, svc.BaseDir)
+		mounts, err := svc.NormalizedVolumes()
 		if err != nil {
 			return usageError{"unsupported qualified storage"}
 		}
@@ -354,7 +354,7 @@ func (e *coordinatedEngine) StartService(ctx context.Context, name string, svc *
 	if stack != e.stack || svc == nil || !e.containers[serviceContainerName(stack, name, svc)] || svc.NetworkMode != "" {
 		return "", errors.New("service is outside qualified inventory")
 	}
-	mounts, err := config.NormalizeVolumes(svc.Volumes, svc.BaseDir)
+	mounts, err := svc.NormalizedVolumes()
 	if err != nil {
 		return "", errors.New("storage is outside qualified inventory")
 	}
