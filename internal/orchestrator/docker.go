@@ -232,6 +232,9 @@ func (d *DockerEngine) StartServiceChecked(ctx context.Context, name string, svc
 }
 
 func (d *DockerEngine) startService(ctx context.Context, name string, svc *config.Service, stackName string, secrets []config.ResolvedSecret, target string) (string, error) {
+	if svc.Privileged && !privilegeAuthorized(ctx, d) {
+		return "", ErrPrivilegeDenied
+	}
 	image, constrained, err := d.preparedImages.resolve(name, svc.Image)
 	if err != nil || (constrained && !d.disposable) {
 		return "", ErrDisposableUnavailable
@@ -388,6 +391,7 @@ func (d *DockerEngine) startService(ctx context.Context, name string, svc *confi
 	}
 
 	hostCfg := &container.HostConfig{
+		Privileged:    svc.Privileged,
 		PortBindings:  portBindings,
 		Mounts:        mounts,
 		RestartPolicy: container.RestartPolicy{Name: container.RestartPolicyMode(svc.Restart)},

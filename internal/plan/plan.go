@@ -452,6 +452,9 @@ func diffConfigsChecked(name string, svc *config.Service, live *orchestrator.Liv
 	}
 
 	// init
+	if svc.Privileged != live.Privileged {
+		diffs = append(diffs, FieldDiff{Field: "privileged", Before: fmt.Sprint(live.Privileged), After: fmt.Sprint(svc.Privileged)})
+	}
 	wantInit := svc.Init != nil && *svc.Init
 	if wantInit != live.Init {
 		diffs = append(diffs, FieldDiff{

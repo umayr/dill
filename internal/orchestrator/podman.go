@@ -177,6 +177,9 @@ func (p *PodmanEngine) StartServiceChecked(ctx context.Context, name string, svc
 }
 
 func (p *PodmanEngine) startService(ctx context.Context, name string, svc *config.Service, stackName string, secrets []config.ResolvedSecret, target string) (string, error) {
+	if svc.Privileged && !privilegeAuthorized(ctx, p) {
+		return "", ErrPrivilegeDenied
+	}
 	image, constrained, err := p.preparedImages.resolve(name, svc.Image)
 	if err != nil || (constrained && !p.disposable) {
 		return "", ErrDisposableUnavailable
@@ -224,6 +227,10 @@ func (p *PodmanEngine) startService(ctx context.Context, name string, svc *confi
 	}
 
 	s := specgen.NewSpecGenerator(image, false)
+	if svc.Privileged {
+		yes := true
+		s.Privileged = &yes
+	}
 
 	containerName := svc.ContainerName
 	if containerName == "" {

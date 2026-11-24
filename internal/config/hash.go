@@ -67,6 +67,7 @@ func serviceHashPayload(stackName, name string, svc *Service) ([]byte, error) {
 		User          string
 		Init          *bool
 		Conditions    map[string]DependencyCondition `json:",omitempty"`
+		Privileged    bool                           `json:",omitempty"`
 		CapAdd        []string
 		Devices       []string
 		Cpuset        string
@@ -87,6 +88,7 @@ func serviceHashPayload(stackName, name string, svc *Service) ([]byte, error) {
 		User:          svc.User,
 		Init:          svc.Init,
 		Conditions:    svc.Conditions,
+		Privileged:    svc.Privileged,
 		CapAdd:        svc.CapAdd,
 		Devices:       svc.Devices,
 		Cpuset:        svc.Cpuset,

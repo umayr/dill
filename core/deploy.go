@@ -30,6 +30,7 @@ var ErrSecretDeployUnsupported = errors.New("file-secret deployment is unsupport
 // Open returns an engine owned by Deploy, which closes it. Callbacks must be safe
 // for concurrent invocation; a nil PullSink discards pull progress.
 type DeployOptions struct {
+	AllowPrivileged                        bool
 	Stack                                  string
 	Services                               []string
 	NoDeps, NoPrune, ForceRecreate, DryRun bool
@@ -158,6 +159,19 @@ func Deploy(ctx context.Context, cfg *Config, o DeployOptions) error {
 		return errors.New("initialising engine: nil engine")
 	}
 	defer engine.Close()
+	for _, svc := range selected {
+		if svc.Privileged {
+			if !o.AllowPrivileged {
+				return orchestrator.ErrPrivilegeDenied
+			}
+			var err error
+			ctx, err = orchestrator.AuthorizePrivileged(ctx, engine)
+			if err != nil {
+				return err
+			}
+			break
+		}
+	}
 	sink := dag.MakePullSink(func(n string) dag.PullSink {
 		if o.PullSink != nil {
 			if s := o.PullSink(n); s != nil {

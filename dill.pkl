@@ -101,6 +101,7 @@ class Service {
   healthcheck: HealthCheck?
   user: String?
   init: Boolean?
+  privileged: Boolean = false
   capAdd: List<String>?
   devices: List<String>?
   cpuset: String?
