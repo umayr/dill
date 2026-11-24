@@ -99,7 +99,7 @@ func TestUpOwnedContainerForceRecreate(t *testing.T) {
 func TestUpRechecksOrphanOwnership(t *testing.T) {
 	engine := &ownershipEngine{fakeEngine: newFakeEngine(), live: map[string]*orchestrator.LiveConfig{"app_old": {ID: "foreign-id"}}, orphans: []string{"app_old"}}
 	withTestRuntime(t, engine, testConfig(), func() {
-		err := runUp(context.Background(), commandOptions{Quiet: true, Timeout: time.Second}, nil)
+		err := runUp(context.Background(), commandOptions{Quiet: true, Timeout: time.Second}, []string{"--prune"})
 		if !errors.Is(err, orchestrator.ErrOwnershipConflict) {
 			t.Fatalf("got %v, want ownership conflict", err)
 		}

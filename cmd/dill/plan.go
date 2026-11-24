@@ -30,6 +30,7 @@ func runPlanNamed(ctx context.Context, opts commandOptions, args []string, name 
 	if name == "plan" {
 		addProofFlags(fs, &opts)
 	}
+	prune := fs.Bool("prune", false, "include owned containers for omitted services in the removal plan")
 	format := fs.String("format", "text", "output format: text or json")
 	// Once JSON mode is selected, failures before rendering still produce one
 	// JSON document. Successful plan output and drift exits remain unchanged.
@@ -77,6 +78,15 @@ func runPlanNamed(ctx context.Context, opts commandOptions, args []string, name 
 		return fmt.Errorf("computing plan: %w", err)
 	}
 
+	if !*prune && name == "plan" && opts.operation == nil {
+		changes := result.Changes[:0]
+		for _, change := range result.Changes {
+			if change.Kind != plan.KindRemove {
+				changes = append(changes, change)
+			}
+		}
+		result.Changes = changes
+	}
 	if opts.operation != nil {
 		opts.operation.planned(result, sn)
 	} else {
