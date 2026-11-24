@@ -160,6 +160,10 @@ jobs:
           "$RUNNER_TEMP/pkl" --version
       - name: Verify Docker
         run: docker version
+      - name: Verify journal recovery after process death following an engine mutation
+        env:
+          DILL_TEST_DISPOSABLE_CRASH: "1"
+        run: go test -tags containers_image_openpgp,exclude_graphdriver_devicemapper,exclude_graphdriver_btrfs ./internal/agentcmd -run '^TestCrashAfterDockerEffect$' -count=1 -v
       - name: Run integration tests
         env:
           DILL_TEST_ENGINE: docker
