@@ -26,7 +26,14 @@ func (e *EvaluatorError) Unwrap() error { return e.Err }
 
 // Load evaluates a .pkl config file and returns the parsed DillConfig.
 // The pkl binary is located automatically (see internal/pklbin).
-func Load(ctx context.Context, path string) (result *DillConfig, retErr error) {
+func Load(ctx context.Context, path string) (*DillConfig, error) { return load(ctx, path, true) }
+
+// LoadForImageLock evaluates original references only for explicit lock generation.
+func LoadForImageLock(ctx context.Context, path string) (*DillConfig, error) {
+	return load(WithMachineEvaluation(ctx), path, false)
+}
+
+func load(ctx context.Context, path string, applyLock bool) (result *DillConfig, retErr error) {
 	secretPrivate, _ := ctx.Value(privateEvaluationKey{}).(bool)
 	machine, _ := ctx.Value(machineEvaluationKey{}).(bool)
 	private := secretPrivate || machine
@@ -150,6 +157,25 @@ func Load(ctx context.Context, path string) (result *DillConfig, retErr error) {
 	}
 	if err := ValidateRuntime(&cfg); err != nil {
 		return nil, &InvalidError{Err: err}
+	}
+	if applyLock {
+		l, err := ReadImageLock(filepath.Join(baseDir, "dill.lock"))
+		if err != nil {
+			return nil, &InvalidError{Err: err}
+		}
+		if l != nil {
+			s, j := ImageReferences(&cfg)
+			s, j, err = l.Resolve(s, j)
+			if err != nil {
+				return nil, &InvalidError{Err: err}
+			}
+			for k, v := range s {
+				cfg.Services[k].Image = v
+			}
+			for k, v := range j {
+				cfg.Jobs[k].Image = v
+			}
+		}
 	}
 	return &cfg, nil
 }

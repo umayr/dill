@@ -205,6 +205,7 @@ func run(args []string) (retErr error) {
 		fmt.Fprintf(os.Stderr, `Usage: dill [flags] <command>
 
 Commands:
+  lock        Pin project images; --update NAME refreshes a service or job
   up        Start all services (default)
   down      Stop and remove services; retain networks
   teardown  Remove containers and images; retain volumes and networks
@@ -261,7 +262,7 @@ Flags:
 	// Reject before any local parser, env-file, evaluator or SDK access.
 	if safe {
 		switch cmd {
-		case cmdInit, cmdFmt, cmdDoctor, cmdStacks, cmdLs:
+		case "lock", cmdInit, cmdFmt, cmdDoctor, cmdStacks, cmdLs:
 			return config.ErrSecretUnavailable
 		}
 	}
@@ -344,6 +345,8 @@ Flags:
 		return runCp(ctx, opts, commandArgs)
 	case cmdConfig:
 		return runConfig(ctx, opts, commandArgs)
+	case "lock":
+		return runLock(ctx, commandArgs)
 	case cmdInit:
 		return runInit(opts, commandArgs)
 	case cmdValidate:

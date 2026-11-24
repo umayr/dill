@@ -159,6 +159,12 @@ removing a retained network manually. See [lifecycle failures](docs/lifecycle-fa
 `rm` and `teardown` prompt before destructive removal; pass
 `--yes`/`-y` for automation. `stop` and `down` do not prompt.
 
+### Pin images with `dill.lock`
+
+Run `dill lock --file compose.pkl` beside a trusted project, review the generated sibling `dill.lock`, and commit it with the configuration. Lock generation resolves service **and job** references to registry manifest digests (the index digest for multi-platform images), not engine-local image IDs. Repeating the command preserves matching entries. Use `dill lock --file compose.pkl --update web` to refresh the entry named `web`; review the diff before deploying. Neither command deploys anything. A failed generation leaves the previous lock in place.
+
+Configuration loading uses the lock when present and rejects stale, missing, or extra entries. A changed registry tag cannot silently change the selected image, even with `pullPolicy = "always"`. If the pinned digest disappears from the registry and is not available locally under the requested policy, deployment fails; update the lock deliberately rather than expecting a tag fallback. Projects without a lock retain tag-based behavior. Include the lock alongside the entrypoint in every deployment snapshot; deliberately omitting it selects unlocked behavior. A lock pins images, not external volumes, bind contents, or database state.
+
 ### External commands
 
 Dill can launch a separately installed executable named `dill-NAME` on `PATH`
