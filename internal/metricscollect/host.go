@@ -19,7 +19,7 @@ var errHostMemory = errors.New("host memory observation unavailable")
 // HostSource observes one host memory pair on an acquisition's bound daemon.
 type HostSource func(context.Context, ReadBudget) (metricsmodel.HostObservation, error)
 
-// NewHostMemorySource builds a host source from an injected fresh Linux
+// newHostMemorySource builds a host source from an injected fresh Linux
 // meminfo opener. It returns nil when locality was not independently proven
 // for the enrolled daemon or no opener was supplied. It opens no file itself
 // and never infers locality from a path or an engine ID.
@@ -29,7 +29,7 @@ type HostSource func(context.Context, ReadBudget) (metricsmodel.HostObservation,
 // cache or proxy, and keep the read and close bounded under the supplied
 // context. If open returns a reader with an error, the source still closes
 // it. No named path or default native opener is supplied here.
-func NewHostMemorySource(localityVerified bool, open func(context.Context) (io.ReadCloser, error)) HostSource {
+func newHostMemorySource(localityVerified bool, open func(context.Context) (io.ReadCloser, error)) HostSource {
 	if !localityVerified || open == nil {
 		return nil
 	}

@@ -73,7 +73,7 @@ func TestHostMemoryExactLocalLimitAndShortReads(t *testing.T) {
 			r := &countingReader{Reader: shortReader{Reader: strings.NewReader(data)}}
 			file := &hostFile{Reader: r}
 			var opened int
-			c := collector(t, BoundSources{Host: NewHostMemorySource(true, func(context.Context) (io.ReadCloser, error) {
+			c := collector(t, BoundSources{Host: newHostMemorySource(true, func(context.Context) (io.ReadCloser, error) {
 				opened++
 				return file, nil
 			})})
@@ -114,7 +114,7 @@ func TestHostUnavailablePreservesIndependentAggregate(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			file := &hostFile{Reader: tc.reader, closeErr: tc.closeErr}
 			opened := 0
-			source := NewHostMemorySource(tc.local, func(context.Context) (io.ReadCloser, error) {
+			source := newHostMemorySource(tc.local, func(context.Context) (io.ReadCloser, error) {
 				opened++
 				return file, tc.openErr
 			})
@@ -136,7 +136,7 @@ func TestHostCancellationClosesFile(t *testing.T) {
 	defer cancel()
 	r := &countingReader{Reader: strings.NewReader(goodMeminfo)}
 	file := &hostFile{Reader: r}
-	c := collector(t, BoundSources{Host: NewHostMemorySource(true, func(callCtx context.Context) (io.ReadCloser, error) {
+	c := collector(t, BoundSources{Host: newHostMemorySource(true, func(callCtx context.Context) (io.ReadCloser, error) {
 		cancel()
 		<-callCtx.Done()
 		return file, nil
@@ -164,7 +164,7 @@ func TestHostCancellationDuringMeteredRead(t *testing.T) {
 				var reads, opens, releases int
 				c := New(func(context.Context, ReadBudget, string) (BoundSources, error) {
 					return BoundSources{
-						Host: NewHostMemorySource(true, func(callCtx context.Context) (io.ReadCloser, error) {
+						Host: newHostMemorySource(true, func(callCtx context.Context) (io.ReadCloser, error) {
 							opens++
 							file.Reader = readerFunc(func(p []byte) (int, error) {
 								reads++
@@ -232,7 +232,7 @@ func TestHostReadConsumesSharedByteBudget(t *testing.T) {
 			return err
 		})
 		return BoundSources{
-			Host: NewHostMemorySource(true, func(context.Context) (io.ReadCloser, error) { return file, nil }),
+			Host: newHostMemorySource(true, func(context.Context) (io.ReadCloser, error) { return file, nil }),
 			Inventory: func(context.Context, ReadBudget, int) (Inventory, error) {
 				t.Fatal("started inventory after global byte-budget breach")
 				return Inventory{}, nil
@@ -264,7 +264,7 @@ func TestSharedCallBudgetChargesFailedVerificationIOAndBlocksHostOverflow(t *tes
 						t.Fatalf("verification operation err=%v, want fixture failure", err)
 					}
 				}
-				source := NewHostMemorySource(true, func(context.Context) (io.ReadCloser, error) {
+				source := newHostMemorySource(true, func(context.Context) (io.ReadCloser, error) {
 					opened++
 					return io.NopCloser(strings.NewReader(goodMeminfo)), nil
 				})

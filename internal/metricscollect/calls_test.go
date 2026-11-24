@@ -64,7 +64,7 @@ func TestSharedCallBudgetFullScrapeAndOverspend(t *testing.T) {
 					}
 				}
 				return BoundSources{
-					Host: NewHostMemorySource(true, func(context.Context) (io.ReadCloser, error) {
+					Host: newHostMemorySource(true, func(context.Context) (io.ReadCloser, error) {
 						attempts++
 						starts++
 						return io.NopCloser(strings.NewReader(goodMeminfo)), nil
