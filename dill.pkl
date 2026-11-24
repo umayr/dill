@@ -77,6 +77,12 @@ class Job {
   afterJobs: List<String>?
 }
 
+typealias DependencyCondition = "started" | "healthy" | "completedSuccessfully"
+class Dependency {
+  service: String
+  condition: DependencyCondition
+}
+
 class Service {
   hooks: LifecycleHooks?
   image: String
@@ -88,7 +94,7 @@ class Service {
   volumes: List<Mount | String>?
   ports: List<Port | String>?
   labels: Mapping<String, String>?
-  dependsOn: List<String>?
+  dependsOn: List<String | Dependency>?
   command: List<String>?
   networkMode: String?
   healthcheck: HealthCheck?

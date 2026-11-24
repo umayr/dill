@@ -33,6 +33,29 @@ func ValidateRuntime(cfg *DillConfig) error {
 		if svc == nil {
 			return fmt.Errorf("service %q is nil", name)
 		}
+		for dep, cond := range svc.Conditions {
+			d := cfg.Services[dep]
+			if d == nil {
+				return fmt.Errorf("dependency %q not found", dep)
+			}
+			switch cond {
+			case Healthy:
+				if d.HealthCheck == nil {
+					return fmt.Errorf("healthy dependency %q requires a healthcheck", dep)
+				}
+				probe, err := NormalizeHealthCheckTest(d.HealthCheck.Test)
+				if err != nil || len(probe) < 2 || probe[0] == "NONE" {
+					return fmt.Errorf("healthy dependency %q requires an enabled healthcheck", dep)
+				}
+			case CompletedSuccessfully:
+				if d.Restart != "" && d.Restart != "no" {
+					return fmt.Errorf("completion dependency %q requires restart=no", dep)
+				}
+			case Started:
+			default:
+				return fmt.Errorf("invalid dependency condition")
+			}
+		}
 		if svc.ContainerName != "" {
 			if previous, exists := containerNames[svc.ContainerName]; exists {
 				return fmt.Errorf("service %q containerName %q duplicates service %q", name, svc.ContainerName, previous)

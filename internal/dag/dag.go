@@ -44,10 +44,12 @@ type PullSink interface {
 type MakePullSink func(service string) PullSink
 
 type node struct {
-	name string
-	svc  *config.Service
-	deps []*node
-	done chan struct{} // closed once the container is confirmed UP
+	name                      string
+	svc                       *config.Service
+	deps                      []*node
+	launched, completed       chan struct{}
+	waitCompletion, waitReady bool
+	done                      chan struct{} // closed once the container is confirmed UP
 }
 
 // Graph is a validated dependency graph of services.
@@ -70,7 +72,7 @@ func Build(services map[string]*config.Service) (*Graph, error) {
 		n := &node{
 			name: name,
 			svc:  svc,
-			done: make(chan struct{}),
+			done: make(chan struct{}), launched: make(chan struct{}), completed: make(chan struct{}),
 		}
 		g.nodes = append(g.nodes, n)
 		g.index[name] = n
@@ -82,6 +84,13 @@ func Build(services map[string]*config.Service) (*Graph, error) {
 			d, ok := g.index[dep]
 			if !ok {
 				return nil, fmt.Errorf("service %q depends on %q which is not defined", n.name, dep)
+			}
+			switch n.svc.Conditions[dep] {
+			case config.CompletedSuccessfully:
+				d.waitCompletion = true
+			case config.Started:
+			default:
+				d.waitReady = true
 			}
 			n.deps = append(n.deps, d)
 		}
@@ -120,6 +129,13 @@ func (g *Graph) run(ctx context.Context, engine orchestrator.Engine, stackName s
 			return err
 		}
 	}
+	for _, n := range g.nodes {
+		if n.waitCompletion {
+			if _, ok := engine.(exitWaiter); !ok {
+				return fmt.Errorf("engine cannot observe dependency completion")
+			}
+		}
+	}
 	if err := engine.EnsureNetwork(ctx, stackName); err != nil {
 		return fmt.Errorf("creating stack network: %w", err)
 	}
@@ -146,8 +162,15 @@ func (g *Graph) run(ctx context.Context, engine orchestrator.Engine, stackName s
 		eg.Go(recordFailure(func() error {
 			// Wait for all dependencies to be UP.
 			for _, dep := range n.deps {
+				gate := dep.done
+				switch n.svc.Conditions[dep.name] {
+				case config.Started:
+					gate = dep.launched
+				case config.CompletedSuccessfully:
+					gate = dep.completed
+				}
 				select {
-				case <-dep.done:
+				case <-gate:
 					logger.Debug("dependency ready", "service", n.name, "dep", dep.name)
 				case <-egCtx.Done():
 					return fmt.Errorf("service %q: waiting for dependency %q: %w", n.name, dep.name, egCtx.Err())
@@ -192,6 +215,20 @@ func (g *Graph) run(ctx context.Context, engine orchestrator.Engine, stackName s
 
 			switch actions[n.name] {
 			case ActionNoop:
+				// Never replay a matching one-shot service just to observe its exit.
+				if n.waitCompletion {
+					st, err := engine.ServiceStatus(egCtx, containerID)
+					if err != nil || st == nil || st.State == "" {
+						return fmt.Errorf("unknown state for completion dependency %q", n.name)
+					}
+					if st.State == "exited" || st.State == "stopped" {
+						if n.waitReady {
+							return fmt.Errorf("dependency %q already exited before readiness", n.name)
+						}
+						close(n.launched)
+						return waitSuccessfulExit(egCtx, engine, containerID, n)
+					}
+				}
 				emit("unchanged")
 				if err := engine.StartExisting(egCtx, containerID); err != nil {
 					return &orchestrator.ResourceError{Operation: "start service " + n.name, Resource: containerName, ID: containerID, Err: err}
@@ -239,6 +276,10 @@ func (g *Graph) run(ctx context.Context, engine orchestrator.Engine, stackName s
 				containerID = id
 			}
 
+			close(n.launched)
+			if n.waitCompletion && !n.waitReady {
+				return waitSuccessfulExit(egCtx, engine, containerID, n)
+			}
 			// Poll until the container is ready.
 			hasHealthCheck := n.svc.HealthCheck != nil
 			pollStart := time.Now()
@@ -256,6 +297,9 @@ func (g *Graph) run(ctx context.Context, engine orchestrator.Engine, stackName s
 				if ready {
 					emit("ready")
 					close(n.done)
+					if n.waitCompletion {
+						return waitSuccessfulExit(egCtx, engine, containerID, n)
+					}
 					return nil
 				}
 				elapsed := time.Since(pollStart)

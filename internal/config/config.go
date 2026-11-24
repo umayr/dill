@@ -21,30 +21,31 @@ type Service struct {
 	// Relative bind-mount paths are resolved against it.
 	BaseDir string `json:"-"`
 
-	Hooks          *LifecycleHooks   `json:"hooks"`
-	Secrets        []SecretGrant     `json:"secrets"`
-	Image          string            `json:"image"`
-	ContainerName  string            `json:"containerName"`
-	Restart        string            `json:"restart"`
-	PullPolicy     string            `json:"pullPolicy"`
-	Environment    map[string]string `json:"environment"`
-	Volumes        []json.RawMessage `json:"volumes"` // string | Mount
-	Ports          []json.RawMessage `json:"ports"`   // string | Port
-	Labels         map[string]string `json:"labels"`
-	DependsOn      []string          `json:"dependsOn"`
-	Command        []string          `json:"command"`
-	NetworkMode    string            `json:"networkMode"`
-	HealthCheck    *HealthCheck      `json:"healthcheck"`
-	User           string            `json:"user"`
-	Init           *bool             `json:"init"`
-	CapAdd         []string          `json:"capAdd"`
-	Devices        []string          `json:"devices"`
-	Cpuset         string            `json:"cpuset"`
-	MemLimit       string            `json:"memLimit"`
-	MemReservation string            `json:"memReservation"`
-	CPUs           string            `json:"cpus"`
-	CPUShares      *int              `json:"cpuShares"`
-	PidsLimit      *int              `json:"pidsLimit"`
+	Hooks          *LifecycleHooks                `json:"hooks"`
+	Secrets        []SecretGrant                  `json:"secrets"`
+	Image          string                         `json:"image"`
+	ContainerName  string                         `json:"containerName"`
+	Restart        string                         `json:"restart"`
+	PullPolicy     string                         `json:"pullPolicy"`
+	Environment    map[string]string              `json:"environment"`
+	Volumes        []json.RawMessage              `json:"volumes"` // string | Mount
+	Ports          []json.RawMessage              `json:"ports"`   // string | Port
+	Labels         map[string]string              `json:"labels"`
+	Conditions     map[string]DependencyCondition `json:"-"`
+	DependsOn      []string                       `json:"dependsOn"`
+	Command        []string                       `json:"command"`
+	NetworkMode    string                         `json:"networkMode"`
+	HealthCheck    *HealthCheck                   `json:"healthcheck"`
+	User           string                         `json:"user"`
+	Init           *bool                          `json:"init"`
+	CapAdd         []string                       `json:"capAdd"`
+	Devices        []string                       `json:"devices"`
+	Cpuset         string                         `json:"cpuset"`
+	MemLimit       string                         `json:"memLimit"`
+	MemReservation string                         `json:"memReservation"`
+	CPUs           string                         `json:"cpus"`
+	CPUShares      *int                           `json:"cpuShares"`
+	PidsLimit      *int                           `json:"pidsLimit"`
 }
 
 // Port mirrors the Pkl Port class.
