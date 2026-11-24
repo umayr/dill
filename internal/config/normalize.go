@@ -22,12 +22,13 @@ type PortBinding struct {
 
 // VolumeMount is the normalized form of a Pkl Mount struct or shorthand string.
 type VolumeMount struct {
-	Type     string // "volume", "bind", "tmpfs"
-	Source   string // logical source; for volumes, use EngineName for the engine-facing name
-	Target   string
-	ReadOnly bool
-	External bool   // existing volume: never created, labelled, or removed
-	Name     string // explicit engine volume name
+	Declaration *VolumeDeclaration `json:"-"`
+	Type        string             // "volume", "bind", "tmpfs"
+	Source      string             // logical source; for volumes, use EngineName for the engine-facing name
+	Target      string
+	ReadOnly    bool
+	External    bool   // existing volume: never created, labelled, or removed
+	Name        string // explicit engine volume name
 }
 
 // NormalizePorts converts the raw JSON union slice (string | Port object) into

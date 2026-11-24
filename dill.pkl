@@ -77,6 +77,12 @@ class Job {
   afterJobs: List<String>?
 }
 
+typealias DependencyCondition = "started" | "healthy" | "completed"
+class Dependency {
+  service: String
+  condition: DependencyCondition
+}
+
 class Service {
   hooks: LifecycleHooks?
   image: String
@@ -88,7 +94,7 @@ class Service {
   volumes: List<Mount | String>?
   ports: List<Port | String>?
   labels: Mapping<String, String>?
-  dependsOn: List<String>?
+  dependsOn: List<String | Dependency>?
   command: List<String>?
   networkMode: String?
   healthcheck: HealthCheck?
@@ -115,7 +121,17 @@ class Service {
   pidsLimit: Int?
 }
 
+typealias VolumeOwnership = "managed" | "external"
+class Volume {
+  ownership: VolumeOwnership = "managed"
+  name: String?
+  driver: String?
+  driverOptions: Mapping<String, String>?
+  labels: Mapping<String, String>?
+}
+
 class DillConfig {
+  volumes: Mapping<String, Volume> = new {}
   /// Stack name used for container labels and network naming.
   /// When omitted, a deterministic adjective-animal name is derived from the config file path.
   name: String?

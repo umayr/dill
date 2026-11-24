@@ -137,8 +137,15 @@ func load(ctx context.Context, path string, applyLock bool) (result *DillConfig,
 	if len(r["config"]) == 0 || string(r["config"]) == "null" {
 		return nil, &InvalidError{Err: fmt.Errorf("pkl output missing 'config' field")}
 	}
-	if err := decodeStrict(r["config"], &cfg); err != nil {
+	normalized, conditions, err := decodeDependencies(r["config"])
+	if err != nil {
+		return nil, &InvalidError{Err: err}
+	}
+	if err := decodeStrict(normalized, &cfg); err != nil {
 		return nil, &InvalidError{Err: fmt.Errorf("parsing pkl output: %w", err)}
+	}
+	for name, conds := range conditions {
+		cfg.Services[name].Conditions = conds
 	}
 	if err := validateDecodedShape(r["config"], &cfg); err != nil {
 		return nil, &InvalidError{Err: err}
@@ -154,6 +161,9 @@ func load(ctx context.Context, path string, applyLock bool) (result *DillConfig,
 		if svc != nil {
 			svc.BaseDir = baseDir
 		}
+	}
+	if err := BindVolumes(&cfg); err != nil {
+		return nil, &InvalidError{Err: err}
 	}
 	if err := ValidateRuntime(&cfg); err != nil {
 		return nil, &InvalidError{Err: err}

@@ -108,7 +108,7 @@ func observePreview(ctx context.Context, cfg *config.DillConfig, e *previewEngin
 		if _, err := e.LocalImageID(ctx, svc.Image); err != nil {
 			return fail()
 		}
-		volumes, err := config.NormalizeVolumes(svc.Volumes, svc.BaseDir)
+		volumes, err := svc.NormalizedVolumes()
 		if err != nil {
 			return fail()
 		}

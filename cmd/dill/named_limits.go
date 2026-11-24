@@ -22,7 +22,7 @@ func namedDeclaredLimitExceeded(cfg *config.DillConfig, stack string) bool {
 		if len(serviceContainerName(stack, service, svc)) > preflight.MaxNameBytes {
 			return true
 		}
-		mounts, err := config.NormalizeVolumes(svc.Volumes, svc.BaseDir)
+		mounts, err := svc.NormalizedVolumes()
 		if err != nil {
 			continue
 		}

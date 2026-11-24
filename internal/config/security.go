@@ -3,6 +3,7 @@ package config
 import (
 	"encoding/json"
 	"fmt"
+	"reflect"
 	"sort"
 	"strings"
 )
@@ -15,6 +16,11 @@ const SystemLabelPrefix = "dill."
 func ValidateRuntime(cfg *DillConfig) error {
 	if cfg == nil {
 		return fmt.Errorf("config is nil")
+	}
+	for _, svc := range cfg.Services {
+		if svc != nil && !reflect.DeepEqual(cfg.Volumes, svc.DeclaredVolumes) && (len(cfg.Volumes) != 0 || len(svc.DeclaredVolumes) != 0) {
+			return fmt.Errorf("unbound volume declarations")
+		}
 	}
 	if err := validateLifecycle(cfg); err != nil {
 		return err
@@ -33,6 +39,29 @@ func ValidateRuntime(cfg *DillConfig) error {
 		if svc == nil {
 			return fmt.Errorf("service %q is nil", name)
 		}
+		for dep, cond := range svc.Conditions {
+			d := cfg.Services[dep]
+			if d == nil {
+				return fmt.Errorf("dependency %q not found", dep)
+			}
+			switch cond {
+			case Healthy:
+				if d.HealthCheck == nil {
+					return fmt.Errorf("healthy dependency %q requires a healthcheck", dep)
+				}
+				probe, err := NormalizeHealthCheckTest(d.HealthCheck.Test)
+				if err != nil || len(probe) < 2 || probe[0] == "NONE" {
+					return fmt.Errorf("healthy dependency %q requires an enabled healthcheck", dep)
+				}
+			case Completed:
+				if d.Restart != "" && d.Restart != "no" {
+					return fmt.Errorf("completion dependency %q requires restart=no", dep)
+				}
+			case Started:
+			default:
+				return fmt.Errorf("invalid dependency condition")
+			}
+		}
 		if svc.ContainerName != "" {
 			if previous, exists := containerNames[svc.ContainerName]; exists {
 				return fmt.Errorf("service %q containerName %q duplicates service %q", name, svc.ContainerName, previous)
@@ -47,7 +76,7 @@ func ValidateRuntime(cfg *DillConfig) error {
 		if _, err := NormalizePorts(svc.Ports); err != nil {
 			return fmt.Errorf("service %q: %w", name, err)
 		}
-		if _, err := NormalizeVolumes(svc.Volumes, svc.BaseDir); err != nil {
+		if _, err := svc.NormalizedVolumes(); err != nil {
 			return fmt.Errorf("service %q: %w", name, err)
 		}
 		if _, err := NormalizeResources(svc); err != nil {

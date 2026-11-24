@@ -119,7 +119,7 @@ func produceNamedCapture(ctx context.Context, inv preflight.Invocation, cfg *con
 				return nil, zero, bad
 			}
 			if row.Action == "create" || row.Action == "recreate" {
-				mounts, e := config.NormalizeVolumes(svc.Volumes, svc.BaseDir)
+				mounts, e := svc.NormalizedVolumes()
 				if e != nil {
 					return nil, zero, e
 				}

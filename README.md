@@ -165,6 +165,12 @@ Run `dill lock --file compose.pkl` beside a trusted project, review the generate
 
 Configuration loading uses the lock when present and rejects stale, missing, or extra entries. A changed registry tag cannot silently change the selected image, even with `pullPolicy = "always"`. If the pinned digest disappears from the registry and is not available locally under the requested policy, deployment fails; update the lock deliberately rather than expecting a tag fallback. Projects without a lock retain tag-based behavior. Include the lock alongside the entrypoint in every deployment snapshot; deliberately omitting it selects unlocked behavior. A lock pins images, not external volumes, bind contents, or database state.
 
+### Export a local diagnostics bundle
+
+`dill diagnostics -f compose.pkl --output report.tar.gz` creates a new owner-only archive. It records versions, service states, configured health-check readiness and plan counts, not environment values, raw inspect results, project files or credentials. Unavailable observations remain unknown. To include an offline operation outcome, supply `--state-dir`, `--journal-id` and `--request-id` from the original request; an unavailable journal does not establish success.
+
+Logs are omitted unless explicitly selected, e.g. `--include-logs web --since 15m`. Up to eight services, 200 lines and 256 KiB per service; partial reads are marked. **Application logs are not guaranteed secret-free. Review locally before sharing.** Nothing is uploaded and existing files are not overwritten. Use on trusted local projects only: loading a configuration evaluates Pkl.
+
 ### External commands
 
 Dill can launch a separately installed executable named `dill-NAME` on `PATH`
@@ -395,6 +401,17 @@ as-is.
 
 ### Volumes
 
+Optional project declarations separate **ownership** from mount access. The `VolumeOwnership` enum is `"managed" | "external"`. For example, inside `config`:
+
+```pkl
+volumes {
+  ["db-data"] { ownership = "external"; name = "existing_postgres_data" }
+  ["cache"] { ownership = "managed" }
+}
+```
+
+Reference these in a service with `volumes = List("db-data:/var/lib/postgresql/data", "cache:/cache")`. Managed declarations accept an optional engine `name`, `driver`, `driverOptions`, and `labels`. Support for a given driver depends on the target; do not store credentials in driver options. Existing managed volumes must match ownership and creation settings. External declarations require an exact name and forbid creation settings. A missing external volume blocks ordinary deployment before creation; do not concurrently remove volumes during deployment. `dill plan` shows the creation/reuse decision for referenced declarations. Neither declaration grants permission to delete volume data. This is an ordinary CLI feature, not a checked remote volume-provisioning contract. Existing undeclared shorthand and inline mounts retain their old behavior.
+
 Named volumes are stack-scoped by default: `pg-data:/var/lib/postgresql/data`
 creates `<stack>_pg-data`. Two stacks declaring the same logical volume get two
 independent volumes. `dill teardown` retains stack-labelled named volumes and
@@ -454,5 +471,5 @@ configuration hash on either version.
 - **Type Safety:** Catch invalid ports or misspelled parameters in your IDE.
 - **Programmability:** Use loops, conditionals, and variables to build complex architectures.
 - **Engine Agnostic:** Deploy securely with Podman's daemonless architecture, or fallback to Docker when needed.
-- **DAG Startup:** Services with `dependsOn` start in order and only after their dependencies are healthy.
+- **DAG startup:** A string in `dependsOn` preserves Dill’s original behavior: wait for the dependency’s health check if configured, otherwise for running. To choose per edge, use `dependsOn = List(new Dependency { service = "db"; condition = "healthy" }, new Dependency { service = "migration"; condition = "completed" })`. The `DependencyCondition` enum is `"started" | "healthy" | "completed"`. `started` releases after a successful container start; `healthy` needs an enabled, declared check. Completion requires a non-restarting service and a known zero exit status. A failed or unknown exit cannot release the dependent; ordinary repeat `up` does not rerun an unchanged completed migration. These explicit conditions are for ordinary service deployments, not checked remote execution or lifecycle-job dependencies.
 - **Image-aware updates:** `pullPolicy: always` pulls before planning and recreates only when the image ID actually changed.
