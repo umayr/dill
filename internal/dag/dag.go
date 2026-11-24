@@ -52,8 +52,9 @@ type node struct {
 
 // Graph is a validated dependency graph of services.
 type Graph struct {
-	nodes []*node
-	index map[string]*node
+	nodes  []*node
+	index  map[string]*node
+	before func(context.Context, string, Action) error
 }
 
 // Build constructs a Graph from the services map.
@@ -93,6 +94,9 @@ func Build(services map[string]*config.Service) (*Graph, error) {
 
 	return g, nil
 }
+
+// BeforeAction installs the deployment's pre-mutation job callback before Run.
+func (g *Graph) BeforeAction(f func(context.Context, string, Action) error) { g.before = f }
 
 // Run starts all services according to the provided action map. Services with
 // no shared dependencies start concurrently; each goroutine waits for its
@@ -150,6 +154,11 @@ func (g *Graph) run(ctx context.Context, engine orchestrator.Engine, stackName s
 				}
 			}
 
+			if g.before != nil {
+				if err := g.before(egCtx, n.name, actions[n.name]); err != nil {
+					return err
+				}
+			}
 			containerName := n.svc.ContainerName
 			if containerName == "" {
 				containerName = stackName + "_" + n.name
@@ -296,6 +305,9 @@ func Down(ctx context.Context, engine DownEngine, stackName string, prog Progres
 }
 
 func DownWithEvents(ctx context.Context, engine DownEngine, stackName string, prog Progress, event DownEvent) error {
+	return DownWithHookEvents(ctx, engine, stackName, prog, nil, event)
+}
+func DownWithHookEvents(ctx context.Context, engine DownEngine, stackName string, prog Progress, prepare func(*orchestrator.RemovalIntent) (func() error, error), event DownEvent) error {
 	names, err := engine.ListStack(ctx, stackName)
 	if err != nil {
 		return fmt.Errorf("listing stack %q: %w", stackName, err)
@@ -311,11 +323,32 @@ func DownWithEvents(ctx context.Context, engine DownEngine, stackName string, pr
 			errs = append(errs, err)
 			continue
 		}
+		if len(captured.DownHookDigests) > 0 {
+			if intent.DownHookDigests == nil {
+				intent.DownHookDigests = map[string]string{}
+			}
+			for id, d := range captured.DownHookDigests {
+				intent.DownHookDigests[id] = d
+			}
+		}
 		intent.Resources = append(intent.Resources, captured.Resources...)
 	}
 	// Preserve legacy best-effort independent cleanup while never authorizing a
 	// failed ownership target. All identities are captured before any mutation.
-	errs = append(errs, downIntent(ctx, engine, intent, prog, event))
+	var after func() error
+	if prepare != nil {
+		if len(errs) > 0 && len(intent.DownHookDigests) > 0 {
+			return errors.Join(errs...)
+		}
+		after, err = prepare(intent)
+		if err != nil {
+			return errors.Join(errors.Join(errs...), err)
+		}
+		if len(errs) > 0 {
+			after = nil
+		}
+	}
+	errs = append(errs, downIntentWithAfter(ctx, engine, intent, prog, event, after))
 	return errors.Join(errs...)
 }
 
@@ -326,6 +359,9 @@ func DownIntent(ctx context.Context, engine DownEngine, intent *orchestrator.Rem
 }
 
 func downIntent(ctx context.Context, engine DownEngine, intent *orchestrator.RemovalIntent, prog Progress, event DownEvent) error {
+	return downIntentWithAfter(ctx, engine, intent, prog, event, nil)
+}
+func downIntentWithAfter(ctx context.Context, engine DownEngine, intent *orchestrator.RemovalIntent, prog Progress, event DownEvent, after func() error) error {
 	var errs []error
 	for _, resource := range intent.Resources {
 		name := resource.Name
@@ -339,6 +375,9 @@ func downIntent(ctx context.Context, engine DownEngine, intent *orchestrator.Rem
 		if err != nil {
 			errs = append(errs, err)
 		}
+	}
+	if len(errs) == 0 && after != nil {
+		errs = append(errs, after())
 	}
 	err := engine.RemoveNetwork(ctx, intent.Stack)
 	if err != nil {

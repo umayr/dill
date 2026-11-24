@@ -237,6 +237,9 @@ func (p *PodmanEngine) startService(ctx context.Context, name string, svc *confi
 		return "", fmt.Errorf("service %s: %w", name, err)
 	} else {
 		s.Labels["dill.config-hash"] = hash
+		if svc.DownHookDigest != "" {
+			s.Labels["dill.down-hooks-sha256"] = svc.DownHookDigest
+		}
 	}
 	if len(secrets) > 0 {
 		s.Labels[SecretEnabledLabel] = "true"
