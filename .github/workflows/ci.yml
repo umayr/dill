@@ -164,6 +164,10 @@ jobs:
         env:
           DILL_TEST_DISPOSABLE_CRASH: "1"
         run: go test -tags containers_image_openpgp,exclude_graphdriver_devicemapper,exclude_graphdriver_btrfs ./internal/agentcmd -run '^TestCrashAfterDockerEffect$' -count=1 -v
+      - name: Qualify image lock across tag movement on a disposable engine
+        env:
+          IMAGE_LOCK_PILOT_DISPOSABLE_DOCKER: "yes"
+        run: make build && bash scripts/image-lock-pilot.sh
       - name: Run integration tests
         env:
           DILL_TEST_ENGINE: docker
