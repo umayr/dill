@@ -20,7 +20,6 @@ import (
 	"github.com/umayr/dill/internal/log"
 	"github.com/umayr/dill/internal/orchestrator"
 	"github.com/umayr/dill/internal/plan"
-	"github.com/umayr/dill/internal/secretfile"
 )
 
 func runUp(ctx context.Context, opts commandOptions, args []string) (retErr error) {
@@ -72,21 +71,12 @@ func runUp(ctx context.Context, opts commandOptions, args []string) (retErr erro
 }
 
 func runUpConfig(ctx context.Context, opts commandOptions, cfg *config.DillConfig, names []string, noDeps bool, pullPolicy string, open func(context.Context, *config.DillConfig) (orchestrator.Engine, error)) (retErr error) {
-	secret := requiresSecretPreflight(opts, cfg)
-	if secret || opts.secretMode() {
+	if requiresSecretPreflight(opts, cfg) || opts.secretMode() {
 		return config.ErrSecretUnavailable
 	}
 	if opts.AlphaDisposable {
 		return usageError{"Alpha disposable profile is disabled"}
 	}
-	safe := opts.secretMode() || secret
-	if safe {
-		restore := silenceSecretLogs()
-		defer restore()
-		opts.Quiet = true
-		defer func() { retErr = fixedSecretError(retErr) }()
-	}
-
 	if err := validateTrustedStack(opts, cfg); err != nil {
 		return err
 	}
@@ -113,9 +103,9 @@ func runUpConfig(ctx context.Context, opts commandOptions, cfg *config.DillConfi
 
 	logger.Debug("loaded config", "engine", cfg.Engine, "services", len(cfg.Services))
 
-	// Checked, secret and operation-controlled paths retain their distinct
+	// Checked and operation-controlled paths retain their distinct
 	// policy and evidence handling below.
-	if !safe && capture == nil && opts.operation == nil {
+	if capture == nil && opts.operation == nil {
 		if _, err := selectServices(cfg.Services, names, !noDeps); err != nil {
 			return err
 		}
@@ -173,27 +163,11 @@ func runUpConfig(ctx context.Context, opts commandOptions, cfg *config.DillConfi
 		return fmt.Errorf("building dependency graph: %w", err)
 	}
 
-	var req secretfile.Request
-	var evidence *secretfile.Result
-	if secret {
-		req, evidence, err = prepareSecrets(ctx, opts, cfg, names, noDeps, false)
-		if err != nil {
-			return err
-		}
-	}
-
 	engine, err := open(ctx, cfg)
 	if err != nil {
 		return fmt.Errorf("initialising engine: %w", err)
 	}
 	defer engine.Close()
-
-	if secret {
-		engine, err = secretEngineWrap(engine, req, evidence)
-		if err != nil {
-			return err
-		}
-	}
 
 	sn := resolveStackNameWithOptions(cfg, opts)
 	logger.Debug("using stack name", "stack", sn)
@@ -204,15 +178,12 @@ func runUpConfig(ctx context.Context, opts commandOptions, cfg *config.DillConfi
 	}
 	var pullMu sync.Mutex
 	mkSink := newMakePullSink(isTTY, &pullMu)
-	if safe || opts.operation != nil {
+	if opts.operation != nil {
 		mkSink = secretPullSink
 	}
 
 	// Check ownership before pulling images or applying any planned mutations.
 	compute := func() (*plan.Plan, error) {
-		if secret {
-			return secretPlanCompute(ctx, cfg, engine, sn, req, evidence)
-		}
 		return plan.Compute(ctx, cfg, engine, sn)
 	}
 	var p *plan.Plan
@@ -400,6 +371,3 @@ func preflightOrphans(ctx context.Context, e orchestrator.Engine, p *plan.Plan, 
 	}
 	return orchestrator.CaptureRemovalIntent(ctx, e, stack, targets)
 }
-
-var secretPlanCompute = plan.ComputeChecked
-var secretEngineWrap = orchestrator.WithSecrets
