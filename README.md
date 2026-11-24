@@ -44,6 +44,8 @@ See [schema release and migration notes](docs/schema-release.md).
 
 ## Usage
 
+**Pruning is opt-in for ordinary CLI deployments.** `dill up` retains containers for services removed from the project. Review `dill plan --prune` before `dill up --prune`; full-stack pruning removes owned orphans before executing the service graph, and a later service failure does not restore them. Partial service selection does not prune other services. `dill diff` remains an inventory comparison and can report omitted services even when ordinary `up` will retain them. Remote checked deployments retain their existing no-prune policy. Each Dill process limits Docker and Podman image pulls to two concurrent transfers; independent processes do not share this limit.
+
 By default, Dill uses the Podman socket. You can switch to Docker by setting `engine = "docker"` in your configuration. Use `--engine-socket unix:///absolute/path` to pin all engine operations to one local endpoint instead of ambient defaults; see [endpoint precedence and limitations](docs/local-engine-endpoints.md). This is not authenticated target identity, trusted contexts, cross-process locking or a machine mutation API. Run `dill caps --engine podman` for known adapter limits; see the [capability matrix](docs/capabilities.md) for migration notes and verification gaps.
 
 ```
