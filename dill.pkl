@@ -73,7 +73,6 @@ class Job {
   user: String?
   pullPolicy: "always" | "missing" | "never" = "missing"
   environment: Mapping<String, String>?
-  volumes: List<Mount | String>?
   dependsOn: List<String>?
   afterJobs: List<String>?
 }

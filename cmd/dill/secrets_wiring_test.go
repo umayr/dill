@@ -16,7 +16,6 @@ import (
 
 	"github.com/umayr/dill/internal/config"
 	"github.com/umayr/dill/internal/orchestrator"
-	"github.com/umayr/dill/internal/plan"
 	"github.com/umayr/dill/internal/secretfile"
 )
 
@@ -92,39 +91,6 @@ func secretOptions() commandOptions {
 	return commandOptions{ConfigFile: "synthetic.pkl", Engine: "docker", EngineSocket: "/run/synthetic.sock", EngineSocketSet: true, StackName: "demo", SecretPolicy: "/synthetic/policy", SecretPolicyCaptured: true, SecretTarget: "lab", SecretBindings: "/synthetic/bindings", SecretBindingsSet: true, Timeout: time.Second, Quiet: true}
 }
 
-type spyCheckedEngine struct {
-	orchestrator.Engine
-	req   secretfile.Request
-	check func(context.Context, secretfile.Request) (*secretfile.Result, error)
-}
-
-func (e spyCheckedEngine) StartService(ctx context.Context, name string, svc *config.Service, stack string) (string, error) {
-	if _, err := e.check(ctx, e.req); err != nil {
-		return "", err
-	}
-	return e.Engine.StartService(ctx, name, svc, stack)
-}
-
-// These spies test CLI operation ordering, not Linux peer authorization. The
-// production paths still require opaque evidence and checked adapter creation.
-func mockSecretOperation(t *testing.T, s *secretSpy, check func(context.Context, secretfile.Request) (*secretfile.Result, error), kind plan.ChangeKind) {
-	t.Helper()
-	oldPre, oldPlan, oldWrap := secretPreflight, secretPlanCompute, secretEngineWrap
-	t.Cleanup(func() { secretPreflight, secretPlanCompute, secretEngineWrap = oldPre, oldPlan, oldWrap })
-	secretPreflight = check
-	secretEngineWrap = func(e orchestrator.Engine, r secretfile.Request, _ *secretfile.Result) (orchestrator.Engine, error) {
-		return spyCheckedEngine{e, r, check}, nil
-	}
-	secretPlanCompute = func(_ context.Context, c *config.DillConfig, _ orchestrator.Engine, _ string, _ secretfile.Request, _ *secretfile.Result) (*plan.Plan, error) {
-		s.event("plan")
-		p := &plan.Plan{}
-		for name := range c.Services {
-			p.Changes = append(p.Changes, plan.Change{Service: name, Kind: kind})
-		}
-		p.Changes = append(p.Changes, plan.Change{Service: "demo_orphan", Kind: plan.KindRemove})
-		return p, nil
-	}
-}
 func TestSecretDirectStartRestartDenyBeforeAnyMutation(t *testing.T) {
 	for _, command := range []string{"start", "restart"} {
 		for _, marker := range []string{"true", "false", "malformed"} {
