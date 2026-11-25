@@ -165,6 +165,12 @@ Run `dill lock --file compose.pkl` beside a trusted project, review the generate
 
 Configuration loading uses the lock when present and rejects stale, missing, or extra entries. A changed registry tag cannot silently change the selected image, even with `pullPolicy = "always"`. If the pinned digest disappears from the registry and is not available locally under the requested policy, deployment fails; update the lock deliberately rather than expecting a tag fallback. Projects without a lock retain tag-based behavior. Include the lock alongside the entrypoint in every deployment snapshot; deliberately omitting it selects unlocked behavior. A lock pins images, not external volumes, bind contents, or database state.
 
+### Service entrypoints and privileged deployment
+
+`entrypoint = List("/bin/sh", "-c", "…")` overrides the image entrypoint as an argument vector; omit it to inherit the image default. `command` remains a separate argument list.
+
+`privileged = true` requests host-level privileges; the declaration alone does not authorize them. For trusted workloads only, explicitly pass `dill up --allow-privileged --engine-socket /absolute/path/to/socket` on the operator machine. Docker and Podman must report rootful operation. Do not expose this flag through unattended or remote deployment: checked execution does not grant this authority. Rootless Podman cannot provide equivalent host access.
+
 ### Export a local diagnostics bundle
 
 `dill diagnostics -f compose.pkl --output report.tar.gz` creates a new owner-only archive. It records versions, service states, configured health-check readiness and plan counts, not environment values, raw inspect results, project files or credentials. Unavailable observations remain unknown. To include an offline operation outcome, supply `--state-dir`, `--journal-id` and `--request-id` from the original request; an unavailable journal does not establish success.

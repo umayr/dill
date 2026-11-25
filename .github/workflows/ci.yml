@@ -160,6 +160,8 @@ jobs:
           "$RUNNER_TEMP/pkl" --version
       - name: Verify Docker
         run: docker version
+      - name: Qualify local privileged approval on rootful Docker
+        run: make build && bash scripts/qualify-privileged.sh docker
       - name: Verify journal recovery after process death following an engine mutation
         env:
           DILL_TEST_DISPOSABLE_CRASH: "1"
@@ -216,6 +218,8 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y podman
           podman version
+      - name: Qualify local privileged approval on rootful Podman
+        run: make build && bash scripts/qualify-privileged.sh podman
       - name: Start Podman API socket
         run: |
           rm -f /tmp/dill-podman.sock
