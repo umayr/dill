@@ -95,6 +95,7 @@ class Service {
   ports: List<Port | String>?
   labels: Mapping<String, String>?
   dependsOn: List<String | Dependency>?
+  entrypoint: List<String>?
   command: List<String>?
   networkMode: String?
   healthcheck: HealthCheck?

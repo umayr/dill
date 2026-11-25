@@ -299,6 +299,7 @@ func (p *PodmanEngine) startService(ctx context.Context, name string, svc *confi
 	for _, secret := range secrets {
 		s.Mounts = append(s.Mounts, specs.Mount{Type: "bind", Source: secret.HostPath, Destination: secret.Target, Options: []string{"ro"}})
 	}
+	s.Entrypoint = svc.Entrypoint
 	if len(svc.Command) > 0 {
 		s.Command = svc.Command
 	}
@@ -692,10 +693,11 @@ func (p *PodmanEngine) InspectConfig(ctx context.Context, name string) (*LiveCon
 		init = data.HostConfig.Init
 	}
 	user := ""
-	var command []string
+	var command, entrypoint []string
 	if data.Config != nil {
 		user = data.Config.User
 		command = data.Config.Cmd
+		entrypoint = data.Config.Entrypoint
 	}
 
 	res := config.ResourceLimits{}
@@ -749,6 +751,7 @@ func (p *PodmanEngine) InspectConfig(ctx context.Context, name string) (*LiveCon
 		Networks:      networks,
 		User:          user,
 		HealthTest:    healthTest,
+		Entrypoint:    entrypoint,
 		Command:       command,
 		CapAdd:        capAdd,
 		Init:          init,

@@ -364,6 +364,7 @@ func (d *DockerEngine) startService(ctx context.Context, name string, svc *confi
 		Env:          env,
 		Labels:       labels,
 		ExposedPorts: exposedPorts,
+		Entrypoint:   strslice.StrSlice(svc.Entrypoint),
 		Cmd:          strslice.StrSlice(svc.Command),
 	}
 	if svc.User != "" {
@@ -641,6 +642,7 @@ func (d *DockerEngine) InspectConfig(ctx context.Context, name string) (*LiveCon
 		Networks:      networks,
 		User:          info.Config.User,
 		HealthTest:    healthTest,
+		Entrypoint:    []string(info.Config.Entrypoint),
 		Command:       []string(info.Config.Cmd),
 		CapAdd:        []string(info.HostConfig.CapAdd),
 		Init:          init,

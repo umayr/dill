@@ -60,6 +60,7 @@ func serviceHashPayload(stackName, name string, svc *Service) ([]byte, error) {
 		Volumes       []hashVolume
 		Ports         []PortBinding
 		Labels        map[string]string
+		Entrypoint    []string `json:",omitempty"`
 		Command       []string
 		NetworkMode   string
 		HealthCheck   *HealthCheck
@@ -79,6 +80,7 @@ func serviceHashPayload(stackName, name string, svc *Service) ([]byte, error) {
 		Volumes:       hashVolumes,
 		Ports:         ports,
 		Labels:        svc.Labels,
+		Entrypoint:    svc.Entrypoint,
 		Command:       svc.Command,
 		NetworkMode:   svc.NetworkMode,
 		HealthCheck:   svc.HealthCheck,

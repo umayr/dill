@@ -48,6 +48,7 @@ type Service struct {
 	CPUs           string                         `json:"cpus"`
 	CPUShares      *int                           `json:"cpuShares"`
 	PidsLimit      *int                           `json:"pidsLimit"`
+	Entrypoint     []string                       `json:"entrypoint,omitempty"`
 }
 
 // Port mirrors the Pkl Port class.

@@ -26,7 +26,7 @@ func ValidateDisposableConfig(cfg *config.DillConfig) error {
 		return ErrDisposableUnsupported
 	}
 	for _, svc := range cfg.Services {
-		if svc == nil || len(svc.DeclaredVolumes) > 0 || len(svc.Conditions) > 0 || svc.PullPolicy != "never" || len(svc.Secrets) > 0 || svc.NetworkMode != "" || len(svc.Devices) > 0 || len(svc.CapAdd) > 0 {
+		if svc == nil || len(svc.Entrypoint) > 0 || len(svc.DeclaredVolumes) > 0 || len(svc.Conditions) > 0 || svc.PullPolicy != "never" || len(svc.Secrets) > 0 || svc.NetworkMode != "" || len(svc.Devices) > 0 || len(svc.CapAdd) > 0 {
 			return ErrDisposableUnsupported
 		}
 		mounts, err := svc.NormalizedVolumes()
