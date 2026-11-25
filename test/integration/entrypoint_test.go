@@ -38,7 +38,7 @@ config {
 	up := func() { t.Helper(); runDill(t, true, bin, "-f", path, "--timeout", testTimeout(), "up") }
 	id := func() string { return runEngine(t, env.engine, "inspect", "--format", "{{.Id}}", stack+"_app") }
 	up()
-	if got := runEngine(t, env.engine, "inspect", "--format", "{{index .Config.Entrypoint 0}}", stack+"_app"); got != "/bin/sh" {
+	if got := runEngine(t, env.engine, "inspect", "--format", "{{.Path}}", stack+"_app"); got != "/bin/sh" {
 		t.Fatalf("entrypoint not applied: %q", got)
 	}
 	first := id()

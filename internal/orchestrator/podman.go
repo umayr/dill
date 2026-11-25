@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -705,6 +706,14 @@ func (p *PodmanEngine) InspectConfig(ctx context.Context, name string) (*LiveCon
 		user = data.Config.User
 		command = data.Config.Cmd
 		entrypoint = data.Config.Entrypoint
+		// Older Podman servers flatten Config.Entrypoint to a string, losing
+		// argument boundaries. OCI Path + Args still preserves the actual argv.
+		if len(entrypoint) > 0 && data.Path != "" {
+			argv := append([]string{data.Path}, data.Args...)
+			if n := len(argv) - len(command); n > 0 && slices.Equal(argv[n:], command) {
+				entrypoint = argv[:n]
+			}
+		}
 	}
 
 	res := config.ResourceLimits{}
