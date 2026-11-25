@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -177,6 +178,9 @@ func (p *PodmanEngine) StartServiceChecked(ctx context.Context, name string, svc
 }
 
 func (p *PodmanEngine) startService(ctx context.Context, name string, svc *config.Service, stackName string, secrets []config.ResolvedSecret, target string) (string, error) {
+	if svc.Privileged && !privilegeAuthorized(ctx, p) {
+		return "", ErrPrivilegeDenied
+	}
 	image, constrained, err := p.preparedImages.resolve(name, svc.Image)
 	if err != nil || (constrained && !p.disposable) {
 		return "", ErrDisposableUnavailable
@@ -224,6 +228,10 @@ func (p *PodmanEngine) startService(ctx context.Context, name string, svc *confi
 	}
 
 	s := specgen.NewSpecGenerator(image, false)
+	if svc.Privileged {
+		yes := true
+		s.Privileged = &yes
+	}
 
 	containerName := svc.ContainerName
 	if containerName == "" {
@@ -299,6 +307,7 @@ func (p *PodmanEngine) startService(ctx context.Context, name string, svc *confi
 	for _, secret := range secrets {
 		s.Mounts = append(s.Mounts, specs.Mount{Type: "bind", Source: secret.HostPath, Destination: secret.Target, Options: []string{"ro"}})
 	}
+	s.Entrypoint = svc.Entrypoint
 	if len(svc.Command) > 0 {
 		s.Command = svc.Command
 	}
@@ -692,10 +701,19 @@ func (p *PodmanEngine) InspectConfig(ctx context.Context, name string) (*LiveCon
 		init = data.HostConfig.Init
 	}
 	user := ""
-	var command []string
+	var command, entrypoint []string
 	if data.Config != nil {
 		user = data.Config.User
 		command = data.Config.Cmd
+		entrypoint = data.Config.Entrypoint
+		// Older Podman servers flatten Config.Entrypoint to a string, losing
+		// argument boundaries. OCI Path + Args still preserves the actual argv.
+		if len(entrypoint) > 0 && data.Path != "" {
+			argv := append([]string{data.Path}, data.Args...)
+			if n := len(argv) - len(command); n > 0 && slices.Equal(argv[n:], command) {
+				entrypoint = argv[:n]
+			}
+		}
 	}
 
 	res := config.ResourceLimits{}
@@ -749,6 +767,7 @@ func (p *PodmanEngine) InspectConfig(ctx context.Context, name string) (*LiveCon
 		Networks:      networks,
 		User:          user,
 		HealthTest:    healthTest,
+		Entrypoint:    entrypoint,
 		Command:       command,
 		CapAdd:        capAdd,
 		Init:          init,

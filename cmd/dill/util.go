@@ -18,6 +18,7 @@ import (
 )
 
 type commandOptions struct {
+	allowPrivileged                                      bool
 	operation                                            *operationState
 	secretDiagnostics                                    *secretDiagnostics
 	SecretBindings, SecretPolicy, SecretTarget           string

@@ -62,6 +62,14 @@ func ValidateRuntime(cfg *DillConfig) error {
 				return fmt.Errorf("invalid dependency condition")
 			}
 		}
+		if svc.Entrypoint != nil && (len(svc.Entrypoint) == 0 || svc.Entrypoint[0] == "") {
+			return fmt.Errorf("service %q: entrypoint requires a non-empty executable", name)
+		}
+		for _, arg := range svc.Entrypoint {
+			if strings.IndexByte(arg, 0) >= 0 {
+				return fmt.Errorf("service %q: invalid entrypoint argument", name)
+			}
+		}
 		if svc.ContainerName != "" {
 			if previous, exists := containerNames[svc.ContainerName]; exists {
 				return fmt.Errorf("service %q containerName %q duplicates service %q", name, svc.ContainerName, previous)

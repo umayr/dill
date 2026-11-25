@@ -15,7 +15,7 @@ import (
 func TestUntrustedPklOutputRejectedBeforeEngine(t *testing.T) {
 	cases := []struct{ name, output, want string }{
 		{"config field", `{"config":{"services":{},"unsupported":true}}`, `unknown property "unsupported"`},
-		{"service field", `{"config":{"services":{"app":{"image":"x","privileged":true}}}}`, `unknown property "privileged"`},
+		{"service field", `{"config":{"services":{"app":{"image":"x","privilegedMode":true}}}}`, `unknown property "privilegedMode"`},
 		{"case variant", `{"config":{"services":{"app":{"image":"x","Image":"y"}}}}`, `unknown property "Image"`},
 		{"port field", `{"config":{"services":{"app":{"image":"x","ports":[{"target":80,"unsupported":true}]}}}}`, `unknown property "unsupported"`},
 		{"mount field", `{"config":{"services":{"app":{"image":"x","volumes":[{"target":"/data","unsupported":true}]}}}}`, `unknown property "unsupported"`},

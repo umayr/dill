@@ -60,12 +60,14 @@ func serviceHashPayload(stackName, name string, svc *Service) ([]byte, error) {
 		Volumes       []hashVolume
 		Ports         []PortBinding
 		Labels        map[string]string
+		Entrypoint    []string `json:",omitempty"`
 		Command       []string
 		NetworkMode   string
 		HealthCheck   *HealthCheck
 		User          string
 		Init          *bool
 		Conditions    map[string]DependencyCondition `json:",omitempty"`
+		Privileged    bool                           `json:",omitempty"`
 		CapAdd        []string
 		Devices       []string
 		Cpuset        string
@@ -79,12 +81,14 @@ func serviceHashPayload(stackName, name string, svc *Service) ([]byte, error) {
 		Volumes:       hashVolumes,
 		Ports:         ports,
 		Labels:        svc.Labels,
+		Entrypoint:    svc.Entrypoint,
 		Command:       svc.Command,
 		NetworkMode:   svc.NetworkMode,
 		HealthCheck:   svc.HealthCheck,
 		User:          svc.User,
 		Init:          svc.Init,
 		Conditions:    svc.Conditions,
+		Privileged:    svc.Privileged,
 		CapAdd:        svc.CapAdd,
 		Devices:       svc.Devices,
 		Cpuset:        svc.Cpuset,

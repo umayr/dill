@@ -49,6 +49,7 @@ type LiveConfig struct {
 	Networks       []string // sorted exact engine network names; qualified callers reject unknown/extra attachments
 	User           string
 	HealthTest     []string
+	Entrypoint     []string
 	Command        []string
 	CapAdd         []string
 	Init           bool

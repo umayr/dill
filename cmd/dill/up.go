@@ -36,6 +36,7 @@ func runUp(ctx context.Context, opts commandOptions, args []string) (retErr erro
 	addActionFlags(fs, &opts)
 	addTimeoutFlag(fs, &opts)
 	fs.BoolVar(&opts.ForceRecreate, "force-recreate", opts.ForceRecreate, "force recreate containers even if nothing changed")
+	fs.BoolVar(&opts.allowPrivileged, "allow-privileged", false, "authorize privileged services on an explicitly selected local rootful engine")
 	prune := fs.Bool("prune", false, "remove owned containers for omitted services during full-stack up")
 	retain := fs.Bool("no-prune", false, "retain omitted services (the default)")
 	fs.BoolVar(&opts.AlphaDisposable, "alpha-disposable", opts.AlphaDisposable, "restrict up to the isolated disposable-volume Alpha profile (implies no-prune)")
@@ -95,6 +96,11 @@ func runUpConfig(ctx context.Context, opts commandOptions, cfg *config.DillConfi
 	if (capture != nil || opts.operation != nil) && len(cfg.Volumes) > 0 {
 		return errors.New("declared volumes require ordinary deployment")
 	}
+	for _, svc := range cfg.Services {
+		if svc.Privileged && (!opts.allowPrivileged || !opts.EngineSocketSet || capture != nil || opts.operation != nil) {
+			return orchestrator.ErrPrivilegeDenied
+		}
+	}
 	if (capture != nil || opts.operation != nil) && len(cfg.Jobs) != 0 {
 		return errors.New("jobs require ordinary deploy; checked job execution is unavailable")
 	}
@@ -122,7 +128,7 @@ func runUpConfig(ctx context.Context, opts commandOptions, cfg *config.DillConfi
 		logger.Debug("using stack name", "stack", resolveStackNameWithOptions(cfg, opts))
 		return core.Deploy(ctx, cfg, core.DeployOptions{
 			Stack: resolveStackNameWithOptions(cfg, opts), Services: names,
-			NoDeps: noDeps, NoPrune: opts.NoPrune, ForceRecreate: opts.ForceRecreate,
+			AllowPrivileged: opts.allowPrivileged, NoDeps: noDeps, NoPrune: opts.NoPrune, ForceRecreate: opts.ForceRecreate,
 			DryRun: opts.DryRun, PullPolicy: pullPolicy, Timeout: opts.Timeout,
 			Open: open, Progress: opts.progress(), PullSink: newMakePullSink(isTTY, &pullMu),
 			Planned: func(p *core.Plan) {

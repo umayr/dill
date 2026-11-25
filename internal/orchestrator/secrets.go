@@ -77,6 +77,11 @@ func checkedSecretMounts(ctx context.Context, name string, svc *config.Service, 
 // ownership before any mutation. Marker presence (including malformed values)
 // blocks direct start/restart; checked up is the only secret start route.
 func DirectStartIDs(ctx context.Context, e Engine, stack string, services map[string]*config.Service, full bool) (map[string]string, error) {
+	for _, svc := range services {
+		if svc != nil && svc.Privileged {
+			return nil, ErrPrivilegeDenied
+		}
+	}
 	fail := func() (map[string]string, error) { return nil, config.ErrSecretUnavailable }
 	for _, svc := range services {
 		if svc == nil || len(svc.Secrets) > 0 {
@@ -100,6 +105,9 @@ func DirectStartIDs(ctx context.Context, e Engine, stack string, services map[st
 		if _, marked := live.SystemLabels[SecretEnabledLabel]; marked {
 			return fail()
 		}
+		if live.Privileged {
+			return nil, ErrPrivilegeDenied
+		}
 		ids[name] = live.ID
 	}
 	for service, svc := range services {
@@ -113,6 +121,9 @@ func DirectStartIDs(ctx context.Context, e Engine, stack string, services map[st
 		}
 		if _, marked := live.SystemLabels[SecretEnabledLabel]; marked {
 			return fail()
+		}
+		if live.Privileged {
+			return nil, ErrPrivilegeDenied
 		}
 		ids[name] = live.ID
 	}
