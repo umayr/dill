@@ -4,8 +4,11 @@ package integration
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/docker/docker/api/types/container"
+	"github.com/docker/docker/client"
 	"github.com/umayr/dill/internal/coordination"
 	"github.com/umayr/dill/internal/operation"
 	"github.com/umayr/dill/internal/preflight"
@@ -33,17 +36,25 @@ func TestDillRealEngineManagedLifecycle(t *testing.T) {
 	if !strings.HasPrefix(socket, "unix://") {
 		t.Fatal("explicit disposable DOCKER_HOST=unix://... required")
 	}
-	daemonBytes, err := exec.Command("docker", "--host", socket, "info", "--format", "{{.ID}}").Output()
+	engine, err := client.NewClientWithOpts(client.WithHost(socket), client.WithAPIVersionNegotiation())
 	if err != nil {
 		t.Fatal(err)
 	}
-	daemon := strings.TrimSpace(string(daemonBytes))
+	defer engine.Close()
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	defer cancel()
+	info, err := engine.Info(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	daemon := info.ID
 	root := repoRoot(t)
 	bin := dillBinary(t, root)
 	stack := fmt.Sprintf("dill-it-managed-%d", time.Now().UnixNano())
 	cfg := filepath.Join(t.TempDir(), "compose.pkl")
 	writeConfig(t, cfg, root, "docker", stack, "one")
-	cleanupStack(t, bin, cfg, stack)
+	// Cleanup below is restricted to the immutable IDs returned by this test's
+	// managed creation, never a daemon-wide prune or label-name adoption.
 	state := t.TempDir()
 	os.Chmod(state, 0700)
 	invoke := func(action, mode string, owned []operation.ManagedResource) operation.Result {
@@ -72,6 +83,24 @@ func TestDillRealEngineManagedLifecycle(t *testing.T) {
 	}
 	created := invoke("up", "create", []operation.ManagedResource{})
 	owned := *created.ManagedResources
+	defer func() {
+		cleanup, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		for _, r := range owned {
+			if r.Kind == "container" {
+				if e := engine.ContainerRemove(cleanup, r.ID, container.RemoveOptions{Force: true}); e != nil {
+					t.Errorf("cleanup container: %v", e)
+				}
+			}
+		}
+		for _, r := range owned {
+			if r.Kind == "network" {
+				if e := engine.NetworkRemove(cleanup, r.ID); e != nil {
+					t.Errorf("cleanup network: %v", e)
+				}
+			}
+		}
+	}()
 	for _, action := range []string{"stop", "stop", "start", "restart"} {
 		result := invoke(action, "update", owned)
 		if !slices.Equal(*result.ManagedResources, owned) {

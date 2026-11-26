@@ -59,6 +59,18 @@ On the qualified native Linux Docker backend, each lifecycle preview accepts onl
 
 The corresponding action endpoint accepts `stack`, `selectionDigest`, a fresh `requestId`, `priorRequestId`, and `confirm` equal to that action, with the same journal header. It rechecks the selection, source and predecessor; persists pending intent before the existing coordinated `_managed-operation` child; and records terminal facts without retrying an uncertain child. No source override or automatic review approval is supported. Status replies for these requests include `action`; a genuinely reported successful no-op retains `effects: none`, not `complete`. Crashed pending requests remain unknown and block further mutation. These routes do not establish a qualified Podman agent contract.
 
+For the private managed-child runtime check, run on Linux with pinned Pkl 0.31.1, the newly built binary, a cached `docker.io/library/busybox:1.36` image, and an explicitly disposable Docker Unix endpoint:
+
+```sh
+export DILL_PKL_PATH=/absolute/path/to/pkl-0.31.1
+export DILL_BINARY="$PWD/bin/dill" DILL_TEST_ENGINE=docker
+export DOCKER_HOST=unix:///absolute/path/to/disposable-docker.sock
+make build
+make integration-test DILL_TEST_RUN='^TestDillRealEngineManagedLifecycle$'
+```
+
+The check uses the Docker API rather than requiring a separate Docker CLI, asserts retained immutable IDs across stop/stop/start/restart, and cleans only creation-receipt IDs with an independent bounded cleanup context. It skips on macOS; a skip is not Linux execution evidence. The consumer's opt-in `TestHTTPSRealManagedLifecycle` separately qualifies staging, journal creation, signed HTTPS lifecycle, monitor denial, actual pinned-container state, fence results and duplicate denial on this contract.
+
 `POST /v1/deploy/remove-preview` accepts `stack`, uses the last successfully deployed stage, and returns a qualified `down` preview plus `X-Dill-Prior-Request`. `POST /v1/deploy/remove` accepts `stack`, `selectionDigest`, a new `requestId`, `priorRequestId` from that header, and `confirm: "remove"`. Removal only stops and deletes the matched containers. It retains volumes, the network, images, and snapshots. A removed stack is recorded, not silently recreated or adopted. The deploy bearer can submit only explicitly granted operations; a deploy credential is not itself an attended or Git approval.
 
 `GET /v1/deploy/operations/{requestId}` observes a request without submitting it. A known result contains the request ID, stack, state, effects, and when available a validated Dill operation ID. A disconnect after durable admission does not request cancellation. Pending at process restart is `unknown`, never replayed; unknown or partial effects block further writes for that stack. `404` or a delivery failure does not prove absence of effects. Use [local recovery inspection](agent-journal-recovery.md) to check what the stopped agent's original journal recorded for one request. There is no automatic acknowledgement, retry, deletion or rollback. Direct engine access or an uncoordinated CLI is outside the cooperative locking guarantee.
