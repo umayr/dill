@@ -44,6 +44,12 @@ func TestManagedOperationTracksExactCreationAndRetainsNetwork(t *testing.T) {
 		t.Fatalf("missing managed receipt: %+v (exit %d)", created, code)
 	}
 	owned := *created.ManagedResources
+	for _, action := range []string{"stop", "start", "restart"} {
+		result, code := invoke(action, "update", owned)
+		if code != 0 || result.ManagedResources == nil || !slices.Equal(*result.ManagedResources, owned) {
+			t.Fatalf("lifecycle %s lost exact managed identity: %+v exit%d", action, result, code)
+		}
+	}
 	wrong := slices.Clone(owned)
 	wrong[0].ID = strings.Repeat("1", 64)
 	f.mu.Lock()

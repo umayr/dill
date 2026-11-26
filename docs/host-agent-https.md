@@ -24,6 +24,8 @@ Provision an independent random 32-byte deploy credential out of band. Never rep
 | Deploy | `journal-apply` | `POST /v1/deploy/journal-apply` |
 | Deploy | `remove-preview` | `POST /v1/deploy/remove-preview` |
 | Deploy | `remove` | `POST /v1/deploy/remove` |
+| Deploy | `start-preview`, `stop-preview`, `restart-preview` (separate grants) | `POST /v1/deploy/{action}-preview` |
+| Deploy | `start`, `stop`, `restart` (separate grants) | `POST /v1/deploy/{action}` |
 | Deploy | `status` | `GET /v1/deploy/operations/{requestId}` |
 | Deploy | `fence` | `POST /v1/deploy/fence` |
 
@@ -50,6 +52,12 @@ Authenticated `POST /v1/deploy/preview` accepts exactly `stageId`, `manifestSha2
 Configure `--https-apply-state /absolute/private/operations` on the combined agent to make the journal-backed routes available for explicit grants. It must be a separate existing owner-only directory, with trusted stable ancestors. Keep it, the staging roots, and the shared CLI coordination state durable. Never remove or recreate state to clear an uncertain outcome. One agent process owns the history directory. The journal retains every request ID and result. It compacts superseded snapshot references and resource IDs without dropping live ownership, removal tombstones or unresolved intent. Existing compatible histories upgrade in place; do not downgrade or replace the upgraded journal with an older copy. At 90% of the 16 MiB journal limit, deployment responses advertise `X-Dill-Journal-Capacity: low`; admission and fencing fail closed with HTTP 507 when space is exhausted. Existing status remains readable. Keep disk headroom for the atomic replacement and do not delete history to make room. The earlier experimental create-only history did not record exact ownership and cannot be used with this format; it is not an adoption path.
 
 `POST /v1/deploy/apply` accepts the exact preview's `stageId`, `manifestSha256`, `stack`, and `selectionDigest`, a 32-character lowercase hexadecimal `requestId`, and `confirm: "create"` or `"update"` as advertised by the preview. The agent checks the snapshot and preview, saves intent, and runs checked `dill operation up` with the same coordination state as cooperating CLI callers. Creation requires all selected resources to be absent. An update requires exact recorded immutable container and network IDs. It may add containers but cannot omit managed containers or attach existing volumes (Docker volume names can be reused). No operation falls back to the legacy executor or adopts resources.
+
+### Managed lifecycle (new paired protocol; not in 0.11.0)
+
+On the qualified native Linux Docker backend, each lifecycle preview accepts only `stack`, with the exact current `X-Dill-Journal-Id`. It uses the last successful managed deployment's retained stage and immutable network/container ownership. An unowned, removed, or uncertain stack is rejected, never adopted. Its response includes the action-specific named preflight, `X-Dill-Prior-Request`, and `X-Dill-Deployment-Mode: start|stop|restart`.
+
+The corresponding action endpoint accepts `stack`, `selectionDigest`, a fresh `requestId`, `priorRequestId`, and `confirm` equal to that action, with the same journal header. It rechecks the selection, source and predecessor; persists pending intent before the existing coordinated `_managed-operation` child; and records terminal facts without retrying an uncertain child. No source override or automatic review approval is supported. Status replies for these requests include `action`; a genuinely reported successful no-op retains `effects: none`, not `complete`. Crashed pending requests remain unknown and block further mutation. These routes do not establish a qualified Podman agent contract.
 
 `POST /v1/deploy/remove-preview` accepts `stack`, uses the last successfully deployed stage, and returns a qualified `down` preview plus `X-Dill-Prior-Request`. `POST /v1/deploy/remove` accepts `stack`, `selectionDigest`, a new `requestId`, `priorRequestId` from that header, and `confirm: "remove"`. Removal only stops and deletes the matched containers. It retains volumes, the network, images, and snapshots. A removed stack is recorded, not silently recreated or adopted. The deploy bearer can submit only explicitly granted operations; a deploy credential is not itself an attended or Git approval.
 

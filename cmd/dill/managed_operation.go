@@ -24,7 +24,8 @@ func runManagedOperation(ctx context.Context, args []string) error {
 	dec := json.NewDecoder(bytes.NewReader(raw))
 	dec.DisallowUnknownFields()
 	if len(args) == 0 || !namedBindingIntent(args) || dec.Decode(&expected) != nil || dec.Decode(new(any)) != io.EOF || !expected.Valid() ||
-		(expected.Mode == "remove" && args[0] != "down") || (expected.Mode != "remove" && args[0] != "up") {
+		((args[0] == "start" || args[0] == "stop" || args[0] == "restart") && expected.Mode != "update") ||
+		(expected.Mode == "remove" && args[0] != "down") || (expected.Mode != "remove" && args[0] != "up" && args[0] != "start" && args[0] != "stop" && args[0] != "restart") {
 		return protocolExit{2}
 	}
 	return runOperationWithOwnership(ctx, args, &expected)

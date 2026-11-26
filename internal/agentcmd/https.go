@@ -48,6 +48,12 @@ var httpsRoutes = [...]struct {
 	{http.MethodPost, "/v1/deploy/fence", "fence", httpsApply},
 	{http.MethodPost, "/v1/deploy/remove-preview", "remove-preview", httpsApply},
 	{http.MethodPost, "/v1/deploy/remove", "remove", httpsApply},
+	{http.MethodPost, "/v1/deploy/start-preview", "start-preview", httpsApply},
+	{http.MethodPost, "/v1/deploy/start", "start", httpsApply},
+	{http.MethodPost, "/v1/deploy/stop-preview", "stop-preview", httpsApply},
+	{http.MethodPost, "/v1/deploy/stop", "stop", httpsApply},
+	{http.MethodPost, "/v1/deploy/restart-preview", "restart-preview", httpsApply},
+	{http.MethodPost, "/v1/deploy/restart", "restart", httpsApply},
 	{http.MethodGet, "/v1/deploy/operations/", "status", httpsApply},
 }
 

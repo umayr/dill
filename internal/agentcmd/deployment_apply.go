@@ -23,6 +23,9 @@ func validApplyID(id string) bool {
 }
 func validDeployStack(name string) bool { return preflight.ValidName(name) && len(name) <= 128 }
 func validDeploymentStatus(r deploymentStatus) bool {
+	if r.Action != "" && !validLifecycleAction(r.Action) {
+		return false
+	}
 	if r.OperationID != "" && (!strings.HasPrefix(r.OperationID, "op_") || !validApplyID(strings.TrimPrefix(r.OperationID, "op_"))) {
 		return false
 	}
@@ -30,7 +33,7 @@ func validDeploymentStatus(r deploymentStatus) bool {
 	case "pending", "unknown":
 		return r.Effects == "unknown" && r.OperationID == ""
 	case "succeeded":
-		return r.Effects == "complete" && r.OperationID != ""
+		return (r.Effects == "complete" || (validLifecycleAction(r.Action) && r.Effects == "none")) && r.OperationID != ""
 	case "failed":
 		return r.Effects == "none" || (r.Effects == "partial" && r.OperationID != "")
 	}
@@ -39,10 +42,12 @@ func validDeploymentStatus(r deploymentStatus) bool {
 
 type applyEndpoint struct {
 	previewEndpoint
-	history *deploymentHistory
-	down    func(context.Context, string, string) (preflight.Result, error)
-	apply   func(context.Context, string, string, string, string, string, operation.ManagedExpectation) (deploymentStatus, []operation.ManagedResource)
-	slot    chan struct{}
+	history          *deploymentHistory
+	down             func(context.Context, string, string) (preflight.Result, error)
+	apply            func(context.Context, string, string, string, string, string, operation.ManagedExpectation) (deploymentStatus, []operation.ManagedResource)
+	slot             chan struct{}
+	lifecyclePreview map[string]func(context.Context, string, string) (preflight.Result, error)
+	lifecycleApply   map[string]func(context.Context, string, string, string, string, string, operation.ManagedExpectation) (deploymentStatus, []operation.ManagedResource)
 }
 
 func ownership(mode string, previous deploymentRecord) operation.ManagedExpectation {
@@ -113,7 +118,7 @@ const (
 func (h *applyEndpoint) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	journal := r.Header.Values(journalHeader)
 	fence := r.URL.Path == "/v1/deploy/fence"
-	bound := fence || r.URL.Path == "/v1/deploy/journal-apply"
+	bound := fence || r.URL.Path == "/v1/deploy/journal-apply" || lifecyclePath(r.URL.Path) != ""
 	if (bound || len(journal) != 0) && (len(journal) != 1 || !validApplyID(journal[0]) || journal[0] != h.history.journal) {
 		http.Error(w, "deployment journal does not match", http.StatusConflict)
 		return
@@ -121,6 +126,10 @@ func (h *applyEndpoint) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set(journalHeader, h.history.journal)
 	if h.history.nearCapacity() {
 		w.Header().Set(journalCapacityHeader, "low")
+	}
+	if action := lifecyclePath(r.URL.Path); action != "" {
+		h.serveLifecycle(w, r, action)
+		return
 	}
 	if fence {
 		fields, ok := deploymentFields(w, r, "requestId", "stack", "confirm")
@@ -252,12 +261,22 @@ func writeDeploymentStatus(w http.ResponseWriter, status deploymentStatus) {
 }
 
 func cliApply(exe, pkl, socket, daemon, state string) func(context.Context, string, string, string, string, string, operation.ManagedExpectation) (deploymentStatus, []operation.ManagedResource) {
+	return cliApplyFor("", exe, pkl, socket, daemon, state)
+}
+func cliApplyFor(lifecycle, exe, pkl, socket, daemon, state string) func(context.Context, string, string, string, string, string, operation.ManagedExpectation) (deploymentStatus, []operation.ManagedResource) {
 	return func(ctx context.Context, path, stack, selection, id, qualifiedTarget string, expected operation.ManagedExpectation) (deploymentStatus, []operation.ManagedResource) {
 		unknown := deploymentStatus{RequestID: id, Stack: stack, State: "unknown", Effects: "unknown"}
 		action := "up"
 		if expected.Mode == "remove" {
 			action = "down"
 		}
+		if lifecycle != "" {
+			if !validLifecycleAction(lifecycle) || expected.Mode != "update" {
+				return unknown, nil
+			}
+			action = lifecycle
+		}
+		unknown.Action = lifecycle
 		input, err := json.Marshal(expected)
 		if err != nil || !expected.Valid() || !preflight.ValidDigest(selection) {
 			return unknown, nil
@@ -282,11 +301,11 @@ func cliApply(exe, pkl, socket, daemon, state string) func(context.Context, stri
 			result.Resources == nil || result.Errors == nil || result.ResourcesTruncated || !strings.HasPrefix(result.OperationID, "op_") || !validApplyID(strings.TrimPrefix(result.OperationID, "op_")) {
 			return unknown, nil
 		}
-		done := deploymentStatus{RequestID: id, Stack: stack, OperationID: result.OperationID, Effects: result.Effects}
+		done := deploymentStatus{RequestID: id, Stack: stack, OperationID: result.OperationID, Effects: result.Effects, Action: lifecycle}
 		switch {
-		case err == nil && result.Outcome == "succeeded" && result.Effects == "complete" && len(result.Errors) == 0 && len(result.Resources) > 0 && result.ManagedResources != nil:
+		case err == nil && result.Outcome == "succeeded" && (result.Effects == "complete" || (validLifecycleAction(action) && result.Effects == "none")) && len(result.Errors) == 0 && (len(result.Resources) > 0 || (validLifecycleAction(action) && result.Effects == "none")) && result.ManagedResources != nil:
 			owned := *result.ManagedResources
-			if (action == "down" && len(owned) != 0) || (action == "up" && !(operation.ManagedExpectation{Mode: "update", Resources: owned}).Valid()) {
+			if (action == "down" && len(owned) != 0) || (action != "down" && !(operation.ManagedExpectation{Mode: "update", Resources: owned}).Valid()) {
 				return unknown, nil
 			}
 			done.State = "succeeded"

@@ -21,6 +21,7 @@ import (
 
 	"github.com/umayr/dill/internal/hostagent"
 	"github.com/umayr/dill/internal/operation"
+	"github.com/umayr/dill/internal/preflight"
 	"github.com/umayr/dill/internal/serve"
 )
 
@@ -304,9 +305,16 @@ func serveAgent(args []string, out, diagnostics io.Writer, combined bool) error 
 						return err
 					}
 					defer history.dir.Close()
-					apply = &applyEndpoint{previewEndpoint: backend, history: history,
+					endpoint := &applyEndpoint{previewEndpoint: backend, history: history,
 						down:  cliPreviewFor("down", previewExecutable, *previewPkl, socket, *daemon, *previewState),
 						apply: cliApply(previewExecutable, *previewPkl, socket, *daemon, *previewState), slot: make(chan struct{}, 1)}
+					endpoint.lifecyclePreview = map[string]func(context.Context, string, string) (preflight.Result, error){}
+					endpoint.lifecycleApply = map[string]func(context.Context, string, string, string, string, string, operation.ManagedExpectation) (deploymentStatus, []operation.ManagedResource){}
+					for _, action := range []string{"start", "stop", "restart"} {
+						endpoint.lifecyclePreview[action] = cliPreviewFor(action, previewExecutable, *previewPkl, socket, *daemon, *previewState)
+						endpoint.lifecycleApply[action] = cliApplyFor(action, previewExecutable, *previewPkl, socket, *daemon, *previewState)
+					}
+					apply = endpoint
 				}
 			}
 		}

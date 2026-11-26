@@ -32,6 +32,7 @@ var (
 
 type deploymentStatus struct {
 	RequestID   string `json:"requestId"`
+	Action      string `json:"action,omitempty"`
 	Stack       string `json:"stack"`
 	State       string `json:"state"`
 	Effects     string `json:"effects"`
@@ -234,7 +235,7 @@ func ownershipPayloads(rows []deploymentRecord) map[string]bool {
 }
 
 func validCompactRecord(r deploymentRecord) bool {
-	return validApplyID(r.RequestID) && validDeployStack(r.Stack) && validDeploymentStatus(r.deploymentStatus) &&
+	return (r.Action == "" || validLifecycleAction(r.Action) && r.Mode == "update") && validApplyID(r.RequestID) && validDeployStack(r.Stack) && validDeploymentStatus(r.deploymentStatus) &&
 		(r.Mode == "create" || r.Mode == "update" || r.Mode == "remove") &&
 		r.StageID == "" && r.Manifest == "" && len(r.Owned) == 0 &&
 		(r.State == "succeeded" || r.State == "failed" && r.Effects == "none")
@@ -331,6 +332,9 @@ func (h *deploymentHistory) fence(id, stack string) (deploymentStatus, error) {
 }
 
 func validDeploymentRecord(r deploymentRecord) bool {
+	if r.Action != "" && (!validLifecycleAction(r.Action) || r.Mode != "update") {
+		return false
+	}
 	if r.Mode == "fence" {
 		return validApplyID(r.RequestID) && validDeployStack(r.Stack) && r.State == "not-admitted" && r.Effects == "none" && r.OperationID == "" && r.StageID == "" && r.Manifest == "" && len(r.Owned) == 0
 	}
@@ -352,7 +356,7 @@ func (h *deploymentHistory) finish(result deploymentStatus, owned []operation.Ma
 		return errOperationConflict
 	}
 	for i, row := range h.rows {
-		if row.RequestID == result.RequestID && row.Stack == result.Stack && row.State == "pending" {
+		if row.RequestID == result.RequestID && row.Stack == result.Stack && row.Action == result.Action && row.State == "pending" {
 			rows := append([]deploymentRecord{}, h.rows...)
 			rows[i].deploymentStatus, rows[i].Owned = result, owned
 			if !validDeploymentRecord(rows[i]) {
