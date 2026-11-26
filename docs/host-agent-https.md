@@ -26,6 +26,7 @@ Provision an independent random 32-byte deploy credential out of band. Never rep
 | Deploy | `remove` | `POST /v1/deploy/remove` |
 | Deploy | `start-preview`, `stop-preview`, `restart-preview` (separate grants) | `POST /v1/deploy/{action}-preview` |
 | Deploy | `start`, `stop`, `restart` (separate grants) | `POST /v1/deploy/{action}` |
+| Deploy | `journal` | `GET /v1/deploy/journal` (read-only current opaque journal ID) |
 | Deploy | `status` | `GET /v1/deploy/operations/{requestId}` |
 | Deploy | `fence` | `POST /v1/deploy/fence` |
 
@@ -54,6 +55,8 @@ Configure `--https-apply-state /absolute/private/operations` on the combined age
 `POST /v1/deploy/apply` accepts the exact preview's `stageId`, `manifestSha256`, `stack`, and `selectionDigest`, a 32-character lowercase hexadecimal `requestId`, and `confirm: "create"` or `"update"` as advertised by the preview. The agent checks the snapshot and preview, saves intent, and runs checked `dill operation up` with the same coordination state as cooperating CLI callers. Creation requires all selected resources to be absent. An update requires exact recorded immutable container and network IDs. It may add containers but cannot omit managed containers or attach existing volumes (Docker volume names can be reused). No operation falls back to the legacy executor or adopts resources.
 
 ### Managed lifecycle (new paired protocol; not in 0.11.0)
+
+`GET /v1/deploy/journal` requires its own `journal` deployment grant and an empty body. It returns only `{"journalId":"..."}` with the same exact `X-Dill-Journal-Id`; it never exposes rows, source, credentials or execution authority. A monitor session cannot discover it. Callers must still match the reviewed deployment predecessor; discovering a journal is not ownership proof.
 
 On the qualified native Linux Docker backend, each lifecycle preview accepts only `stack`, with the exact current `X-Dill-Journal-Id`. It uses the last successful managed deployment's retained stage and immutable network/container ownership. An unowned, removed, or uncertain stack is rejected, never adopted. Its response includes the action-specific named preflight, `X-Dill-Prior-Request`, and `X-Dill-Deployment-Mode: start|stop|restart`.
 

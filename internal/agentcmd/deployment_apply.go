@@ -127,6 +127,15 @@ func (h *applyEndpoint) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if h.history.nearCapacity() {
 		w.Header().Set(journalCapacityHeader, "low")
 	}
+	if r.Method == http.MethodGet && r.URL.Path == "/v1/deploy/journal" {
+		if r.ContentLength != 0 || len(r.TransferEncoding) != 0 {
+			http.Error(w, "body not allowed", 400)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]string{"journalId": h.history.journal})
+		return
+	}
 	if action := lifecyclePath(r.URL.Path); action != "" {
 		h.serveLifecycle(w, r, action)
 		return
