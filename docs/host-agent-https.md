@@ -1,10 +1,14 @@
 # Direct HTTPS host agent (experimental, read-only by default)
 
-Run one agent per Docker target. The standard `dill` binary includes `dill agent`, which accepts the same arguments as the standalone `dill-agent` shown below. This mode is an alternative to the private Unix agent listener. The default HTTPS routes serve only session, inventory, inspect and logs. Staging, preview, deployment, removal, manifest and operation status require host-local opt-ins, explicit operation grants and a separate deploy bearer. Environment reveal is not available over HTTPS. Docker still uses an explicitly enrolled local Unix socket. Treat log and inspection output as potentially sensitive.
+Run one agent per Docker target. The standard `dill` binary includes `dill agent`, which accepts the same arguments as the standalone `dill-agent` shown below. This mode is an alternative to the private Unix agent listener. The default HTTPS routes serve only session, inventory, inspect, logs and capability metadata. Staging, preview, deployment, removal, manifest and operation status require host-local opt-ins, explicit operation grants and a separate deploy bearer. Environment reveal is not available over HTTPS. Docker still uses an explicitly enrolled local Unix socket. Treat log and inspection output as potentially sensitive.
 
 1. As the service account, run `dill-agent init-https --dir /absolute/new/credentials` under a trusted parent. This creates an owner-only directory with a TLS certificate/key, session signing seed, and unique bearer credential. Existing directories are never changed. If creation is interrupted, inspect the partial directory rather than reusing it blindly.
 2. Start the agent with `--https-dir /absolute/new/credentials --https-listen <private-ip>:<port>` and the normal `--engine-socket`, `--engine-id`, `--daemon-id` and `--generation` enrollment flags. Supply a literal private address; apply host firewall rules for your network and keep the credential directory and all ancestors protected. Do not run a public listener or forward the Docker socket.
 3. From a private local terminal, invoke the same command with `--print-https-pairing` appended. This prints one JSON bundle to stdout and exits without listening; **the output is a reusable secret**, not an expiring code. Copy it only through trusted local means, with the listener address entered separately in Brine. Do not log, paste into public support messages, or store the bundle in ordinary temporary files. The export records the configured engine binding; the signed session checks the actual daemon before Brine accepts it. The exact v1 bundle remains monitor-only, including when deployment is configured. The deploy credential is never part of this export.
+
+## Capability metadata
+
+`GET /v1/capabilities` requires the monitor bearer over HTTPS and returns `schema: dill.agent.capabilities.v1`, a `monitor` operation-name array and a separate `deployment_grants` array. Deployment entries require both an active configured backend and an explicit host grant; disabled backends are never advertised. Entries are metadata, not authorization: this route does not enable staging, invoke an engine, expose credentials, or let a monitor bearer use deployment routes. A deploy bearer cannot read the monitor document. The report describes configured routes, not successful workload execution or independent daemon capabilities. No endpoint is probed by executing an operation.
 
 ## Separate deployment authority
 
@@ -12,7 +16,7 @@ Provision an independent random 32-byte deploy credential out of band. Never rep
 
 | Credential | Grant | HTTPS method and route |
 | --- | --- | --- |
-| Monitor | built-in monitor | `POST /v1/session`, `/v1/inventory`, `/v1/inspect`, `/v1/logs` |
+| Monitor | built-in monitor | `POST /v1/session`, `/v1/inventory`, `/v1/inspect`, `/v1/logs`; `GET /v1/capabilities` |
 | Deploy | `stage` | `POST /v1/snapshots` |
 | Deploy | `manifest` | `GET /v1/snapshots/{id}` |
 | Deploy | `preview` | `POST /v1/deploy/preview` |

@@ -36,6 +36,7 @@ var httpsRoutes = [...]struct {
 	backend      httpsBackend
 }{
 	{http.MethodPost, "/v1/session", monitorGrant, httpsMonitor},
+	{http.MethodGet, "/v1/capabilities", monitorGrant, httpsMonitor},
 	{http.MethodPost, "/v1/inventory", monitorGrant, httpsMonitor},
 	{http.MethodPost, "/v1/inspect", monitorGrant, httpsMonitor},
 	{http.MethodPost, "/v1/logs", monitorGrant, httpsMonitor},
@@ -105,6 +106,10 @@ func authenticatedHTTPS(monitor, staging, preview, apply http.Handler, monitorTo
 				}
 				if !allowed {
 					http.Error(w, "forbidden", http.StatusForbidden)
+					return
+				}
+				if route.path == "/v1/capabilities" {
+					writeHTTPSCapabilities(w, backends[:], deployEnabled, deployGrants)
 					return
 				}
 				handler.ServeHTTP(w, r)
