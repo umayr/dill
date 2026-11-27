@@ -56,6 +56,8 @@ Configure `--https-apply-state /absolute/private/operations` on the combined age
 
 ### Managed lifecycle (new paired protocol; not in 0.11.0)
 
+Qualified update previews also include `X-Dill-Prior-Request`, identifying the exact managed predecessor inspected by the preview. This is planning evidence, not a submission fence or automatic approval; consumers must preserve their source/review gates.
+
 `GET /v1/deploy/journal` requires its own `journal` deployment grant and an empty body. It returns only `{"journalId":"..."}` with the same exact `X-Dill-Journal-Id`; it never exposes rows, source, credentials or execution authority. A monitor session cannot discover it. Callers must still match the reviewed deployment predecessor; discovering a journal is not ownership proof.
 
 On the qualified native Linux Docker backend, each lifecycle preview accepts only `stack`, with the exact current `X-Dill-Journal-Id`. It uses the last successful managed deployment's retained stage and immutable network/container ownership. An unowned, removed, or uncertain stack is rejected, never adopted. Its response includes the action-specific named preflight, `X-Dill-Prior-Request`, and `X-Dill-Deployment-Mode: start|stop|restart`.

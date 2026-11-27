@@ -99,7 +99,7 @@ func (h *applyEndpoint) review(w http.ResponseWriter, r *http.Request) {
 		if mode == "create" {
 			w.Header().Set("X-Dill-Create-Enabled", "1")
 		}
-		if remove {
+		if remove || mode == "update" {
 			w.Header().Set("X-Dill-Prior-Request", previous.RequestID)
 		}
 	} else if remove {
