@@ -1,13 +1,16 @@
 package main
 
 import (
+	"bytes"
 	"encoding/json"
-	"github.com/umayr/dill/internal/coordination"
+	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/umayr/dill/internal/coordination"
 )
 
-func TestBrokerProfileOfflineInfoAndStrictFlags(t *testing.T) {
+func TestBrokerProfileOfflineInfo(t *testing.T) {
 	p := nativePodmanProfile()
 	info, err := describeBrokerProfile(*p)
 	if err != nil {
@@ -23,13 +26,44 @@ func TestBrokerProfileOfflineInfoAndStrictFlags(t *testing.T) {
 			t.Fatal("private profile leaked")
 		}
 	}
-	args := []string{"--contract", coordination.BrokerProfileVersion, "--broker-profile", "/operator/profile.json"}
-	if _, err = parseBrokerProfileInfo(args); err != nil {
-		t.Fatal(err)
-	}
-	for _, extra := range [][]string{{"-v"}, {"--value", "synthetic-canary"}, {"--broker-profile", "/other.json"}, {"--engine", "podman"}} {
-		if _, err = parseBrokerProfileInfo(append(append([]string{}, args...), extra...)); err == nil {
-			t.Fatal("unexpected flags accepted")
-		}
+}
+
+func TestBrokerProfileInfoFlagBoundary(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "missing-profile.json")
+	base := []string{"--contract", coordination.BrokerProfileVersion}
+	args := append(base, "--broker-profile", path)
+	for _, tc := range []struct {
+		name string
+		args []string
+		code int
+	}{
+		{"valid flags reach profile read", args, 1},
+		{"valid aliases and equals", []string{"-contract=" + coordination.BrokerProfileVersion, "-broker-profile=" + path}, 1},
+		{"duplicate alias", append(args, "-broker-profile="+path), 2},
+		{"unknown shorthand", append(args, "-v"), 2},
+		{"value override", append(args, "--value", "synthetic-canary"), 2},
+		{"engine override", append(args, "--engine", "podman"), 2},
+		{"positional", append(args, "extra"), 2},
+		{"trailing after terminator", append(args, "--", "extra"), 2},
+		{"missing value", append(base, "--broker-profile"), 2},
+		{"missing profile", base, 2},
+		{"empty profile", append(base, "--broker-profile="), 2},
+		{"relative profile", append(base, "--broker-profile", "relative.json"), 2},
+		{"noncanonical profile", append(base, "--broker-profile=/operator/../profile.json"), 2},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var out bytes.Buffer
+			if err := runBrokerProfileInfo(tc.args, &out); err != (protocolExit{tc.code}) {
+				t.Fatalf("exit = %v, want %d", err, tc.code)
+			}
+			want := brokerProfileInfo{Contract: coordination.BrokerProfileVersion, Code: "INVALID_INPUT"}
+			if tc.code == 1 {
+				want.Code = "PROFILE_UNAVAILABLE"
+			}
+			var got brokerProfileInfo
+			if err := json.Unmarshal(out.Bytes(), &got); err != nil || got != want {
+				t.Fatalf("reply = %+v, want %+v (decode error %v)", got, want, err)
+			}
+		})
 	}
 }

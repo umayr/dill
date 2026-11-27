@@ -110,31 +110,30 @@ func (m *Materialized) Review() Review {
 
 // AcceptLive authenticates an existing active generation, not merely its labels.
 func (m *Materialized) AcceptLive(handle, generation string) error {
-	if m == nil || m.store == nil || !validID(handle) || !validID(generation) {
-		return ErrUnavailable
-	}
-	if !m.permitsLive(handle, generation) {
-		return ErrUnavailable
+	_, err := m.authenticateLiveGeneration(handle, generation)
+	return err
+}
+
+func (m *Materialized) authenticateLiveGeneration(handle, generation string) (Review, error) {
+	if m == nil || m.store == nil || !validID(handle) || !validID(generation) || !m.permitsLive(handle, generation) {
+		return Review{}, ErrUnavailable
 	}
 	review, err := m.store.activeReview(handle, m.review.Scope)
 	if err != nil || review.Scope.Generation != generation {
-		return ErrUnavailable
+		return Review{}, ErrUnavailable
 	}
-	return nil
+	return review, nil
 }
 
 // LiveMounts returns only authenticated active-generation mount metadata for
 // a service. It is private executor evidence, never public review output.
 func (m *Materialized) LiveMounts(handle, generation, service string) ([]Mount, error) {
-	if m == nil || m.store == nil || !nameOK(service) {
+	if !nameOK(service) {
 		return nil, ErrUnavailable
 	}
-	if !m.permitsLive(handle, generation) {
-		return nil, ErrUnavailable
-	}
-	review, err := m.store.activeReview(handle, m.review.Scope)
-	if err != nil || review.Scope.Generation != generation {
-		return nil, ErrUnavailable
+	review, err := m.authenticateLiveGeneration(handle, generation)
+	if err != nil {
+		return nil, err
 	}
 	old, err := m.store.Resolve(handle, review.Scope)
 	if err != nil {
