@@ -4,10 +4,12 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"slices"
 	"strings"
 	"testing"
 
 	"github.com/umayr/dill/internal/brokersecret"
+	"github.com/umayr/dill/internal/config"
 	"github.com/umayr/dill/internal/operation"
 	"github.com/umayr/dill/internal/preflight"
 )
@@ -45,33 +47,44 @@ func TestBrokerCLIValidFlags(t *testing.T) {
 
 func TestBrokerCLIArgumentBoundary(t *testing.T) {
 	args := brokerTestArgs()
+	common := brokerTestCommonArgs()
 	profile := append(brokerTestCommonArgs(), "--broker-profile", "/operator/profile.json")
-	for _, tc := range []struct {
-		name string
-		args []string
+	cases := []struct {
+		name         string
+		base, suffix []string
 	}{
-		{"duplicate contract alias", append(args, "-contract="+brokersecret.Version)},
-		{"duplicate file alias", append(args, "--f=/elsewhere")},
-		{"duplicate store", append(args, "--broker-store=/elsewhere")},
-		{"unknown shorthand", append(args, "-v")},
-		{"secret policy override", append(args, "--secret-policy", "private")},
-		{"engine override", append(args, "--engine", "podman")},
-		{"pull override", append(args, "--pull", "always")},
-		{"leading positional", append([]string{"up"}, args...)},
-		{"trailing positional", append(args, "up")},
-		{"positional after terminator", append(args, "--", "up")},
-		{"missing value", append(brokerTestCommonArgs(), "--broker-profile")},
-		{"missing daemon", append(brokerTestCommonArgs(), "--engine-socket", "/var/run/docker.sock")},
-		{"missing target", brokerTestCommonArgs()},
-		{"profile with socket", append(profile, "--engine-socket", "/var/run/docker.sock")},
-		{"profile with daemon", append(profile, "--coordination-daemon-id", "daemon-test")},
-		{"profile with empty socket", append(profile, "--engine-socket=")},
-		{"profile with empty daemon", append(profile, "--coordination-daemon-id", "")},
-		{"direct with empty profile", append(args, "--broker-profile=")},
-		{"noncanonical profile", append(brokerTestCommonArgs(), "--broker-profile=/operator/../profile.json")},
-	} {
+		{"duplicate contract alias", args, []string{"-contract=" + brokersecret.Version}},
+		{"duplicate file alias", args, []string{"--f=/elsewhere"}},
+		{"duplicate store", args, []string{"--broker-store=/elsewhere"}},
+		{"unknown shorthand", args, []string{"-v"}},
+		{"secret policy override", args, []string{"--secret-policy", "private"}},
+		{"engine override", args, []string{"--engine", "podman"}},
+		{"pull override", args, []string{"--pull", "always"}},
+		{"leading positional", []string{"up"}, args},
+		{"trailing positional", args, []string{"up"}},
+		{"positional after terminator", args, []string{"--", "up"}},
+		{"missing value", common, []string{"--broker-profile"}},
+		{"missing daemon", common, []string{"--engine-socket", "/var/run/docker.sock"}},
+		{"missing target", common, nil},
+		{"profile with socket", profile, []string{"--engine-socket", "/var/run/docker.sock"}},
+		{"profile with daemon", profile, []string{"--coordination-daemon-id", "daemon-test"}},
+		{"profile with empty socket", profile, []string{"--engine-socket="}},
+		{"profile with empty daemon", profile, []string{"--coordination-daemon-id", ""}},
+		{"direct with empty profile", args, []string{"--broker-profile="}},
+		{"noncanonical profile", common, []string{"--broker-profile=/operator/../profile.json"}},
+	}
+	// Build every input before checking suffixes so later appends cannot silently
+	// replace the invalid argument an earlier case is supposed to exercise.
+	inputs := make([][]string, len(cases))
+	for i, tc := range cases {
+		inputs[i] = append(slices.Clone(tc.base), tc.suffix...)
+	}
+	for i, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			if _, err := parseBrokerCLI("broker-preflight", tc.args); err != brokersecret.ErrInvalid {
+			if got := inputs[i][len(tc.base):]; !slices.Equal(got, tc.suffix) {
+				t.Fatalf("argument suffix = %q, want %q", got, tc.suffix)
+			}
+			if _, err := parseBrokerCLI("broker-preflight", inputs[i]); err != brokersecret.ErrInvalid {
 				t.Fatalf("got %v, want invalid input", err)
 			}
 		})
@@ -106,12 +119,48 @@ func TestBrokerNativeInvocationIsBoundedAndIdentical(t *testing.T) {
 	}
 }
 func TestBrokerManagedDispatchRequiresExplicitBoundOwnership(t *testing.T) {
-	for _, args := range [][]string{{"up"}, {"down"}} {
-		var out bytes.Buffer
-		err := runOperationScoped(context.Background(), args, nil, &brokersecret.Materialized{}, nil, &out)
-		var result operation.Result
-		if err == nil || json.Unmarshal(out.Bytes(), &result) != nil || result.Effects != "none" || result.Target != nil {
-			t.Fatal("unbound broker dispatch reached target")
-		}
+	o, err := parseBrokerCLI("broker-managed-operation", brokerTestArgs())
+	if err != nil {
+		t.Fatal(err)
+	}
+	up := o.nativeArgs(true, brokersecret.Digest([]byte("selection")))
+	if _, reason := preflight.ParseBrokerInvocation(up, true); reason != "" || !namedBindingIntent(up) || up[0] != "up" {
+		t.Fatalf("expected a valid bound broker up invocation, parser reason: %q", reason)
+	}
+	cfg := &config.DillConfig{
+		Name:   o.stack,
+		Engine: "docker",
+		Services: map[string]*config.Service{
+			"app": {Image: "alpine:3.20", PullPolicy: "never", Restart: "no"},
+		},
+	}
+	if err := config.ValidateRuntime(cfg); err != nil {
+		t.Fatalf("invalid broker config fixture: %v", err)
+	}
+
+	for _, tc := range []struct {
+		name string
+		args []string
+	}{
+		{"bound up without ownership", up},
+		{"bare down", []string{"down"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var out bytes.Buffer
+			if err := runOperationScoped(context.Background(), tc.args, nil, &brokersecret.Materialized{}, cfg, &out); err == nil {
+				t.Fatal("expected broker dispatch to fail")
+			}
+			var result operation.Result
+			if err := json.Unmarshal(out.Bytes(), &result); err != nil {
+				t.Fatalf("decode operation result: %v", err)
+			}
+			want := operation.Error{Code: "INVALID_ARGUMENTS", Message: "Invalid broker operation."}
+			if len(result.Errors) != 1 || result.Errors[0] != want {
+				t.Fatalf("operation errors = %+v, want [%+v]", result.Errors, want)
+			}
+			if result.Outcome != "invalid_input" || result.Effects != "none" || result.Target != nil {
+				t.Fatalf("expected invalid input with no effects or target, got %+v", result)
+			}
+		})
 	}
 }
