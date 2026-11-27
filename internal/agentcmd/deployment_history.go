@@ -33,6 +33,7 @@ var (
 
 type deploymentStatus struct {
 	RequestID   string `json:"requestId"`
+	Action      string `json:"action,omitempty"`
 	Stack       string `json:"stack"`
 	State       string `json:"state"`
 	Effects     string `json:"effects"`
@@ -67,7 +68,7 @@ type deploymentHistory struct {
 	poisoned bool
 }
 
-func openDeploymentHistory(path, target string) (*deploymentHistory, error) {
+func openDeploymentHistory(path, target string, requireExisting ...bool) (*deploymentHistory, error) {
 	if err := checkHTTPSDir(path); err != nil || !preflight.ValidDigest(target) {
 		return nil, errors.New("deployment history requires a private directory")
 	}
@@ -81,18 +82,18 @@ func openDeploymentHistory(path, target string) (*deploymentHistory, error) {
 		return nil, errors.New("deployment history already open or unsupported")
 	}
 	h := &deploymentHistory{dir: dir, path: path, target: target, active: make(map[string]bool), rows: []deploymentRecord{}}
-	if err := h.load(); err != nil {
+	if err := h.load(len(requireExisting) != 0 && requireExisting[0]); err != nil {
 		dir.Close()
 		return nil, errors.New("deployment history unavailable; inspect private state")
 	}
 	return h, nil
 }
 
-func (h *deploymentHistory) load() error {
+func (h *deploymentHistory) load(requireExisting bool) error {
 	path := filepath.Join(h.path, "operations.json")
 	raw, err := readPrivateHTTPSFile(path, historyByteLimit)
 	if err != nil {
-		if _, statErr := os.Lstat(path); os.IsNotExist(statErr) {
+		if _, statErr := os.Lstat(path); os.IsNotExist(statErr) && !requireExisting {
 			// No mutating request is accepted before the first successful sync.
 			return h.initializeJournal()
 		}
@@ -110,9 +111,16 @@ func (h *deploymentHistory) load() error {
 	}
 	seen := make(map[string]bool, len(file.Rows))
 	latest := make(map[string]deploymentRecord)
+	brokerSeen := make(map[string]bool)
 	for _, r := range file.Rows {
 		if (r.Broker != nil && file.Version < 3) || seen[r.RequestID] || !(validDeploymentRecord(r) || file.Version >= 2 && validCompactRecord(r)) || (r.Mode != "fence" && !allowedDeploymentMode(recordNextMode(latest[r.Stack]), r.Mode)) {
 			return errors.New("invalid deployment history record")
+		}
+		if brokerSeen[r.Stack] && r.Broker == nil && r.Mode != "fence" {
+			return errors.New("unprotected record after broker history")
+		}
+		if r.Broker != nil {
+			brokerSeen[r.Stack] = true
 		}
 		seen[r.RequestID] = true
 		if !ignoresOwnership(r) {
@@ -127,6 +135,9 @@ func (h *deploymentHistory) load() error {
 	}
 	h.rows, h.bytes = file.Rows, len(raw)
 	if file.Journal == "" {
+		if requireExisting {
+			return errors.New("existing deployment journal identity unavailable")
+		}
 		// Upgrade existing history without discarding ownership or outcomes.
 		return h.initializeJournal()
 	}
@@ -243,10 +254,10 @@ func ownershipPayloads(rows []deploymentRecord) map[string]bool {
 }
 
 func validCompactRecord(r deploymentRecord) bool {
-	if r.Broker != nil && (!r.Broker.Valid() || r.Broker.Scope.Stack != r.Stack || r.Mode == "remove") {
+	if r.Broker != nil && (r.Action != "" || !r.Broker.Valid() || r.Broker.Scope.Stack != r.Stack || r.Mode == "remove") {
 		return false
 	}
-	return validApplyID(r.RequestID) && validDeployStack(r.Stack) && validDeploymentStatus(r.deploymentStatus) &&
+	return (r.Action == "" || validLifecycleAction(r.Action) && r.Mode == "update") && validApplyID(r.RequestID) && validDeployStack(r.Stack) && validRecordStatus(r) &&
 		(r.Mode == "create" || r.Mode == "update" || r.Mode == "remove") &&
 		r.StageID == "" && r.Manifest == "" && len(r.Owned) == 0 &&
 		(r.State == "succeeded" || r.State == "failed" && r.Effects == "none")
@@ -292,6 +303,22 @@ func allowedDeploymentMode(next, actual string) bool {
 	return next != "" && (actual == next || (next == "update" && actual == "remove"))
 }
 
+// managedPlain selects the retained snapshot and checks sticky protection in
+// one locked read, so a newly protected stage never reaches a plain preview.
+func (h *deploymentHistory) managedPlain(stack string) (deploymentRecord, string, bool) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if h.poisoned {
+		return deploymentRecord{}, "", false
+	}
+	for _, row := range h.rows {
+		if row.Stack == stack && row.Broker != nil {
+			return deploymentRecord{}, "", false
+		}
+	}
+	previous, mode := h.managedLocked(stack)
+	return previous, mode, true
+}
 func (h *deploymentHistory) managed(stack string) (deploymentRecord, string) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
@@ -302,6 +329,15 @@ func (h *deploymentHistory) reserve(row deploymentRecord, expectedPrevious strin
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	previous, mode := h.managedLocked(row.Stack)
+	// Recheck the monotonic broker boundary under the same reservation lock.
+	// A failed/none broker attempt still retires unprotected admission.
+	if row.Broker == nil {
+		for _, previous := range h.rows {
+			if previous.Stack == row.Stack && previous.Broker != nil {
+				return errOperationConflict
+			}
+		}
+	}
 	if len(h.active) != 0 || !allowedDeploymentMode(mode, row.Mode) || previous.RequestID != expectedPrevious || row.State != "pending" || !validDeploymentRecord(row) {
 		return errOperationConflict
 	}
@@ -346,14 +382,20 @@ func (h *deploymentHistory) fence(id, stack string) (deploymentStatus, error) {
 	return status, nil
 }
 
+func validRecordStatus(r deploymentRecord) bool {
+	return validDeploymentStatus(r.deploymentStatus) && !(r.State == "succeeded" && r.Effects == "none" && r.Broker == nil && !validLifecycleAction(r.Action))
+}
 func validDeploymentRecord(r deploymentRecord) bool {
-	if r.Broker != nil && (!r.Broker.Valid() || r.Broker.Scope.Stack != r.Stack || r.Broker.Scope.SourceDigest != "sha256:"+r.Manifest || r.Mode == "remove" || r.Mode == "fence") {
+	if r.Broker != nil && (r.Action != "" || !r.Broker.Valid() || r.Broker.Scope.Stack != r.Stack || r.Broker.Scope.SourceDigest != "sha256:"+r.Manifest || r.Mode == "remove" || r.Mode == "fence") {
+		return false
+	}
+	if r.Action != "" && (!validLifecycleAction(r.Action) || r.Mode != "update") {
 		return false
 	}
 	if r.Mode == "fence" {
 		return validApplyID(r.RequestID) && validDeployStack(r.Stack) && r.State == "not-admitted" && r.Effects == "none" && r.OperationID == "" && r.StageID == "" && r.Manifest == "" && len(r.Owned) == 0
 	}
-	if !validApplyID(r.RequestID) || !validDeployStack(r.Stack) || !validApplyID(r.StageID) || !preflight.ValidDigest("sha256:"+r.Manifest) || !validDeploymentStatus(r.deploymentStatus) ||
+	if !validApplyID(r.RequestID) || !validDeployStack(r.Stack) || !validApplyID(r.StageID) || !preflight.ValidDigest("sha256:"+r.Manifest) || !validRecordStatus(r) ||
 		(r.Mode != "create" && r.Mode != "update" && r.Mode != "remove") {
 		return false
 	}
@@ -371,7 +413,7 @@ func (h *deploymentHistory) finish(result deploymentStatus, owned []operation.Ma
 		return errOperationConflict
 	}
 	for i, row := range h.rows {
-		if row.RequestID == result.RequestID && row.Stack == result.Stack && row.State == "pending" {
+		if row.RequestID == result.RequestID && row.Stack == result.Stack && row.Action == result.Action && row.State == "pending" {
 			rows := append([]deploymentRecord{}, h.rows...)
 			rows[i].deploymentStatus, rows[i].Owned = result, owned
 			if !validDeploymentRecord(rows[i]) {

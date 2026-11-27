@@ -173,6 +173,7 @@ jobs:
       - name: Run integration tests
         env:
           DILL_TEST_ENGINE: docker
+          DOCKER_HOST: unix:///var/run/docker.sock
           DILL_TEST_TIMEOUT: 2m
         run: make integration-test
       - name: Exercise operation envelope, qualified coordination, named preflight, recovery and no-prune
