@@ -18,6 +18,12 @@ const (
 	MaxCandidates      = 100
 	MaxSamples         = 20
 	MaxUpstreamBytes   = 4 << 20
+	// MaxUpstreamCalls allows one verification operation, one host open/read,
+	// one exhaustive inventory request, and up to 20 one-shot samples in
+	// the single-operation best case. Extra version, binding, pagination,
+	// or incarnation-proof requests consume the same allowance and reduce
+	// what fits. No retry or request outside Do is permitted.
+	MaxUpstreamCalls = 3 + MaxSamples
 )
 
 var (
@@ -54,7 +60,7 @@ type VerifyDaemon func(ctx context.Context, budget ReadBudget, expectedDaemonID 
 // identity, not copy it from the request. Host must prove locality to the
 // bound daemon and that both readings came from the same native read.
 type BoundSources struct {
-	Host      func(ctx context.Context, budget ReadBudget) (metricsmodel.HostObservation, error)
+	Host      HostSource
 	Inventory func(ctx context.Context, budget ReadBudget, maxCandidates int) (Inventory, error)
 	Memory    func(ctx context.Context, budget ReadBudget, candidate metricsmodel.ContainerIdentity) (metricsmodel.ContainerMemoryObservation, error)
 	// Release synchronously releases any retained binding resources (e.g. a
@@ -103,7 +109,9 @@ func (c *Collector) Collect(ctx context.Context, expectedDaemonID string) (metri
 	started := time.Now()
 	ctx, cancel := context.WithDeadline(ctx, started.Add(AcquisitionTimeout))
 	defer cancel()
-	a := acquisition{ctx: ctx, started: started, bytes: byteBudget{remaining: MaxUpstreamBytes}}
+	a := acquisition{ctx: ctx, started: started, upstream: upstreamBudget{
+		bytesLeft: MaxUpstreamBytes, callsLeft: MaxUpstreamCalls,
+	}}
 	o := a.observe(c.verify, expectedDaemonID)
 	o.EndedAt = time.Now()
 	o.AcquisitionComplete = a.live(o.EndedAt)
@@ -141,12 +149,12 @@ func (a *acquisition) observe(verify VerifyDaemon, expectedDaemonID string) metr
 type acquisition struct {
 	ctx         context.Context
 	started     time.Time
-	bytes       byteBudget
+	upstream    upstreamBudget
 	bindingLost bool
 }
 
 func (a *acquisition) live(now time.Time) bool {
-	return !a.bytes.exhausted && !a.bindingLost && beforeDeadline(a.ctx, now)
+	return a.upstream.breach == nil && !a.bindingLost && beforeDeadline(a.ctx, now)
 }
 
 func beforeDeadline(ctx context.Context, now time.Time) bool {
@@ -160,7 +168,7 @@ func (a *acquisition) current(t metricsmodel.SourceTime, ended time.Time) bool {
 
 // Call timeout withholds the operation's evidence even if the operation
 // reports success. Only overall timeout, lost daemon binding, and breach of
-// the shared read budget invalidate all sources. A failed invocation's value
+// either shared upstream budget invalidate all sources. A failed invocation's value
 // is returned only so observe can release a verifier's resources.
 func call[T any](a *acquisition, fn func(context.Context, ReadBudget) (T, error)) (T, time.Time, bool) {
 	var zero T
@@ -173,7 +181,7 @@ func call[T any](a *acquisition, fn func(context.Context, ReadBudget) (T, error)
 	if !beforeDeadline(ctx, time.Now()) {
 		return zero, started, false
 	}
-	v, err := fn(ctx, ReadBudget{ctx: ctx, bytes: &a.bytes})
+	v, err := fn(ctx, ReadBudget{ctx: ctx, upstream: &a.upstream})
 	ended := time.Now()
 	if errors.Is(err, ErrDaemonUnverified) {
 		a.bindingLost = true
