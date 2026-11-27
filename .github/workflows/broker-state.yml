@@ -1,0 +1,57 @@
+name: Broker private state
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  private-state:
+    name: Rootful Linux broker state and paired lifecycle
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: dill
+      - uses: actions/checkout@v4
+        with:
+          repository: umayr/brine
+          ref: f8126b4dc4557aeb8f907d4a7637b5341b02eb44
+          path: brine
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: brine/go.mod
+          cache-dependency-path: |
+            dill/go.sum
+            brine/go.sum
+      - name: Build candidate and exercise private generation evidence
+        working-directory: dill
+        run: |
+          test "${RUNNER_ENVIRONMENT:-}" = github-hosted
+          python3 scripts/install-pkl.py "$RUNNER_TEMP/pkl"
+          make build
+          CGO_ENABLED=0 go test -tags=containers_image_openpgp,exclude_graphdriver_devicemapper,exclude_graphdriver_btrfs -c -o "$RUNNER_TEMP/brokersecret.test" ./internal/brokersecret
+          sudo "$RUNNER_TEMP/brokersecret.test" -test.v -test.timeout 120s
+      - name: Exercise candidate with the pinned Brine consumer
+        working-directory: brine
+        run: |
+          # Explicit disposable-host grant; no operator engine or provider.
+          test "${RUNNER_ENVIRONMENT:-}" = github-hosted
+          test "$(uname -s)" = Linux
+          test ! -e /.dockerenv
+          sudo systemctl is-active --quiet docker
+          docker --host unix:///var/run/docker.sock pull nginx:alpine
+          fixture=$(sudo mktemp -d /srv/dill-broker-ci.XXXXXXXX)
+          sudo chmod 0700 "$fixture"
+          CGO_ENABLED=0 go test -c -o "$RUNNER_TEMP/brokerapp.test" ./internal/brokerapp
+          sudo install -m 0700 "$RUNNER_TEMP/brokerapp.test" "$fixture/brine-brokerapp.test"
+          sudo install -m 0700 "$GITHUB_WORKSPACE/dill/bin/dill" "$fixture/dill"
+          sudo install -m 0700 "$RUNNER_TEMP/pkl" "$fixture/pkl"
+          sudo install -m 0600 "$GITHUB_WORKSPACE/dill/dill.pkl" "$fixture/dill.pkl"
+          sudo env BRINE_BROKER_RUNTIME_TEST=1 BROKER_TEST_ROOT="$fixture" \
+            "$fixture/brine-brokerapp.test" -test.run '^TestBrokerRuntimeLocalFile$' -test.v -test.timeout 300s

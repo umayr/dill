@@ -6,16 +6,38 @@ import (
 	"encoding/json"
 	"errors"
 	"flag"
+	"io"
+	"path/filepath"
+	"time"
+
 	"github.com/umayr/dill/internal/brokersecret"
 	"github.com/umayr/dill/internal/config"
 	"github.com/umayr/dill/internal/coordination"
 	"github.com/umayr/dill/internal/operation"
 	"github.com/umayr/dill/internal/plan"
 	"github.com/umayr/dill/internal/preflight"
-	"io"
-	"path/filepath"
-	"time"
 )
+
+// parseBrokerFlags parses only the supplied string flags and returns the number set.
+func parseBrokerFlags(args []string, fields map[string]*string, allowEmpty bool) (int, error) {
+	fs := flag.NewFlagSet("", flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	for name, dst := range fields {
+		seen := false
+		fs.Func(name, "", func(value string) error {
+			if seen || (!allowEmpty && value == "") {
+				return brokersecret.ErrInvalid
+			}
+			seen = true
+			*dst = value
+			return nil
+		})
+	}
+	if fs.Parse(args) != nil || fs.NArg() != 0 {
+		return 0, brokersecret.ErrInvalid
+	}
+	return fs.NFlag(), nil
+}
 
 // Broker commands are explicit administrator/agent boundaries. Paths and daemon
 // identity come from trusted operator configuration, never an HTTP payload.
@@ -27,7 +49,13 @@ type brokerCLIOptions struct {
 
 func parseBrokerCLI(kind string, args []string) (brokerCLIOptions, error) {
 	var o brokerCLIOptions
-	fields := map[string]*string{"contract": new(string), "broker-store": &o.store}
+	switch kind {
+	case "broker-init", "broker-prepare", "broker-retirement-prepare", "broker-preflight", "broker-managed-operation":
+	default:
+		return o, brokersecret.ErrInvalid
+	}
+	var contract string
+	fields := map[string]*string{"contract": &contract, "broker-store": &o.store}
 	if kind != "broker-init" {
 		fields["broker-profile"] = &o.profilePath
 		fields["f"] = &o.file
@@ -37,65 +65,37 @@ func parseBrokerCLI(kind string, args []string) (brokerCLIOptions, error) {
 		fields["coordination-state-dir"] = &o.state
 		fields["source-digest"] = &o.source
 	}
-	switch kind {
-	case "broker-init", "broker-prepare", "broker-retirement-prepare", "broker-preflight", "broker-managed-operation":
-	default:
+	if _, err := parseBrokerFlags(args, fields, false); err != nil || contract != brokersecret.Version {
 		return o, brokersecret.ErrInvalid
 	}
-	fs := flag.NewFlagSet(kind, flag.ContinueOnError)
-	fs.SetOutput(io.Discard)
-	seen := map[string]bool{}
-	for name, dst := range fields {
-		fs.Func(name, "", func(v string) error {
-			if seen[name] || v == "" {
-				return brokersecret.ErrInvalid
-			}
-			seen[name] = true
-			*dst = v
-			return nil
-		})
-	}
-	if fs.Parse(args) != nil || fs.NArg() != 0 || *fields["contract"] != brokersecret.Version {
+	if !filepath.IsAbs(o.store) || filepath.Clean(o.store) != o.store {
 		return o, brokersecret.ErrInvalid
 	}
-	for name := range fields {
-		if kind != "broker-init" && (name == "broker-profile" || name == "engine-socket" || name == "coordination-daemon-id") {
-			continue
-		}
-		if !seen[name] {
+	if kind == "broker-init" {
+		return o, nil
+	}
+	paths := []string{o.file, o.state}
+	if o.profilePath != "" {
+		if o.socket != "" || o.daemon != "" {
 			return o, brokersecret.ErrInvalid
 		}
-	}
-	if kind != "broker-init" {
-		if seen["broker-profile"] {
-			if seen["engine-socket"] || seen["coordination-daemon-id"] {
-				return o, brokersecret.ErrInvalid
-			}
-		} else if !seen["engine-socket"] || !seen["coordination-daemon-id"] {
+		paths = append(paths, o.profilePath)
+	} else {
+		if o.socket == "" || o.daemon == "" {
 			return o, brokersecret.ErrInvalid
 		}
+		paths = append(paths, o.socket)
 	}
-	for _, p := range []string{o.store} {
+	for _, p := range paths {
 		if !filepath.IsAbs(p) || filepath.Clean(p) != p {
 			return o, brokersecret.ErrInvalid
 		}
 	}
-	if kind != "broker-init" {
-		paths := []string{o.file, o.state}
-		if o.profilePath != "" {
-			paths = append(paths, o.profilePath)
-		} else {
-			paths = append(paths, o.socket)
-		}
-		for _, p := range paths {
-			if !filepath.IsAbs(p) || filepath.Clean(p) != p {
-				return o, brokersecret.ErrInvalid
-			}
-		}
-		if config.ValidateSecretStackName(o.stack) != nil || !preflight.ValidDigest(o.source) {
-			return o, brokersecret.ErrInvalid
-		}
-		if _, err := coordination.DockerIdentity(o.daemon); o.profilePath == "" && err != nil {
+	if o.stack == "" || o.source == "" || config.ValidateSecretStackName(o.stack) != nil || !preflight.ValidDigest(o.source) {
+		return o, brokersecret.ErrInvalid
+	}
+	if o.profilePath == "" {
+		if _, err := coordination.DockerIdentity(o.daemon); err != nil {
 			return o, brokersecret.ErrInvalid
 		}
 	}

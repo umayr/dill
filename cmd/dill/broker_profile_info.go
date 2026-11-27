@@ -2,11 +2,11 @@ package main
 
 import (
 	"encoding/json"
-	"flag"
-	"github.com/umayr/dill/internal/brokersecret"
-	"github.com/umayr/dill/internal/coordination"
 	"io"
 	"path/filepath"
+
+	"github.com/umayr/dill/internal/brokersecret"
+	"github.com/umayr/dill/internal/coordination"
 )
 
 type brokerProfileInfo struct {
@@ -19,21 +19,9 @@ type brokerProfileInfo struct {
 }
 
 func parseBrokerProfileInfo(args []string) (string, error) {
-	fs := flag.NewFlagSet("broker-profile-info", flag.ContinueOnError)
-	fs.SetOutput(io.Discard)
-	seen := map[string]bool{}
-	contract, path := "", ""
-	for k, p := range map[string]*string{"contract": &contract, "broker-profile": &path} {
-		fs.Func(k, "", func(v string) error {
-			if seen[k] || v == "" {
-				return brokersecret.ErrInvalid
-			}
-			seen[k] = true
-			*p = v
-			return nil
-		})
-	}
-	if fs.Parse(args) != nil || fs.NArg() != 0 || len(seen) != 2 || contract != coordination.BrokerProfileVersion || !filepath.IsAbs(path) || filepath.Clean(path) != path {
+	var contract, path string
+	fields := map[string]*string{"contract": &contract, "broker-profile": &path}
+	if _, err := parseBrokerFlags(args, fields, false); err != nil || contract != coordination.BrokerProfileVersion || !filepath.IsAbs(path) || filepath.Clean(path) != path {
 		return "", brokersecret.ErrInvalid
 	}
 	return path, nil
