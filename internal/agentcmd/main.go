@@ -199,9 +199,12 @@ func serveAgent(args []string, out, diagnostics io.Writer, combined bool) error 
 	if len(deployGrants) != 0 && *stagingRoot == "" {
 		return errors.New("HTTPS deploy grants require HTTPS staging configuration")
 	}
+	if err := checkDeployGrantBackends(deployGrants, *stagingRoot != "", *previewState != "" && *previewPkl != "", *applyState != "" && *previewState != "" && *previewPkl != ""); err != nil {
+		return err
+	}
 	var previewExecutable string
 	if *previewState != "" || *previewPkl != "" {
-		if !combined || runtime.GOOS != "linux" || *stagingRoot == "" || !filepath.IsAbs(*previewState) || !filepath.IsAbs(*previewPkl) {
+		if !combined || runtime.GOOS != "linux" || *stagingRoot == "" || !filepath.IsAbs(*previewState) || filepath.Clean(*previewState) != *previewState || !filepath.IsAbs(*previewPkl) {
 			return errors.New("deployment preview requires dill agent on Linux, HTTPS staging, an absolute coordination state directory and an absolute Pkl executable")
 		}
 		executable, err := os.Executable()
@@ -210,8 +213,14 @@ func serveAgent(args []string, out, diagnostics io.Writer, combined bool) error 
 		}
 		previewExecutable = executable
 	}
+	historyPeers := []string{*previewState, *stagingRoot, *stagingCatalog, *httpsDir}
+	for _, credential := range []string{*httpsCert, *httpsKey, *httpsToken, *key, *httpsDeployToken} {
+		if credential != "" {
+			historyPeers = append(historyPeers, filepath.Dir(credential))
+		}
+	}
 	if *applyState != "" && (previewExecutable == "" || !filepath.IsAbs(*applyState) || filepath.Clean(*applyState) != *applyState ||
-		*applyState == *previewState || *applyState == *stagingRoot || *applyState == *stagingCatalog || *applyState == *httpsDir) {
+		!separateDeploymentHistory(*applyState, historyPeers...)) {
 		return errors.New("deployment apply requires preview and a separate absolute private operation history directory")
 	}
 	if *httpsDir != "" {
