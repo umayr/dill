@@ -22,6 +22,7 @@ Provision an independent random 32-byte deploy credential out of band. Never rep
 | Deploy | `preview` | `POST /v1/deploy/preview` |
 | Deploy | `apply` | `POST /v1/deploy/apply` |
 | Deploy | `journal-apply` | `POST /v1/deploy/journal-apply` |
+| Deploy | `checked-apply` | `POST /v1/deploy/checked-apply` (journal-bound exact-predecessor update only) |
 | Deploy | `remove-preview` | `POST /v1/deploy/remove-preview` |
 | Deploy | `remove` | `POST /v1/deploy/remove` |
 | Deploy | `start-preview`, `stop-preview`, `restart-preview` (separate grants) | `POST /v1/deploy/{action}-preview` |
@@ -55,6 +56,8 @@ Configure `--https-apply-state /absolute/private/operations` on the combined age
 `POST /v1/deploy/apply` accepts the exact preview's `stageId`, `manifestSha256`, `stack`, and `selectionDigest`, a 32-character lowercase hexadecimal `requestId`, and `confirm: "create"` or `"update"` as advertised by the preview. The agent checks the snapshot and preview, saves intent, and runs checked `dill operation up` with the same coordination state as cooperating CLI callers. Creation requires all selected resources to be absent. An update requires exact recorded immutable container and network IDs. It may add containers but cannot omit managed containers or attach existing volumes (Docker volume names can be reused). No operation falls back to the legacy executor or adopts resources.
 
 ### Managed lifecycle (new paired protocol; not in 0.11.0)
+
+`POST /v1/deploy/checked-apply` requires a separate `checked-apply` grant, the exact journal header, and the standard apply fields plus `priorRequestId`. Only `confirm: "update"` is valid. The canonical prior request must differ from the new request and match the current managed head; existing history reservation atomically compares that same head again after preview. A changed predecessor or duplicate request never executes and never falls back to create or the unbound/ordinary apply routes. This is a source-owner fence, not a new approval mechanism.
 
 Qualified update previews also include `X-Dill-Prior-Request`, identifying the exact managed predecessor inspected by the preview. This is planning evidence, not a submission fence or automatic approval; consumers must preserve their source/review gates.
 

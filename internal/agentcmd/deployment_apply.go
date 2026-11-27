@@ -117,8 +117,9 @@ const (
 
 func (h *applyEndpoint) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	journal := r.Header.Values(journalHeader)
+	checked := r.URL.Path == "/v1/deploy/checked-apply"
 	fence := r.URL.Path == "/v1/deploy/fence"
-	bound := fence || r.URL.Path == "/v1/deploy/journal-apply" || lifecyclePath(r.URL.Path) != ""
+	bound := checked || fence || r.URL.Path == "/v1/deploy/journal-apply" || lifecyclePath(r.URL.Path) != ""
 	if (bound || len(journal) != 0) && (len(journal) != 1 || !validApplyID(journal[0]) || journal[0] != h.history.journal) {
 		http.Error(w, "deployment journal does not match", http.StatusConflict)
 		return
@@ -167,7 +168,7 @@ func (h *applyEndpoint) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	case "/v1/deploy/preview", "/v1/deploy/remove-preview":
 		h.review(w, r)
 		return
-	case "/v1/deploy/apply", "/v1/deploy/journal-apply", "/v1/deploy/remove":
+	case "/v1/deploy/checked-apply", "/v1/deploy/apply", "/v1/deploy/journal-apply", "/v1/deploy/remove":
 	default:
 		id := strings.TrimPrefix(r.URL.Path, "/v1/deploy/operations/")
 		if !validApplyID(id) || r.URL.RawQuery != "" || r.ContentLength != 0 || len(r.TransferEncoding) != 0 {
@@ -188,6 +189,9 @@ func (h *applyEndpoint) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if remove {
 		fields, ok = deploymentFields(w, r, "stack", "selectionDigest", "requestId", "confirm", "priorRequestId")
 		ok = ok && fields["confirm"] == "remove" && validApplyID(fields["priorRequestId"])
+	} else if checked {
+		fields, ok = deploymentFields(w, r, "stageId", "manifestSha256", "stack", "selectionDigest", "requestId", "confirm", "priorRequestId")
+		ok = ok && fields["confirm"] == "update" && validApplyID(fields["priorRequestId"]) && fields["priorRequestId"] != fields["requestId"] && validApplyID(fields["stageId"]) && preflight.ValidDigest("sha256:"+fields["manifestSha256"])
 	} else {
 		fields, ok = deploymentFields(w, r, "stageId", "manifestSha256", "stack", "selectionDigest", "requestId", "confirm")
 		ok = ok && (fields["confirm"] == "create" || fields["confirm"] == "update") && validApplyID(fields["stageId"]) && preflight.ValidDigest("sha256:"+fields["manifestSha256"])
@@ -213,7 +217,7 @@ func (h *applyEndpoint) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if remove && mode == "update" && previous.RequestID == fields["priorRequestId"] {
 		mode, stage, manifest, preview = "remove", previous.StageID, previous.Manifest, h.down
 	}
-	if preview == nil || mode != fields["confirm"] {
+	if preview == nil || mode != fields["confirm"] || (checked && previous.RequestID != fields["priorRequestId"]) {
 		http.Error(w, "deployment not eligible; check operation status", 409)
 		return
 	}
