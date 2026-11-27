@@ -1,0 +1,945 @@
+{
+  "fixture": "brine-monitor-aggregate-examples/1",
+  "envelopeVersion": "brine.agent.read/1",
+  "operations": {
+    "discover": {
+      "method": "POST",
+      "path": "/v1/monitor/capabilities",
+      "body": {}
+    },
+    "sample": {
+      "method": "POST",
+      "path": "/v1/monitor/metrics",
+      "body": {
+        "capability": "brine.agent.metrics.aggregate/1"
+      }
+    }
+  },
+  "cases": [
+    {
+      "id": "discover",
+      "operation": "discover",
+      "condition": "Enabled target, authorized monitor, valid binding and epoch.",
+      "expect": {
+        "status": 200,
+        "acquisitionAttempts": 0,
+        "client": "enable-sampling-for-session",
+        "data": {
+          "capabilities": [
+            "brine.agent.metrics.aggregate/1"
+          ]
+        }
+      }
+    },
+    {
+      "id": "complete",
+      "operation": "sample",
+      "condition": "Verified host pair and complete measurements of two eligible containers.",
+      "expect": {
+        "status": 200,
+        "acquisitionAttempts": 1,
+        "client": "show-complete",
+        "data": {
+          "capability": "brine.agent.metrics.aggregate/1",
+          "coverage": "complete",
+          "hostMemoryComplete": true,
+          "ownedMemoryComplete": true,
+          "hostMemoryTotalBytes": 8589934592,
+          "hostMemoryAvailableBytes": 4294967296,
+          "ownedRunningContainers": 2,
+          "ownedMemoryUsageBytes": 67108864
+        }
+      }
+    },
+    {
+      "id": "measured-zero",
+      "operation": "sample",
+      "condition": "Host unavailable; one eligible container has a verified zero reading.",
+      "expect": {
+        "status": 200,
+        "acquisitionAttempts": 1,
+        "client": "show-partial",
+        "data": {
+          "capability": "brine.agent.metrics.aggregate/1",
+          "coverage": "partial",
+          "hostMemoryComplete": false,
+          "ownedMemoryComplete": true,
+          "ownedRunningContainers": 1,
+          "ownedMemoryUsageBytes": 0
+        }
+      }
+    },
+    {
+      "id": "empty-set",
+      "operation": "sample",
+      "condition": "Host verified; inventory is exhaustively empty of eligible containers.",
+      "expect": {
+        "status": 200,
+        "acquisitionAttempts": 1,
+        "client": "show-partial",
+        "data": {
+          "capability": "brine.agent.metrics.aggregate/1",
+          "coverage": "partial",
+          "hostMemoryComplete": true,
+          "ownedMemoryComplete": false,
+          "hostMemoryTotalBytes": 8589934592,
+          "hostMemoryAvailableBytes": 4294967296,
+          "ownedRunningContainers": 0
+        }
+      }
+    },
+    {
+      "id": "known-count-missing-sum",
+      "operation": "sample",
+      "condition": "Host verified; current, exhaustive inventory verifies two eligible candidates; one reading cannot be linked to its inventoried incarnation.",
+      "expect": {
+        "status": 200,
+        "acquisitionAttempts": 1,
+        "client": "show-partial",
+        "data": {
+          "capability": "brine.agent.metrics.aggregate/1",
+          "coverage": "partial",
+          "hostMemoryComplete": true,
+          "ownedMemoryComplete": false,
+          "hostMemoryTotalBytes": 8589934592,
+          "hostMemoryAvailableBytes": 4294967296,
+          "ownedRunningContainers": 2
+        }
+      }
+    },
+    {
+      "id": "ambiguous-inventory",
+      "operation": "sample",
+      "condition": "Host verified, but eligible inventory is ambiguous because running ownership is not verified; neither count nor sum is known.",
+      "expect": {
+        "status": 200,
+        "acquisitionAttempts": 1,
+        "client": "show-partial",
+        "data": {
+          "capability": "brine.agent.metrics.aggregate/1",
+          "coverage": "partial",
+          "hostMemoryComplete": true,
+          "ownedMemoryComplete": false,
+          "hostMemoryTotalBytes": 8589934592,
+          "hostMemoryAvailableBytes": 4294967296
+        }
+      }
+    },
+    {
+      "id": "stale-host",
+      "operation": "sample",
+      "condition": "Host source evidence predates acquisition; owned samples are verified within it.",
+      "expect": {
+        "status": 200,
+        "acquisitionAttempts": 1,
+        "client": "show-partial",
+        "data": {
+          "capability": "brine.agent.metrics.aggregate/1",
+          "coverage": "partial",
+          "hostMemoryComplete": false,
+          "ownedMemoryComplete": true,
+          "ownedRunningContainers": 2,
+          "ownedMemoryUsageBytes": 67108864
+        }
+      }
+    },
+    {
+      "id": "host-available-zero",
+      "operation": "sample",
+      "condition": "Verified host pair has measured zero available; inventory unavailable.",
+      "expect": {
+        "status": 200,
+        "acquisitionAttempts": 1,
+        "client": "show-partial",
+        "data": {
+          "capability": "brine.agent.metrics.aggregate/1",
+          "coverage": "partial",
+          "hostMemoryComplete": true,
+          "ownedMemoryComplete": false,
+          "hostMemoryTotalBytes": 8589934592,
+          "hostMemoryAvailableBytes": 0
+        }
+      }
+    },
+    {
+      "id": "max-exact-sum",
+      "operation": "sample",
+      "condition": "Only aggregate is known, exactly the maximum accepted integer.",
+      "expect": {
+        "status": 200,
+        "acquisitionAttempts": 1,
+        "client": "show-partial",
+        "data": {
+          "capability": "brine.agent.metrics.aggregate/1",
+          "coverage": "partial",
+          "hostMemoryComplete": false,
+          "ownedMemoryComplete": true,
+          "ownedRunningContainers": 1,
+          "ownedMemoryUsageBytes": 9007199254740991
+        }
+      }
+    },
+    {
+      "id": "aggregate-overflow",
+      "operation": "sample",
+      "condition": "Host verified; two individually valid readings sum to 9007199254740992.",
+      "expect": {
+        "status": 200,
+        "acquisitionAttempts": 1,
+        "client": "show-partial",
+        "data": {
+          "capability": "brine.agent.metrics.aggregate/1",
+          "coverage": "partial",
+          "hostMemoryComplete": true,
+          "ownedMemoryComplete": false,
+          "hostMemoryTotalBytes": 8589934592,
+          "hostMemoryAvailableBytes": 4294967296,
+          "ownedRunningContainers": 2
+        }
+      }
+    },
+    {
+      "id": "count-only",
+      "operation": "sample",
+      "condition": "No host pair; a known nonzero count but no verified memory sum.",
+      "expect": {
+        "status": 503,
+        "acquisitionAttempts": 1,
+        "client": "show-unavailable-keep-session-backoff",
+        "code": "OBSERVATION_UNAVAILABLE"
+      }
+    },
+    {
+      "id": "empty-without-host",
+      "operation": "sample",
+      "condition": "Only a verified empty eligible set; host pair is unknown.",
+      "expect": {
+        "status": 503,
+        "acquisitionAttempts": 1,
+        "client": "show-unavailable-keep-session-backoff",
+        "code": "OBSERVATION_UNAVAILABLE"
+      }
+    },
+    {
+      "id": "unproven-acquisition",
+      "operation": "sample",
+      "condition": "Daemon ID matches, but acquisition identity could not be attested.",
+      "expect": {
+        "status": 503,
+        "acquisitionAttempts": 1,
+        "client": "show-unavailable-keep-session-backoff",
+        "code": "OBSERVATION_UNAVAILABLE"
+      }
+    },
+    {
+      "id": "work-limit",
+      "operation": "sample",
+      "condition": "Acquisition hits a hard work ceiling, even if the host pair was read earlier.",
+      "expect": {
+        "status": 503,
+        "acquisitionAttempts": 1,
+        "client": "show-unavailable-keep-session-backoff",
+        "code": "OBSERVATION_UNAVAILABLE"
+      }
+    },
+    {
+      "id": "disabled",
+      "operation": "discover",
+      "condition": "Authenticated monitor on a disabled target.",
+      "expect": {
+        "status": 404,
+        "acquisitionAttempts": 0,
+        "client": "show-unsupported"
+      }
+    },
+    {
+      "id": "deploy-not-monitor",
+      "operation": "sample",
+      "condition": "Recognized deploy credential, even with all deploy grants.",
+      "expect": {
+        "status": 403,
+        "acquisitionAttempts": 0,
+        "client": "retire-and-stop-no-fallback"
+      }
+    },
+    {
+      "id": "scrape-not-monitor",
+      "operation": "sample",
+      "condition": "A scrape-only credential is not recognized by the monitor listener.",
+      "expect": {
+        "status": 401,
+        "acquisitionAttempts": 0,
+        "client": "retire-and-stop-no-fallback"
+      }
+    },
+    {
+      "id": "missing-authorization",
+      "operation": "discover",
+      "condition": "No credential.",
+      "expect": {
+        "status": 401,
+        "acquisitionAttempts": 0,
+        "client": "retire-and-stop-no-fallback"
+      }
+    },
+    {
+      "id": "generation-mismatch",
+      "operation": "sample",
+      "condition": "Generation does not match the enrolled binding.",
+      "expect": {
+        "status": 409,
+        "acquisitionAttempts": 0,
+        "client": "retire-and-stop-for-operator",
+        "code": "BINDING_CHANGED"
+      }
+    },
+    {
+      "id": "stale-epoch",
+      "operation": "sample",
+      "condition": "Monitor targets a previous process epoch.",
+      "expect": {
+        "status": 403,
+        "acquisitionAttempts": 0,
+        "client": "retire-backoff-reverify-rediscover",
+        "code": "EPOCH_MISMATCH"
+      }
+    },
+    {
+      "id": "wrong-version",
+      "operation": "sample",
+      "condition": "Sample requests a well-formed but unsupported capability identifier.",
+      "expect": {
+        "status": 501,
+        "acquisitionAttempts": 0,
+        "client": "clear-discovery-backoff-rediscover-no-downgrade",
+        "code": "UNSUPPORTED"
+      }
+    },
+    {
+      "id": "per-container-selector",
+      "operation": "sample",
+      "condition": "Sample has an extra selector key, which is not allowed.",
+      "expect": {
+        "status": 400,
+        "acquisitionAttempts": 0,
+        "client": "clear-live-stop-for-review",
+        "code": "INVALID_REQUEST"
+      }
+    },
+    {
+      "id": "oversize-request",
+      "operation": "sample",
+      "condition": "Sample request body is 513 bytes.",
+      "expect": {
+        "status": 413,
+        "acquisitionAttempts": 0,
+        "client": "clear-live-stop-for-review",
+        "code": "LIMIT_EXCEEDED"
+      }
+    },
+    {
+      "id": "cadence-refused",
+      "operation": "sample",
+      "condition": "Valid sample arrives inside the five-second start interval.",
+      "expect": {
+        "status": 429,
+        "acquisitionAttempts": 0,
+        "client": "clear-live-keep-session-backoff-no-sample",
+        "code": "BUSY"
+      }
+    },
+    {
+      "id": "live-daemon-mismatch",
+      "operation": "sample",
+      "condition": "Live identity check reports a daemon different from enrollment.",
+      "expect": {
+        "status": 409,
+        "acquisitionAttempts": 1,
+        "client": "retire-and-stop-for-operator",
+        "code": "BINDING_CHANGED"
+      }
+    }
+  ],
+  "receiptBasis": "complete",
+  "receiptCases": [
+    {
+      "id": "delivery-inclusive",
+      "verifiedElapsedMs": 2000,
+      "displayElapsedMs": 4999,
+      "sessionChanged": false,
+      "proof": "valid",
+      "expect": "current",
+      "requestState": "active"
+    },
+    {
+      "id": "display-exclusive",
+      "verifiedElapsedMs": 2000,
+      "displayElapsedMs": 5000,
+      "sessionChanged": false,
+      "proof": "valid",
+      "expect": "stale",
+      "requestState": "active"
+    },
+    {
+      "id": "late",
+      "verifiedElapsedMs": 2001,
+      "displayElapsedMs": 2001,
+      "sessionChanged": false,
+      "proof": "valid",
+      "expect": "reject",
+      "requestState": "active"
+    },
+    {
+      "id": "epoch-changed",
+      "verifiedElapsedMs": 1000,
+      "displayElapsedMs": 1000,
+      "sessionChanged": true,
+      "proof": "valid",
+      "expect": "reject",
+      "requestState": "active"
+    },
+    {
+      "id": "wrong-target",
+      "verifiedElapsedMs": 1000,
+      "displayElapsedMs": 1000,
+      "sessionChanged": false,
+      "proof": "invalid",
+      "expect": "reject",
+      "requestState": "active"
+    },
+    {
+      "id": "wrong-route",
+      "verifiedElapsedMs": 1000,
+      "displayElapsedMs": 1000,
+      "sessionChanged": false,
+      "proof": "invalid",
+      "expect": "reject",
+      "requestState": "active"
+    },
+    {
+      "id": "wrong-request-id",
+      "verifiedElapsedMs": 1000,
+      "displayElapsedMs": 1000,
+      "sessionChanged": false,
+      "proof": "invalid",
+      "expect": "reject",
+      "requestState": "active"
+    },
+    {
+      "id": "wrong-signed-epoch",
+      "verifiedElapsedMs": 1000,
+      "displayElapsedMs": 1000,
+      "sessionChanged": false,
+      "proof": "invalid",
+      "expect": "reject",
+      "requestState": "active"
+    },
+    {
+      "id": "altered-body",
+      "verifiedElapsedMs": 1000,
+      "displayElapsedMs": 1000,
+      "sessionChanged": false,
+      "proof": "invalid",
+      "expect": "reject",
+      "requestState": "active"
+    },
+    {
+      "id": "wrong-signed-generation",
+      "verifiedElapsedMs": 1000,
+      "displayElapsedMs": 1000,
+      "sessionChanged": false,
+      "proof": "invalid",
+      "requestState": "active",
+      "expect": "reject"
+    },
+    {
+      "id": "wrong-proof-domain",
+      "verifiedElapsedMs": 1000,
+      "displayElapsedMs": 1000,
+      "sessionChanged": false,
+      "proof": "invalid",
+      "requestState": "active",
+      "expect": "reject"
+    },
+    {
+      "id": "mutated-whitespace",
+      "verifiedElapsedMs": 1000,
+      "displayElapsedMs": 1000,
+      "sessionChanged": false,
+      "proof": "invalid",
+      "requestState": "active",
+      "expect": "reject"
+    },
+    {
+      "id": "superseded-valid-proof",
+      "verifiedElapsedMs": 1000,
+      "displayElapsedMs": 1000,
+      "sessionChanged": false,
+      "proof": "valid",
+      "requestState": "superseded",
+      "expect": "reject"
+    }
+  ],
+  "trialLimits": {
+    "displayAgeMsExclusive": 5000,
+    "sampleStartCooldownMs": 5000,
+    "acquisitionMsMax": 1000,
+    "serverDeliveryMsMax": 250,
+    "serverRequestMsMax": 2000,
+    "clientVerifyMsMax": 2000,
+    "headerBytesMax": 8192,
+    "requestBodyBytesMax": 512,
+    "responseBodyBytesMax": 4096,
+    "jsonDepthMax": 4,
+    "backoffMs": [
+      5000,
+      10000,
+      20000,
+      40000,
+      60000
+    ]
+  },
+  "timelineCases": [
+    {
+      "id": "expiry-before-next-verified-result",
+      "events": [
+        [
+          0,
+          "brine-admit"
+        ],
+        [
+          700,
+          "brine-verified"
+        ],
+        [
+          4999,
+          "brine-current"
+        ],
+        [
+          5000,
+          "brine-admit"
+        ],
+        [
+          5000,
+          "brine-stale-gap"
+        ],
+        [
+          5650,
+          "brine-verified"
+        ]
+      ]
+    },
+    {
+      "id": "prometheus-wins-shared-cooldown",
+      "events": [
+        [
+          0,
+          "brine-admit"
+        ],
+        [
+          700,
+          "brine-verified"
+        ],
+        [
+          5000,
+          "prometheus-admit"
+        ],
+        [
+          5000,
+          "brine-stale-gap"
+        ],
+        [
+          5600,
+          "prometheus-done"
+        ],
+        [
+          5700,
+          "brine-429-no-acquisition"
+        ],
+        [
+          5700,
+          "brine-gap-no-cached-success"
+        ],
+        [
+          10700,
+          "brine-admit"
+        ],
+        [
+          11300,
+          "brine-verified"
+        ]
+      ]
+    },
+    {
+      "id": "shared-slot-held-through-delivery",
+      "events": [
+        [
+          0,
+          "prometheus-admit"
+        ],
+        [
+          950,
+          "prometheus-acquisition-done"
+        ],
+        [
+          1000,
+          "brine-429-no-acquisition"
+        ],
+        [
+          1000,
+          "brine-gap-no-cached-success"
+        ],
+        [
+          1150,
+          "prometheus-done"
+        ],
+        [
+          6000,
+          "brine-admit"
+        ],
+        [
+          6500,
+          "brine-verified"
+        ]
+      ]
+    },
+    {
+      "id": "canceled-start-still-charged",
+      "events": [
+        [
+          0,
+          "prometheus-admit"
+        ],
+        [
+          200,
+          "prometheus-cancel-quiescent"
+        ],
+        [
+          4999,
+          "brine-429-no-acquisition"
+        ],
+        [
+          4999,
+          "brine-gap-no-cached-success"
+        ],
+        [
+          9999,
+          "brine-admit"
+        ],
+        [
+          10500,
+          "brine-verified"
+        ]
+      ]
+    },
+    {
+      "id": "early-429-clears-still-current-value",
+      "events": [
+        [
+          0,
+          "brine-admit"
+        ],
+        [
+          700,
+          "brine-verified"
+        ],
+        [
+          4499,
+          "brine-current"
+        ],
+        [
+          4500,
+          "brine-429-no-acquisition"
+        ],
+        [
+          4500,
+          "brine-gap-no-cached-success"
+        ],
+        [
+          9500,
+          "brine-admit"
+        ],
+        [
+          10100,
+          "brine-verified"
+        ]
+      ]
+    },
+    {
+      "id": "brine-wins-shared-slot",
+      "events": [
+        [
+          0,
+          "brine-admit"
+        ],
+        [
+          200,
+          "prometheus-429-no-acquisition"
+        ],
+        [
+          600,
+          "brine-verified"
+        ],
+        [
+          5000,
+          "brine-stale-gap"
+        ]
+      ]
+    },
+    {
+      "id": "repeated-shared-cooldown-refusal-backs-off",
+      "events": [
+        [
+          0,
+          "prometheus-admit"
+        ],
+        [
+          600,
+          "prometheus-done"
+        ],
+        [
+          1000,
+          "brine-429-no-acquisition"
+        ],
+        [
+          1000,
+          "brine-gap-no-cached-success"
+        ],
+        [
+          5000,
+          "prometheus-admit"
+        ],
+        [
+          5500,
+          "prometheus-done"
+        ],
+        [
+          6000,
+          "brine-429-no-acquisition"
+        ],
+        [
+          6000,
+          "brine-gap-no-cached-success"
+        ],
+        [
+          16000,
+          "brine-admit"
+        ],
+        [
+          16500,
+          "brine-verified"
+        ]
+      ]
+    }
+  ],
+  "parserCases": [
+    {
+      "id": "request-header-edge",
+      "condition": "8,192 decoded header bytes under the field-count formula, otherwise valid.",
+      "expect": "admit-if-available"
+    },
+    {
+      "id": "request-header-over",
+      "condition": "8,193 decoded header bytes including duplicate fields.",
+      "expect": "431-or-close-no-acquisition"
+    },
+    {
+      "id": "response-header-edge",
+      "condition": "8,192 decoded response header bytes, otherwise valid.",
+      "expect": "continue-bounded-verification"
+    },
+    {
+      "id": "response-header-over",
+      "condition": "8,193 decoded response header bytes, on success or error.",
+      "expect": "retire-and-stop"
+    },
+    {
+      "id": "request-body-edge",
+      "condition": "512-byte decoded JSON body including allowed whitespace, otherwise valid.",
+      "expect": "admit-if-available"
+    },
+    {
+      "id": "response-body-edge",
+      "condition": "4,096 literal fixed-length response bytes including signed whitespace, otherwise valid.",
+      "expect": "continue-bounded-verification"
+    },
+    {
+      "id": "response-body-over",
+      "condition": "4,097 bytes on success or error.",
+      "expect": "retire-and-stop"
+    },
+    {
+      "id": "encoded-request",
+      "condition": "A Content-Encoding field is present, even identity.",
+      "expect": "reject-before-acquisition"
+    },
+    {
+      "id": "encoded-reply",
+      "condition": "Extension peer sends a content-coded reply.",
+      "expect": "reject-without-decompressing-retire-and-stop"
+    },
+    {
+      "id": "duplicate-request-header",
+      "condition": "Two identical binding headers with different name casing.",
+      "expect": "reject-before-acquisition"
+    },
+    {
+      "id": "folded-request-header",
+      "condition": "Comma-joined epoch values in one field.",
+      "expect": "reject-before-acquisition"
+    },
+    {
+      "id": "duplicate-proof-header",
+      "condition": "Two identical signature headers on otherwise valid success.",
+      "expect": "retire-and-stop"
+    },
+    {
+      "id": "folded-proof-header",
+      "condition": "Comma-joined proof values in one field.",
+      "expect": "retire-and-stop"
+    },
+    {
+      "id": "ambiguous-reply-framing",
+      "condition": "Reply contains duplicate length fields.",
+      "expect": "retire-and-stop"
+    },
+    {
+      "id": "oversize-depth",
+      "condition": "Input descends to a fifth nested array or object.",
+      "expect": "reject-before-acquisition"
+    }
+  ],
+  "recoveryCases": [
+    {
+      "id": "stock-non-200",
+      "condition": "Ordinary session refresh returns 503, even if its body resembles an extension error.",
+      "expect": {
+        "session": "retired",
+        "discovery": "clear",
+        "live": "gap",
+        "next": "backoff-same-session-then-rediscover-if-verified"
+      }
+    },
+    {
+      "id": "stock-denial",
+      "condition": "Ordinary session re-verification returns 401.",
+      "expect": {
+        "session": "retired",
+        "discovery": "clear",
+        "live": "gap",
+        "next": "stop-no-fallback"
+      }
+    },
+    {
+      "id": "extension-busy",
+      "condition": "Active sample responds with bounded valid BUSY 429.",
+      "expect": {
+        "session": "keep",
+        "discovery": "keep",
+        "live": "gap",
+        "next": "backoff-same-sample-no-session"
+      }
+    },
+    {
+      "id": "extension-unavailable",
+      "condition": "Active sample responds with bounded valid OBSERVATION_UNAVAILABLE 503.",
+      "expect": {
+        "session": "keep",
+        "discovery": "keep",
+        "live": "gap",
+        "next": "backoff-same-sample-no-session"
+      }
+    },
+    {
+      "id": "extension-stale-epoch",
+      "condition": "Active sample responds with bounded EPOCH_MISMATCH 403 and matching echo.",
+      "expect": {
+        "session": "retired",
+        "discovery": "clear",
+        "live": "gap",
+        "next": "backoff-session-then-rediscover-if-verified"
+      }
+    },
+    {
+      "id": "extension-bad-error-echo",
+      "condition": "Active sample receives EPOCH_MISMATCH 403 with wrong echo.",
+      "expect": {
+        "session": "retired",
+        "discovery": "clear",
+        "live": "gap",
+        "next": "stop-no-fallback"
+      }
+    },
+    {
+      "id": "extension-disabled",
+      "condition": "Active sample responds with outer 404.",
+      "expect": {
+        "session": "keep",
+        "discovery": "clear",
+        "live": "gap",
+        "next": "backoff-discovery-no-sample"
+      }
+    },
+    {
+      "id": "extension-role-denied",
+      "condition": "Active sample responds with outer 403 (not an extension epoch error).",
+      "expect": {
+        "session": "retired",
+        "discovery": "clear",
+        "live": "gap",
+        "next": "stop-no-fallback"
+      }
+    },
+    {
+      "id": "extension-binding-changed",
+      "condition": "Active sample responds with BINDING_CHANGED 409.",
+      "expect": {
+        "session": "retired",
+        "discovery": "clear",
+        "live": "gap",
+        "next": "stop-for-operator"
+      }
+    },
+    {
+      "id": "superseded-error",
+      "condition": "A late but valid EPOCH_MISMATCH reply belongs to an already replaced request.",
+      "expect": {
+        "session": "unchanged",
+        "discovery": "unchanged",
+        "live": "unchanged",
+        "next": "ignore-no-backoff-change"
+      }
+    }
+  ],
+  "knownAnswerGate": {
+    "status": "not-run",
+    "requiredGenerationDecimal": [
+      "1",
+      "9007199254740993",
+      "18446744073709551615"
+    ],
+    "rejectedGenerationHeader": [
+      "01",
+      "+1",
+      "0",
+      "18446744073709551616"
+    ],
+    "requiredBaseline": [
+      "discovery-proof",
+      "sample-proof",
+      "stock-session-unchanged-extension-off-and-on"
+    ],
+    "mandatoryCoverage": [
+      "generation-substitution",
+      "cross-domain-substitution",
+      "route-substitution",
+      "request-id-substitution",
+      "target-substitution",
+      "epoch-substitution",
+      "duplicate-and-folded-singleton-headers",
+      "exact-body-whitespace-and-trailing-newline",
+      "same-json-mutated-bytes",
+      "superseded-request-with-valid-proof"
+    ]
+  }
+}
