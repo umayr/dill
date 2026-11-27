@@ -35,6 +35,13 @@ var httpsRoutes = [...]struct {
 	grant        string
 	backend      httpsBackend
 }{
+	{http.MethodGet, "/v1/broker-secrets/journal", "broker-status", httpsApply},
+	{http.MethodPost, "/v1/broker-secrets/requirements/", "broker-requirements", httpsApply},
+	{http.MethodPost, "/v1/broker-secrets/prepare/", "broker-prepare", httpsApply},
+	{http.MethodPost, "/v1/broker-secrets/retire/", "broker-retire", httpsApply},
+	{http.MethodPost, "/v1/broker-secrets/review/", "broker-review", httpsApply},
+	{http.MethodPost, "/v1/broker-secrets/apply/", "broker-apply", httpsApply},
+	{http.MethodGet, "/v1/broker-secrets/operations/", "broker-status", httpsApply},
 	{http.MethodPost, "/v1/session", monitorGrant, httpsMonitor},
 	{http.MethodPost, "/v1/inventory", monitorGrant, httpsMonitor},
 	{http.MethodPost, "/v1/inspect", monitorGrant, httpsMonitor},

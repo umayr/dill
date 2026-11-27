@@ -143,7 +143,7 @@ func TestJournalStatusRejectsCorruptHistory(t *testing.T) {
 		"duplicate request IDs": journalStatusFixture(t, 2, []deploymentRecord{fence, fence}),
 		"absent ownership":      journalStatusFixture(t, 2, []deploymentRecord{missingOwnership}),
 		"invalid mode chain":    journalStatusFixture(t, 2, []deploymentRecord{journalStatusRow(3, "sample", "update", "pending", "unknown")}),
-		"future version":        journalStatusFixture(t, 3, []deploymentRecord{}),
+		"future version":        journalStatusFixture(t, 4, []deploymentRecord{}),
 		"noncanonical JSON":     append(bytes.Clone(valid), '\n'),
 		"trailing content":      append(bytes.Clone(valid), []byte(`{"secret":"not for output"}`)...),
 		"truncated JSON":        valid[:len(valid)-1],

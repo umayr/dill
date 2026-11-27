@@ -188,6 +188,9 @@ func ComputeChecked(ctx context.Context, cfg *config.DillConfig, engine orchestr
 }
 
 func compute(ctx context.Context, cfg *config.DillConfig, engine Source, stackName string, selected map[string]bool, mounts map[string][]config.ResolvedSecret, target string) (*Plan, error) {
+	return computeMode(ctx, cfg, engine, stackName, selected, mounts, target, false)
+}
+func computeMode(ctx context.Context, cfg *config.DillConfig, engine Source, stackName string, selected map[string]bool, mounts map[string][]config.ResolvedSecret, target string, broker bool) (*Plan, error) {
 	// Build desired map: serviceName → containerName.
 	type desired struct {
 		svc           *config.Service
@@ -222,7 +225,7 @@ func compute(ctx context.Context, cfg *config.DillConfig, engine Source, stackNa
 			return nil, err
 		}
 
-		if _, marked := live.SystemLabels[orchestrator.SecretEnabledLabel]; marked && len(d.svc.Secrets) == 0 {
+		if _, marked := live.SystemLabels[orchestrator.SecretEnabledLabel]; marked && len(d.svc.Secrets) == 0 && !broker {
 			return nil, config.ErrSecretUnavailable
 		}
 		localImageID, err := engine.LocalImageID(ctx, d.svc.Image)

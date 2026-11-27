@@ -59,7 +59,7 @@ func main() {
 	}
 	if leading < len(args) {
 		namespace := args[leading]
-		named := namespace == "preflight" || namespace == "preflight-capabilities" || (namespace == cmdOperation && namedBindingIntent(args[leading+1:]))
+		named := namespace == "broker-profile-info" || namespace == "broker-local" || namespace == "broker-init" || namespace == "broker-retirement-prepare" || namespace == "broker-prepare" || namespace == "broker-preflight" || namespace == "broker-managed-operation" || namespace == "preflight" || namespace == "preflight-capabilities" || (namespace == cmdOperation && namedBindingIntent(args[leading+1:]))
 		if named {
 			strict := append([]string{}, args[leading:]...)
 			if leading > 0 {
@@ -127,6 +127,24 @@ func exitCodeFor(err error) int {
 }
 
 func run(args []string) (retErr error) {
+	if len(args) > 0 {
+		switch args[0] {
+		case "broker-profile-info":
+			return runBrokerProfileInfo(args[1:], os.Stdout)
+		case "broker-local":
+			code := agentcmd.LocalBroker(context.Background(), args[1:], os.Stdin, os.Stdout)
+			if code != 0 {
+				return protocolExit{code}
+			}
+			return nil
+		case "broker-init", "broker-prepare", "broker-retirement-prepare", "broker-preflight", "broker-managed-operation":
+			return runBrokerCLI(context.Background(), args[0], args[1:], os.Stdin, os.Stdout)
+		}
+	}
+	// New value-free broker discovery never activates retired secret execution.
+	if len(args) > 0 && args[0] == "broker-requirements" {
+		return runBrokerRequirements(context.Background(), args[1:], os.Stdout)
+	}
 	if len(args) > 0 && args[0] == "preflight" {
 		return runNamedPreview(context.Background(), args[1:], os.Stdout)
 	}

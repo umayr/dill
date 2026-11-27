@@ -57,7 +57,11 @@ func managedReceipt(ctx context.Context, s *operationState) ([]operation.Managed
 	if err != nil || len(networks) != 1 || networks[0].Kind != "network" || networks[0].Name != stack || !networks[0].Exists || (oldNetwork != "" && oldNetwork != networks[0].ID) {
 		return nil, errNamedMismatch
 	}
-	if _, err := preflight.NetworkDigest(stack, networks[0]); err != nil {
+	if c.broker != nil {
+		if _, err := preflight.BrokerResourceDigest(c.broker.Scope().Engine, stack, networks[0]); err != nil {
+			return nil, err
+		}
+	} else if _, err := preflight.NetworkDigest(stack, networks[0]); err != nil {
 		return nil, err
 	}
 	if s.managed.Mode == "remove" {
@@ -93,6 +97,15 @@ func managedReceipt(ctx context.Context, s *operationState) ([]operation.Managed
 		live, err := c.guard.InspectConfig(ctx, name)
 		if err != nil || live == nil || !names[name] || orchestrator.CheckOwnership(name, stack, service, live) != nil || !live.NetworksKnown || len(live.Networks) != 1 || live.Networks[0] != stack {
 			return nil, errNamedMismatch
+		}
+		if c.broker != nil {
+			if err := orchestrator.CheckBrokerMounts(service, live, c.broker); err != nil {
+				return nil, err
+			}
+			review := c.broker.Review()
+			if live.SystemLabels[orchestrator.SecretEnabledLabel] != "true" || live.SystemLabels[orchestrator.BrokerHandleLabel] != review.Handle || live.SystemLabels[orchestrator.BrokerGenerationLabel] != review.Scope.Generation {
+				return nil, errNamedMismatch
+			}
 		}
 		digest := operation.ResourceDigest("createScope", live.ID)
 		if created[digest] {

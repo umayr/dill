@@ -28,6 +28,15 @@ type Invocation struct {
 // apply selects dill.operation/1 plus both mandatory negotiated binding flags.
 // The returned code is fixed/safe; never reflect flag/parser diagnostics.
 func ParseInvocation(args []string, apply bool) (Invocation, string) {
+	return parseInvocation(args, apply, false)
+}
+
+// ParseBrokerInvocation widens syntax only for the separate broker boundary.
+// It supplies no qualification, ownership or permission to execute.
+func ParseBrokerInvocation(args []string, apply bool) (Invocation, string) {
+	return parseInvocation(args, apply, true)
+}
+func parseInvocation(args []string, apply, broker bool) (Invocation, string) {
 	v := Invocation{Timeout: 5 * time.Minute}
 	if len(args) == 0 || !SupportedOperation(args[0]) {
 		return v, "UNSUPPORTED_OPERATION"
@@ -78,14 +87,24 @@ func ParseInvocation(args []string, apply bool) (Invocation, string) {
 		return v, "INVALID_ARGUMENTS"
 	}
 	for _, name := range []string{"f", "stack", "engine", "engine-socket", "coordination-layout", "coordination-daemon-id", "coordination-state-dir", "coordination-source"} {
+		if broker && v.Engine == "podman" && name == "coordination-daemon-id" {
+			continue
+		}
 		if !seen[name] {
 			return v, "INVALID_TARGET"
 		}
 	}
-	if v.ConfigFile == "" || !ValidName(v.Stack) || v.Engine != "docker" || !explicitUnixSocket(v.Socket) || v.DaemonID == "" || !filepath.IsAbs(v.StateDir) {
+	if v.ConfigFile == "" || !ValidName(v.Stack) || (v.Engine != "docker" && !(broker && v.Engine == "podman")) || !explicitUnixSocket(v.Socket) || (v.DaemonID == "" && v.Engine != "podman") || !filepath.IsAbs(v.StateDir) {
 		return v, "INVALID_TARGET"
 	}
-	if v.Timeout <= 0 || v.Layout != "native-local-docker-v1" || (v.Source != "cli" && v.Source != "brine") {
+	layoutOK := v.Layout == "native-local-docker-v1" && v.Engine == "docker"
+	if broker {
+		layoutOK = layoutOK || (v.Engine == "docker" && v.Layout == "native-local-docker-userns-v1") || (v.Engine == "podman" && (v.Layout == "native-local-podman-v1" || v.Layout == "native-local-podman-userns-v1"))
+		if v.Operation != "up" || !v.NoPrune || v.Engine == "podman" && v.DaemonID != "" {
+			return v, "UNSUPPORTED_PREFLIGHT"
+		}
+	}
+	if v.Timeout <= 0 || !layoutOK || (v.Source != "cli" && v.Source != "brine") {
 		return v, "UNSUPPORTED_PREFLIGHT"
 	}
 	if v.Pull != "" && v.Pull != "never" {

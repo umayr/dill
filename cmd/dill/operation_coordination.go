@@ -11,6 +11,7 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/umayr/dill/internal/brokersecret"
 	"github.com/umayr/dill/internal/config"
 	"github.com/umayr/dill/internal/coordination"
 	"github.com/umayr/dill/internal/operation"
@@ -34,6 +35,7 @@ func coordinationInspection(err error) bool {
 type coordinationOptions struct {
 	directory, layout, daemonID, source string
 	present                             bool
+	profile                             *coordination.BrokerProfile
 }
 
 func (c *coordinationOptions) flags(fs *flag.FlagSet) {
@@ -53,15 +55,21 @@ func (c coordinationOptions) validate(name string, opts commandOptions) error {
 			supported = true
 		}
 	}
-	if !qualifiedNativeHost() || !supported || opts.Engine != "docker" || !filepath.IsAbs(c.directory) || c.layout != coordination.NativeDockerLayout || c.daemonID == "" || (c.source != "cli" && c.source != "brine") {
+	profileOK := opts.Engine == "docker" && c.layout == coordination.NativeDockerLayout && c.daemonID != ""
+	if c.profile != nil {
+		profileOK = brokerProfileOptions(c.profile, opts, c.layout, c.daemonID)
+	}
+	if !qualifiedNativeHost() || !supported || !profileOK || !filepath.IsAbs(c.directory) || (c.source != "cli" && c.source != "brine") {
 		return usageError{"unsupported qualified coordination invocation"}
 	}
 	return nil
 }
 
 type operationCoordination struct {
+	broker          *brokersecret.Materialized // private, never selected by ordinary flags
 	options         coordinationOptions
 	target          *coordination.Target
+	podman          *coordination.PodmanTarget
 	state           *coordination.State
 	session         *coordination.Session
 	guard           *coordinatedEngine
@@ -80,6 +88,9 @@ type operationCoordination struct {
 // external/anonymous/bind storage, special networks and undeclared orphans.
 // Unsupported options never fall back to uncoordinated behavior.
 func (c *operationCoordination) prepare(ctx context.Context, opts commandOptions, cfg *config.DillConfig, name, pull string) error {
+	if c.options.profile != nil && (c.broker == nil || name != "up" || !brokerProfileOptions(c.options.profile, opts, c.options.layout, c.options.daemonID) || cfg.Engine != c.options.profile.Engine()) {
+		return brokersecret.ErrUnavailable
+	}
 	// Apply the canonical pilot's complete static boundary before opening a
 	// socket. Copy policy overrides; never mutate unselected desired config.
 	effective := *cfg
@@ -89,15 +100,25 @@ func (c *operationCoordination) prepare(ctx context.Context, opts commandOptions
 			return usageError{"unsupported qualified service layout"}
 		}
 		copy := *svc
-		if name != "up" {
+		if c.broker != nil {
+			if name != "up" || copy.PullPolicy != "never" {
+				return brokersecret.ErrUnsupported
+			}
+		} else if name != "up" {
 			copy.PullPolicy = "never"
 		} else if pull != "" {
 			copy.PullPolicy = pull
 		}
 		effective.Services[service] = &copy
 	}
-	if err := orchestrator.ValidateDisposableConfig(&effective); err != nil {
-		return usageError{"unsupported qualified disposable configuration"}
+	if c.broker == nil {
+		if err := orchestrator.ValidateDisposableConfig(&effective); err != nil {
+			return usageError{"unsupported qualified disposable configuration"}
+		}
+	} else {
+		if err := orchestrator.ValidateBrokerConfig(&effective, c.broker); err != nil {
+			return err
+		}
 	}
 	stack := resolveStackNameWithOptions(cfg, opts)
 	resources := []coordination.ResourceInput{{Kind: "network", Name: stack, Action: "reconcile"}}
@@ -142,11 +163,23 @@ func (c *operationCoordination) prepare(ctx context.Context, opts commandOptions
 	// State changes are local metadata, separate from engine effects. Qualification
 	// is read-only; the expected ID is operator assertion, not authorization.
 	socket := strings.TrimPrefix(opts.EngineSocket, "unix://")
-	target, err := coordination.Qualify(ctx, coordination.Qualification{Layout: c.options.layout, Socket: socket, DaemonID: c.options.daemonID})
+	var target *coordination.Target
+	var err error
+	if c.options.profile != nil {
+		target, c.podman, err = c.options.profile.Qualify(ctx)
+	} else {
+		target, err = coordination.Qualify(ctx, coordination.Qualification{Layout: c.options.layout, Socket: socket, DaemonID: c.options.daemonID})
+	}
 	if err != nil {
 		return errors.New("qualified target unavailable")
 	}
 	c.target = target
+	if c.broker != nil {
+		scope := c.broker.Scope()
+		if scope.Engine != target.Engine() || scope.Stack != stack || scope.TargetDigest != "sha256:"+target.Identity() || scope.EndpointDigest != target.EndpointDigest() {
+			return brokersecret.ErrUnavailable
+		}
+	}
 	if c.collectNamed {
 		c.namedStateAttempted = true
 	}
@@ -201,7 +234,12 @@ func (c *operationCoordination) prepare(ctx context.Context, opts commandOptions
 		if err != nil {
 			return err
 		}
-		if inventory != nil && live != nil {
+		if c.broker != nil {
+			if orchestrator.CheckBrokerMounts(service, live, c.broker) != nil {
+				return brokersecret.ErrUnavailable
+			}
+		}
+		if c.broker == nil && inventory != nil && live != nil {
 			if _, marked := live.SystemLabels[orchestrator.SecretEnabledLabel]; marked {
 				return config.ErrSecretUnavailable
 			}
@@ -215,7 +253,11 @@ func (c *operationCoordination) prepare(ctx context.Context, opts commandOptions
 		}
 		// Ownership labels and safe desired config do not attest the existing
 		// workload. Census the actual host settings before any lifecycle write.
-		if !live.HostConfigKnown || live.Privileged || len(live.CapAdd) > 0 || live.HasDevices || live.HasTmpfs || live.UserNSMode != "" || len(live.UIDMap) > 0 || len(live.GIDMap) > 0 {
+		namespaceOK := live.UserNSMode == "" && len(live.UIDMap) == 0 && len(live.GIDMap) == 0
+		if c.broker != nil {
+			namespaceOK = orchestrator.BrokerDefaultNamespace(live)
+		}
+		if !live.HostConfigKnown || live.Privileged || len(live.CapAdd) > 0 || live.HasDevices || live.HasTmpfs || !namespaceOK {
 			return usageError{"unsupported qualified live workload"}
 		}
 		for _, mode := range []string{live.PIDMode, live.IPCMode, live.UTSMode, live.CgroupNSMode} {
@@ -237,6 +279,9 @@ func (c *operationCoordination) prepare(ctx context.Context, opts commandOptions
 			return orchestrator.ErrDisposableUnsupported
 		}
 		for _, mount := range live.Volumes {
+			if c.broker != nil && mount.Type == "bind" {
+				continue
+			} // Checked against authenticated active-generation files above.
 			if mount.Type != "volume" || !volumes[mount.Source] {
 				return usageError{"live storage is outside qualified inventory"}
 			}
@@ -250,18 +295,28 @@ func (c *operationCoordination) prepare(ctx context.Context, opts commandOptions
 	// not merely volume creation or a caller-selected --alpha-disposable flag.
 	// Its wrapper also revalidates before network/container creation and its
 	// strict adapter pins the just-inspected immutable image for actual create.
-	enforcer, ok := c.guard.Engine.(orchestrator.DisposableVolumeEnforcer)
-	if !ok {
-		return orchestrator.ErrDisposableUnavailable
+	var guarded orchestrator.Engine
+	if c.broker == nil {
+		enforcer, ok := c.guard.Engine.(orchestrator.DisposableVolumeEnforcer)
+		if !ok {
+			return orchestrator.ErrDisposableUnavailable
+		}
+		c.guard.enforcer = enforcer
+		guarded, err = orchestrator.WithDisposableGuardrails(ctx, c.guard.Engine, &effective, stack)
+	} else {
+		guarded, err = orchestrator.WithBrokerGuardrails(ctx, c.guard.Engine, &effective, stack, c.broker)
 	}
-	c.guard.enforcer = enforcer
-	guarded, err := orchestrator.WithDisposableGuardrails(ctx, c.guard.Engine, &effective, stack)
 	if err != nil {
 		return err
 	}
 	c.guard.Engine = guarded
 	if inventory != nil {
-		if err := inventory.complete(ctx, guarded, &effective); err != nil {
+		if c.broker == nil {
+			err = inventory.complete(ctx, guarded, &effective)
+		} else {
+			err = inventory.completeBroker(ctx, guarded, &effective, c.broker)
+		}
+		if err != nil {
 			return err
 		}
 		c.namedInventory = inventory
@@ -423,7 +478,12 @@ func (e *coordinatedEngine) RemoveVolume(context.Context, string, string, bool) 
 	return errors.New("qualified operations cannot delete volumes")
 }
 func (e *coordinatedEngine) CLIEndpoint() string { return "" } // no subprocess escape into an unqualified transport
-func (e *coordinatedEngine) EngineName() string  { return "docker" }
+func (e *coordinatedEngine) EngineName() string {
+	if e != nil && e.coord != nil && e.coord.target != nil {
+		return e.coord.target.Engine()
+	}
+	return "docker"
+}
 func (e *coordinatedEngine) DisposableImage(ctx context.Context, image string) (string, []string, error) {
 	if inspector, ok := e.Engine.(orchestrator.DisposableImageInspector); ok {
 		return inspector.DisposableImage(ctx, image)

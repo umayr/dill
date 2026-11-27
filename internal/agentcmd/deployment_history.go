@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"sync"
 
+	"github.com/umayr/dill/internal/brokersecret"
 	"github.com/umayr/dill/internal/operation"
 	"github.com/umayr/dill/internal/preflight"
 	"golang.org/x/sys/unix"
@@ -44,6 +45,7 @@ type deploymentRecord struct {
 	StageID  string                      `json:"stageId,omitempty"`
 	Manifest string                      `json:"manifest,omitempty"`
 	Owned    []operation.ManagedResource `json:"owned,omitempty"`
+	Broker   *brokersecret.Reference     `json:"broker,omitempty"`
 }
 
 type deploymentHistoryFile struct {
@@ -99,17 +101,17 @@ func (h *deploymentHistory) load() error {
 	var file deploymentHistoryFile
 	dec := json.NewDecoder(bytes.NewReader(raw))
 	dec.DisallowUnknownFields()
-	if dec.Decode(&file) != nil || dec.Decode(new(any)) != io.EOF || (file.Version != 1 && file.Version != 2) || file.Target != h.target || file.Rows == nil || (file.Version == 1 && len(file.Rows) > legacyHistoryLimit) {
+	if dec.Decode(&file) != nil || dec.Decode(new(any)) != io.EOF || (file.Version != 1 && file.Version != 2 && file.Version != 3) || file.Target != h.target || file.Rows == nil || (file.Version == 1 && len(file.Rows) > legacyHistoryLimit) {
 		return errors.New("invalid deployment history")
 	}
 	canonical, err := canonicalHistory(file)
-	if err != nil || !bytes.Equal(canonical, raw) || (file.Version == 2 && !validApplyID(file.Journal)) {
+	if err != nil || !bytes.Equal(canonical, raw) || (file.Version >= 2 && !validApplyID(file.Journal)) {
 		return errors.New("invalid deployment history encoding")
 	}
 	seen := make(map[string]bool, len(file.Rows))
 	latest := make(map[string]deploymentRecord)
 	for _, r := range file.Rows {
-		if seen[r.RequestID] || !(validDeploymentRecord(r) || file.Version == 2 && validCompactRecord(r)) || (r.Mode != "fence" && !allowedDeploymentMode(recordNextMode(latest[r.Stack]), r.Mode)) {
+		if (r.Broker != nil && file.Version < 3) || seen[r.RequestID] || !(validDeploymentRecord(r) || file.Version >= 2 && validCompactRecord(r)) || (r.Mode != "fence" && !allowedDeploymentMode(recordNextMode(latest[r.Stack]), r.Mode)) {
 			return errors.New("invalid deployment history record")
 		}
 		seen[r.RequestID] = true
@@ -172,7 +174,14 @@ func (h *deploymentHistory) initializeJournal() error {
 }
 
 func (h *deploymentHistory) save(rows []deploymentRecord, headroom int) error {
-	b, err := json.Marshal(deploymentHistoryFile{Version: 2, Target: h.target, Rows: rows, Journal: h.journal})
+	version := 2
+	for _, r := range rows {
+		if r.Broker != nil {
+			version = 3
+			break
+		}
+	}
+	b, err := json.Marshal(deploymentHistoryFile{Version: version, Target: h.target, Rows: rows, Journal: h.journal})
 	if err != nil {
 		return err
 	}
@@ -234,6 +243,9 @@ func ownershipPayloads(rows []deploymentRecord) map[string]bool {
 }
 
 func validCompactRecord(r deploymentRecord) bool {
+	if r.Broker != nil && (!r.Broker.Valid() || r.Broker.Scope.Stack != r.Stack || r.Mode == "remove") {
+		return false
+	}
 	return validApplyID(r.RequestID) && validDeployStack(r.Stack) && validDeploymentStatus(r.deploymentStatus) &&
 		(r.Mode == "create" || r.Mode == "update" || r.Mode == "remove") &&
 		r.StageID == "" && r.Manifest == "" && len(r.Owned) == 0 &&
@@ -298,6 +310,10 @@ func (h *deploymentHistory) reserve(row deploymentRecord, expectedPrevious strin
 			return errOperationConflict
 		}
 	}
+	if row.Broker != nil {
+		ref := *row.Broker
+		row.Broker = &ref
+	}
 	rows := append(append([]deploymentRecord{}, h.rows...), row)
 	if err := h.save(rows, historyOutcomeSpace); err != nil {
 		h.poisoned = !errors.Is(err, errHistoryCapacity)
@@ -331,6 +347,9 @@ func (h *deploymentHistory) fence(id, stack string) (deploymentStatus, error) {
 }
 
 func validDeploymentRecord(r deploymentRecord) bool {
+	if r.Broker != nil && (!r.Broker.Valid() || r.Broker.Scope.Stack != r.Stack || r.Broker.Scope.SourceDigest != "sha256:"+r.Manifest || r.Mode == "remove" || r.Mode == "fence") {
+		return false
+	}
 	if r.Mode == "fence" {
 		return validApplyID(r.RequestID) && validDeployStack(r.Stack) && r.State == "not-admitted" && r.Effects == "none" && r.OperationID == "" && r.StageID == "" && r.Manifest == "" && len(r.Owned) == 0
 	}
