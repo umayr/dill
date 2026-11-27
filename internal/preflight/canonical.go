@@ -113,7 +113,13 @@ type Input struct {
 }
 
 func (input Input) normalized() (Input, error) {
-	if input.LogicalContract != Version || input.Engine != "docker" || !ValidName(input.Stack) || !SupportedOperation(input.Operation) || input.Flags.TimeoutNanos <= 0 || input.Flags.NoDeps || input.Flags.EffectivePullPolicy != "never" || (input.Flags.CallerSource != "cli" && input.Flags.CallerSource != "brine") {
+	return input.normalizedMode(false)
+}
+func (input Input) normalizedMode(broker bool) (Input, error) {
+	if broker && (input.Operation != "up" || !input.Flags.NoPrune) {
+		return Input{}, errors.New("unsupported broker effective input")
+	}
+	if input.LogicalContract != Version || (input.Engine != "docker" && !(broker && input.Engine == "podman")) || !ValidName(input.Stack) || !SupportedOperation(input.Operation) || input.Flags.TimeoutNanos <= 0 || input.Flags.NoDeps || input.Flags.EffectivePullPolicy != "never" || (input.Flags.CallerSource != "cli" && input.Flags.CallerSource != "brine") {
 		return Input{}, errors.New("unsupported effective input")
 	}
 	if input.Operation != "up" && (input.Flags.ForceRecreate || input.Flags.NoPrune) {
@@ -158,6 +164,14 @@ func (input Input) Digest() (string, error) {
 	return digest("dill.effective-input/1", normalized)
 }
 
+func (input Input) BrokerDigest() (string, error) {
+	normalized, err := input.normalizedMode(true)
+	if err != nil {
+		return "", err
+	}
+	return digest("dill.broker-effective-input/1", normalized)
+}
+
 type ContainerFact struct {
 	Name         string  `json:"name"`
 	Exists       bool    `json:"exists"`
@@ -193,7 +207,11 @@ type Selection struct {
 }
 
 func (s Selection) Digest() (string, error) {
-	if s.LogicalContract != Version || !s.Target.Valid() || !ValidName(s.Stack) || !SupportedOperation(s.Operation) || !ValidDigest(s.InputDigest) || !idPattern.MatchString(s.StateScope) {
+	return s.digestMode(false)
+}
+func (s Selection) digestMode(broker bool) (string, error) {
+	targetOK := s.Target.Valid() || (broker && s.Target.Engine == "podman" && ValidDigest(s.Target.EndpointDigest) && ValidDigest(s.Target.QualifiedIdentityDigest))
+	if s.LogicalContract != Version || !targetOK || !ValidName(s.Stack) || !SupportedOperation(s.Operation) || !ValidDigest(s.InputDigest) || !idPattern.MatchString(s.StateScope) {
 		return "", errors.New("invalid selection scope")
 	}
 	s.Resources = append([]Resource{}, s.Resources...)

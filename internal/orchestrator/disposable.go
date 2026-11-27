@@ -112,6 +112,11 @@ func PreflightDisposableResources(ctx context.Context, engine Engine, cfg *confi
 	if err != nil {
 		return err
 	}
+	return preflightOwnedResources(ctx, engine, cfg, stack, names)
+}
+
+// Shared read-only resource evidence; callers enforce their own complete profile.
+func preflightOwnedResources(ctx context.Context, engine Engine, cfg *config.DillConfig, stack string, names []string) error {
 	if err := checkDisposableImages(ctx, engine, cfg); err != nil {
 		return err
 	}

@@ -4,6 +4,7 @@ import (
 	"context"
 	"sort"
 
+	"github.com/umayr/dill/internal/brokersecret"
 	"github.com/umayr/dill/internal/config"
 	"github.com/umayr/dill/internal/orchestrator"
 	"github.com/umayr/dill/internal/plan"
@@ -14,6 +15,9 @@ import (
 // retained qualified observations. It never marks the result compared; only a
 // fresh successful dispatcher comparison can authorize handler consumption.
 func produceNamedCapture(ctx context.Context, inv preflight.Invocation, cfg *config.DillConfig, n *namedInventory, target preflight.Target, scope string) (*namedCapture, preflight.Selection, error) {
+	return produceCapture(ctx, inv, cfg, n, target, scope, nil)
+}
+func produceCapture(ctx context.Context, inv preflight.Invocation, cfg *config.DillConfig, n *namedInventory, target preflight.Target, scope string, broker *brokersecret.Materialized) (*namedCapture, preflight.Selection, error) {
 	var zero preflight.Selection
 	bad := errNamedCaptureUnavailable
 	if n == nil || cfg == nil || n.stack != inv.Stack {
@@ -24,10 +28,19 @@ func produceNamedCapture(ctx context.Context, inv preflight.Invocation, cfg *con
 		return nil, zero, err
 	}
 	input, err := preflight.ConfigInput(cfg, inv.Stack, inv.Operation, inv.EffectiveFlags(), n.prepared)
+	if broker != nil {
+		if inv.Operation != "up" {
+			return nil, zero, bad
+		}
+		input, err = preflight.BrokerConfigInput(cfg, inv.Stack, inv.EffectiveFlags(), n.prepared, broker)
+	}
 	if err != nil {
 		return nil, zero, err
 	}
 	inputDigest, err := input.Digest()
+	if broker != nil {
+		inputDigest, err = input.BrokerDigest()
+	}
 	if err != nil {
 		return nil, zero, err
 	}
@@ -35,7 +48,11 @@ func produceNamedCapture(ctx context.Context, inv preflight.Invocation, cfg *con
 	changes := map[string]plan.ChangeKind{}
 	switch inv.Operation {
 	case "up":
-		capture.upPlan, err = plan.Compute(ctx, cfg, snapshot, inv.Stack)
+		if broker == nil {
+			capture.upPlan, err = plan.Compute(ctx, cfg, snapshot, inv.Stack)
+		} else {
+			capture.upPlan, err = plan.ComputeBroker(ctx, cfg, &brokerSnapshotEngine{namedSnapshotEngine: snapshot, endpoint: "unix://" + inv.Socket, engine: cfg.Engine}, inv.Stack, broker)
+		}
 		if err != nil {
 			return nil, zero, err
 		}
@@ -81,6 +98,9 @@ func produceNamedCapture(ctx context.Context, inv preflight.Invocation, cfg *con
 		fact := preflight.ContainerFact{Name: name}
 		if live != nil {
 			digest, e := preflight.ContainerDigest(inv.Stack, service, name, live)
+			if broker != nil {
+				digest, e = preflight.BrokerContainerDigest(inv.Stack, service, name, live, cfg, broker)
+			}
 			if e != nil {
 				return nil, zero, e
 			}
@@ -89,6 +109,9 @@ func produceNamedCapture(ctx context.Context, inv preflight.Invocation, cfg *con
 			fact.Exists, fact.ID, fact.ConfigDigest = true, &id, &digest
 			capture.serviceIDs[service], capture.stopIDs[name] = id, id
 			for _, mount := range live.Volumes {
+				if broker != nil && mount.Type == "bind" {
+					continue
+				} // BrokerContainerDigest authenticated these exact files.
 				resource, exists := n.resources["volume\x00"+mount.Source]
 				if !exists || !resource.Exists {
 					return nil, zero, bad
@@ -159,6 +182,9 @@ func produceNamedCapture(ctx context.Context, inv preflight.Invocation, cfg *con
 			fact := preflight.NetworkFact{Name: resource.Name}
 			if resource.Exists {
 				digest, e := preflight.NetworkDigest(inv.Stack, resource)
+				if broker != nil {
+					digest, e = preflight.BrokerResourceDigest(cfg.Engine, inv.Stack, resource)
+				}
 				if e != nil {
 					return nil, zero, e
 				}
@@ -174,6 +200,9 @@ func produceNamedCapture(ctx context.Context, inv preflight.Invocation, cfg *con
 			fact := preflight.VolumeFact{Name: resource.Name}
 			if resource.Exists {
 				digest, e := preflight.VolumeDigest(inv.Stack, resource)
+				if broker != nil {
+					digest, e = preflight.BrokerResourceDigest(cfg.Engine, inv.Stack, resource)
+				}
 				if e != nil {
 					return nil, zero, e
 				}
@@ -196,7 +225,12 @@ func produceNamedCapture(ctx context.Context, inv preflight.Invocation, cfg *con
 	if err != nil {
 		return nil, zero, err
 	}
-	if _, err = selection.Digest(); err != nil {
+	if broker == nil {
+		_, err = selection.Digest()
+	} else {
+		_, err = (preflight.BrokerSelection{Contract: brokersecret.Version, Scope: broker.Scope(), Handle: broker.Review().Handle, Named: selection}).Digest()
+	}
+	if err != nil {
 		return nil, zero, err
 	}
 	return capture, selection, nil

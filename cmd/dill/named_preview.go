@@ -10,10 +10,12 @@ import (
 	"os/signal"
 	"syscall"
 
+	"github.com/umayr/dill/internal/brokersecret"
 	"github.com/umayr/dill/internal/config"
 	"github.com/umayr/dill/internal/coordination"
 	"github.com/umayr/dill/internal/operation"
 	"github.com/umayr/dill/internal/orchestrator"
+	"github.com/umayr/dill/internal/plan"
 	"github.com/umayr/dill/internal/preflight"
 )
 
@@ -25,6 +27,12 @@ var finishNamedSession = func(s *coordination.Session, outcome, effects string) 
 // its terminal journal entry. It never exposes rows after a cleanup failure.
 func finalizeNamedPreview(out io.Writer, r preflight.Result, state *operationState, code int) error {
 	c := state.coordination
+	buffer := func(exit int) ([]byte, error) {
+		if state.broker != nil {
+			return r.BufferBroker(exit)
+		}
+		return r.Buffer(exit)
+	}
 	if c != nil && c.operationID != "" {
 		r.OperationID = c.operationID
 	}
@@ -41,13 +49,17 @@ func finalizeNamedPreview(out io.Writer, r preflight.Result, state *operationSta
 	cancelSuccess()
 	var candidate []byte
 	if r.Outcome == "succeeded" {
-		if err := r.Validate(0); err != nil {
+		validate := r.Validate
+		if state.broker != nil {
+			validate = r.ValidateBroker
+		}
+		if err := validate(0); err != nil {
 			r.Withdraw()
 			r.Outcome, code = "failed", 1
 			r.Errors = append(r.Errors, preflight.FixedError("PREFLIGHT_UNAVAILABLE"))
 		} else {
 			var err error
-			candidate, err = r.Buffer(0)
+			candidate, err = buffer(0)
 			if err != nil {
 				r.Withdraw()
 				r.ResourcesTruncated = true
@@ -96,7 +108,7 @@ func finalizeNamedPreview(out io.Writer, r preflight.Result, state *operationSta
 	}
 	if r.Outcome != "succeeded" {
 		var err error
-		candidate, err = r.Buffer(code)
+		candidate, err = buffer(code)
 		if err != nil {
 			return protocolExit{1}
 		}
@@ -113,6 +125,9 @@ func finalizeNamedPreview(out io.Writer, r preflight.Result, state *operationSta
 // runNamedPreview is deliberately separate from operation/1: it proves engine
 // none while retaining the existing conservative metadata journal axes.
 func runNamedPreview(ctx context.Context, args []string, out io.Writer) error {
+	return runNamedPreviewScoped(ctx, args, out, nil, nil, nil)
+}
+func runNamedPreviewScoped(ctx context.Context, args []string, out io.Writer, broker *brokersecret.Materialized, cfgInput *config.DillConfig, planOut **plan.Plan, profiles ...*coordination.BrokerProfile) error {
 	restore := silenceSecretLogs()
 	defer restore()
 	var random [16]byte
@@ -120,7 +135,7 @@ func runNamedPreview(ctx context.Context, args []string, out io.Writer) error {
 		return protocolExit{1}
 	}
 	r := preflight.NewResult("op_"+hex.EncodeToString(random[:]), "")
-	state := &operationState{recorder: &operation.Recorder{}}
+	state := &operationState{recorder: &operation.Recorder{}, broker: broker, config: cfgInput}
 	fail := func(code int, outcome, reason string) error {
 		r.Outcome = outcome
 		r.Withdraw()
@@ -134,7 +149,14 @@ func runNamedPreview(ctx context.Context, args []string, out io.Writer) error {
 	if namedSecretIntent(args) {
 		return fail(1, "failed", "SECRET_UNAVAILABLE")
 	}
+	profile, profileErr := scopedBrokerProfile(broker, profiles)
+	if profileErr != nil {
+		return fail(2, "invalid_input", "INVALID_TARGET")
+	}
 	inv, reason := preflight.ParseInvocation(args, false)
+	if broker != nil {
+		inv, reason = preflight.ParseBrokerInvocation(args, false)
+	}
 	r.Operation = inv.Operation
 	if reason != "" {
 		return fail(2, "invalid_input", reason)
@@ -157,7 +179,7 @@ func runNamedPreview(ctx context.Context, args []string, out io.Writer) error {
 		return fail(1, "cancelled", "CANCELLED")
 	}
 	cfg, err := loadConfig(ctx, opts)
-	if errors.Is(err, config.ErrSecretUnavailable) || hasSecretGrants(cfg) || (cfg != nil && len(cfg.Secrets) != 0) {
+	if errors.Is(err, config.ErrSecretUnavailable) || (broker == nil && (hasSecretGrants(cfg) || (cfg != nil && len(cfg.Secrets) != 0))) {
 		return fail(1, "failed", "SECRET_UNAVAILABLE")
 	}
 	if err != nil {
@@ -191,16 +213,25 @@ func runNamedPreview(ctx context.Context, args []string, out io.Writer) error {
 		}
 		effective.Services[name] = &copy
 	}
-	if err = orchestrator.ValidateDisposableConfig(&effective); err != nil {
+	if broker == nil {
+		err = orchestrator.ValidateDisposableConfig(&effective)
+	} else {
+		err = orchestrator.ValidateBrokerConfig(&effective, broker)
+	}
+	if err != nil {
 		return fail(2, "invalid_input", "CONFIG_INVALID")
 	}
 	state.config = cfg
-	c := &operationCoordination{options: coordinationOptions{directory: inv.StateDir, layout: inv.Layout, daemonID: inv.DaemonID, source: inv.Source}, collectNamed: true, namedReadOnly: true}
+	c := &operationCoordination{options: coordinationOptions{directory: inv.StateDir, layout: inv.Layout, daemonID: inv.DaemonID, source: inv.Source}, collectNamed: true, namedReadOnly: true, broker: broker}
+	c.options.profile = profile
 	state.coordination = c
 	err = c.prepare(ctx, opts, cfg, inv.Operation, inv.Pull)
 	if c.target != nil {
-		r.Target = &preflight.Target{Engine: "docker", EndpointDigest: operation.Digest(inv.Socket), QualifiedIdentityDigest: "sha256:" + c.target.Identity()}
+		r.Target = &preflight.Target{Engine: c.target.Engine(), EndpointDigest: operation.Digest(inv.Socket), QualifiedIdentityDigest: "sha256:" + c.target.Identity()}
 		r.Stack = inv.Stack
+		if broker != nil {
+			r.Target.EndpointDigest = broker.Scope().EndpointDigest
+		}
 	}
 	if c.namedStateAttempted {
 		r.CoordinationEffects = "unknown"
@@ -231,17 +262,32 @@ func runNamedPreview(ctx context.Context, args []string, out io.Writer) error {
 	if err != nil {
 		return fail(1, "failed", "PREFLIGHT_UNAVAILABLE")
 	}
-	_, selection, err := produceNamedCapture(ctx, inv, &effective, c.namedInventory, *r.Target, scope)
+	var selection preflight.Selection
+	var selectionDigest string
+	if broker == nil {
+		_, selection, err = produceNamedCapture(ctx, inv, &effective, c.namedInventory, *r.Target, scope)
+		if err == nil {
+			selectionDigest, err = selection.Digest()
+		}
+	} else {
+		var capture *namedCapture
+		var selected preflight.BrokerSelection
+		capture, selected, err = produceBrokerCapture(ctx, inv, &effective, c.namedInventory, *r.Target, scope, broker)
+		selection = selected.Named
+		if err == nil {
+			selectionDigest, err = selected.Digest()
+		}
+		if err == nil && planOut != nil {
+			*planOut = cloneNamedPlan(capture.upPlan)
+		}
+	}
 	if errors.Is(err, config.ErrSecretUnavailable) {
 		return fail(1, "failed", "SECRET_UNAVAILABLE")
 	}
 	if err != nil {
 		return fail(1, "failed", "PREFLIGHT_UNAVAILABLE")
 	}
-	selectionDigest, err := selection.Digest()
-	if err != nil {
-		return fail(1, "failed", "PREFLIGHT_UNAVAILABLE")
-	}
+
 	r.InputDigest = &selection.InputDigest
 	r.SelectionDigest = &selectionDigest
 	r.Resources = selection.Resources

@@ -30,7 +30,7 @@ func validDeploymentStatus(r deploymentStatus) bool {
 	case "pending", "unknown":
 		return r.Effects == "unknown" && r.OperationID == ""
 	case "succeeded":
-		return r.Effects == "complete" && r.OperationID != ""
+		return (r.Effects == "complete" || r.Effects == "none") && r.OperationID != ""
 	case "failed":
 		return r.Effects == "none" || (r.Effects == "partial" && r.OperationID != "")
 	}
@@ -39,6 +39,7 @@ func validDeploymentStatus(r deploymentStatus) bool {
 
 type applyEndpoint struct {
 	previewEndpoint
+	broker  *brokerEndpoint
 	history *deploymentHistory
 	down    func(context.Context, string, string) (preflight.Result, error)
 	apply   func(context.Context, string, string, string, string, string, operation.ManagedExpectation) (deploymentStatus, []operation.ManagedResource)
@@ -66,6 +67,10 @@ func (h *applyEndpoint) review(w http.ResponseWriter, r *http.Request) {
 	stack := fields["stack"]
 	if !ok || !validDeployStack(stack) {
 		http.Error(w, "invalid preview request", 400)
+		return
+	}
+	if h.history.brokerProtected(stack) {
+		http.Error(w, "broker review required", 409)
 		return
 	}
 	previous, mode := h.history.managed(stack)
@@ -111,6 +116,14 @@ const (
 )
 
 func (h *applyEndpoint) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	if strings.HasPrefix(r.URL.Path, "/v1/broker-secrets/") {
+		if h.broker == nil {
+			http.NotFound(w, r)
+		} else {
+			h.broker.ServeHTTP(w, r)
+		}
+		return
+	}
 	journal := r.Header.Values(journalHeader)
 	fence := r.URL.Path == "/v1/deploy/fence"
 	bound := fence || r.URL.Path == "/v1/deploy/journal-apply"
@@ -186,6 +199,10 @@ func (h *applyEndpoint) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	id, stack := fields["requestId"], fields["stack"]
+	if h.history.brokerProtected(stack) {
+		http.Error(w, "broker deployment required", 409)
+		return
+	}
 	if _, exists := h.history.status(id); exists {
 		http.Error(w, "request already recorded; check operation status", http.StatusConflict)
 		return

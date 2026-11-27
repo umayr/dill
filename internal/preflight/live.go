@@ -51,8 +51,11 @@ type liveLeaf struct {
 // NOT qualify an engine, inspect prepared images, validate the whole disposable
 // profile or reserve a target. Those remain mandatory capture prerequisites.
 func ContainerDigest(stack, service, requested string, live *orchestrator.LiveConfig) (string, error) {
+	return containerDigest(stack, service, requested, live, false)
+}
+func containerDigest(stack, service, requested string, live *orchestrator.LiveConfig, broker bool) (string, error) {
 	if live != nil {
-		if _, marked := live.SystemLabels[orchestrator.SecretEnabledLabel]; marked {
+		if _, marked := live.SystemLabels[orchestrator.SecretEnabledLabel]; marked && !broker {
 			return "", config.ErrSecretUnavailable
 		}
 	}

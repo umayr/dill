@@ -15,7 +15,9 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/umayr/dill/internal/brokersecret"
 	"github.com/umayr/dill/internal/config"
+	"github.com/umayr/dill/internal/coordination"
 	"github.com/umayr/dill/internal/operation"
 	"github.com/umayr/dill/internal/orchestrator"
 	"github.com/umayr/dill/internal/plan"
@@ -23,6 +25,7 @@ import (
 )
 
 type operationState struct {
+	broker       *brokersecret.Materialized
 	recorder     *operation.Recorder
 	config       *config.DillConfig
 	declined     bool
@@ -166,6 +169,9 @@ func runOperation(ctx context.Context, args []string) error {
 }
 
 func runOperationWithOwnership(ctx context.Context, args []string, managed *operation.ManagedExpectation) error {
+	return runOperationScoped(ctx, args, managed, nil, nil, os.Stdout)
+}
+func runOperationScoped(ctx context.Context, args []string, managed *operation.ManagedExpectation, broker *brokersecret.Materialized, cfgInput *config.DillConfig, out io.Writer, profiles ...*coordination.BrokerProfile) error {
 	restore := silenceSecretLogs()
 	defer restore()
 	var id [16]byte
@@ -173,12 +179,19 @@ func runOperationWithOwnership(ctx context.Context, args []string, managed *oper
 		return protocolExit{1}
 	}
 	result := operation.Result{Version: operation.Version, OperationID: "op_" + hex.EncodeToString(id[:]), Outcome: "invalid_input", Effects: "none", Resources: []operation.Resource{}, Errors: []operation.Error{}}
-	state := &operationState{recorder: &operation.Recorder{}, managed: managed}
+	state := &operationState{recorder: &operation.Recorder{}, managed: managed, broker: broker, config: cfgInput}
 	defer state.release()
 	emit := func(code int, errorCode, message string) error {
-		return emitOperationResult(os.Stdout, state, &result, code, errorCode, message)
+		return emitOperationResult(out, state, &result, code, errorCode, message)
+	}
+	profile, profileErr := scopedBrokerProfile(broker, profiles)
+	if profileErr != nil {
+		return emit(2, "INVALID_TARGET", "Invalid broker profile.")
 	}
 	bound := namedBindingIntent(args)
+	if broker != nil && (!bound || cfgInput == nil || managed == nil || !managed.Valid() || len(args) == 0 || args[0] != "up") {
+		return emit(2, "INVALID_ARGUMENTS", "Invalid broker operation.")
+	}
 	if (!bound && secretInvocation(args)) || (bound && namedSecretIntent(args)) {
 		result.Outcome = "failed"
 		return emit(1, "SECRET_UNAVAILABLE", "Secret configuration or source unavailable.")
@@ -187,6 +200,9 @@ func runOperationWithOwnership(ctx context.Context, args []string, managed *oper
 	if bound {
 		var reason string
 		namedInvocation, reason = preflight.ParseInvocation(args, true)
+		if broker != nil {
+			namedInvocation, reason = preflight.ParseBrokerInvocation(args, true)
+		}
 		if reason != "" {
 			return emit(2, "INVALID_ARGUMENTS", "Invalid operation arguments.")
 		}
@@ -212,7 +228,7 @@ func runOperationWithOwnership(ctx context.Context, args []string, managed *oper
 	noDeps := fs.Bool("no-deps", false, "omit dependencies")
 	pull := fs.String("pull", "", "pull policy override")
 	force := fs.Bool("force", false, "force image removal")
-	coordOptions := coordinationOptions{}
+	coordOptions := coordinationOptions{profile: profile}
 	coordOptions.flags(fs)
 	if bound {
 		fs.String("preflight-contract", "", "named preflight contract")
@@ -268,9 +284,12 @@ func runOperationWithOwnership(ctx context.Context, args []string, managed *oper
 		if err := coordOptions.validate(name, opts); err != nil {
 			return emit(2, "UNSUPPORTED_COORDINATION", "Unsupported qualified coordination invocation.")
 		}
-		state.coordination = &operationCoordination{options: coordOptions, collectNamed: bound}
+		state.coordination = &operationCoordination{options: coordOptions, collectNamed: bound, broker: broker}
 	}
 	result.Target = &operation.Target{Engine: opts.Engine, EndpointDigest: operation.Digest(endpoint)}
+	if broker != nil {
+		result.Target.EndpointDigest = broker.Scope().EndpointDigest
+	}
 	result.Stack = opts.StackName
 	ctx, stop := signal.NotifyContext(ctx, os.Interrupt, syscall.SIGTERM)
 	defer stop()
@@ -284,7 +303,7 @@ func runOperationWithOwnership(ctx context.Context, args []string, managed *oper
 	cfg, err := loadConfig(ctx, opts)
 	// Decoded secret grants are deliberately unsupported in this new adapter.
 	// No identifying metadata from this path is returned on failure.
-	if hasSecretGrants(cfg) || errors.Is(err, config.ErrSecretUnavailable) || (bound && cfg != nil && len(cfg.Secrets) != 0) {
+	if (broker == nil && (hasSecretGrants(cfg) || (bound && cfg != nil && len(cfg.Secrets) != 0))) || errors.Is(err, config.ErrSecretUnavailable) {
 		result.Target = nil
 		result.Stack = ""
 		result.Outcome = "failed"

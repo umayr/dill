@@ -28,6 +28,7 @@ import (
 	"github.com/containers/podman/v5/pkg/specgen"
 	specs "github.com/opencontainers/runtime-spec/specs-go"
 	"github.com/umayr/dill/internal/config"
+	"github.com/umayr/dill/internal/coordination"
 	"github.com/umayr/dill/internal/log"
 	"github.com/umayr/dill/internal/secretfile"
 )
@@ -38,19 +39,28 @@ func podmanNotFound(err error) bool {
 }
 
 type PodmanEngine struct {
-	conn           context.Context
-	socket         string
-	disposable     bool
-	preparedImages preparedImageConstraint
+	conn            context.Context
+	socket          string
+	disposable      bool
+	broker          bool
+	brokerEndpoint  string
+	qualifiedBroker *coordination.PodmanTarget
+	preparedImages  preparedImageConstraint
 }
 
 func (p *PodmanEngine) EngineName() string { return "podman" }
 
 // EnforceDisposableVolumes is configured before concurrent deployment begins.
-func (p *PodmanEngine) EnforceDisposableVolumes() error { p.disposable = true; return nil }
+func (p *PodmanEngine) EnforceDisposableVolumes() error {
+	if p.broker {
+		return ErrDisposableUnsupported
+	}
+	p.disposable = true
+	return nil
+}
 
 func (p *PodmanEngine) EnforcePreparedImages(images map[string]PreparedImage) error {
-	if !p.disposable {
+	if !p.disposable && !p.broker {
 		return ErrDisposableUnavailable
 	}
 	return p.preparedImages.install(images)
@@ -182,11 +192,17 @@ func (p *PodmanEngine) startService(ctx context.Context, name string, svc *confi
 		return "", ErrPrivilegeDenied
 	}
 	image, constrained, err := p.preparedImages.resolve(name, svc.Image)
-	if err != nil || (constrained && !p.disposable) {
+	if err != nil || (constrained && !p.disposable && !p.broker) {
 		return "", ErrDisposableUnavailable
 	}
-	if p.disposable {
-		if err := ValidateDisposableConfig(&config.DillConfig{Services: map[string]*config.Service{name: svc}}); err != nil {
+	if p.disposable || p.broker {
+		var profileErr error
+		if p.broker {
+			profileErr = validateBrokerService(svc)
+		} else {
+			profileErr = ValidateDisposableConfig(&config.DillConfig{Services: map[string]*config.Service{name: svc}})
+		}
+		if err := profileErr; err != nil {
 			return "", err
 		}
 		id, volumes, err := p.DisposableImage(ctx, image)
@@ -228,6 +244,7 @@ func (p *PodmanEngine) startService(ctx context.Context, name string, svc *confi
 	}
 
 	s := specgen.NewSpecGenerator(image, false)
+	applyBrokerPodmanNamespace(ctx, s)
 	if svc.Privileged {
 		yes := true
 		s.Privileged = &yes
@@ -256,6 +273,7 @@ func (p *PodmanEngine) startService(ctx context.Context, name string, svc *confi
 	if len(secrets) > 0 {
 		s.Labels[SecretEnabledLabel] = "true"
 	}
+	applyBrokerLabels(ctx, s.Labels)
 	for k, v := range svc.Labels {
 		s.Labels[k] = v
 	}
@@ -604,7 +622,7 @@ func (p *PodmanEngine) Logs(ctx context.Context, name string, logOpts LogOptions
 }
 
 func (p *PodmanEngine) InspectConfig(ctx context.Context, name string) (*LiveConfig, error) {
-	data, err := containers.Inspect(p.operationContext(ctx), name, nil)
+	data, err := p.inspectConfigData(ctx, name)
 	if err != nil {
 		if podmanNotFound(err) {
 			return nil, fmt.Errorf("%w: %s", ErrNotFound, name)
@@ -833,7 +851,7 @@ func (p *PodmanEngine) RemoveImage(ctx context.Context, image string, force bool
 // EnsureVolume creates a stack-owned volume with dill labels if it does not
 // exist. Existing volumes (including Compose-created ones) are left untouched.
 func (p *PodmanEngine) EnsureVolume(ctx context.Context, name, stackName string) error {
-	if p.disposable {
+	if p.disposable || p.broker {
 		if stackName == "" || name == "" {
 			return ErrDisposableOwnership
 		}
