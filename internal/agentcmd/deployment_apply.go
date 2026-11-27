@@ -34,7 +34,7 @@ func validDeploymentStatus(r deploymentStatus) bool {
 	case "pending", "unknown":
 		return r.Effects == "unknown" && r.OperationID == ""
 	case "succeeded":
-		return (r.Effects == "complete" || (validLifecycleAction(r.Action) && r.Effects == "none")) && r.OperationID != ""
+		return (r.Effects == "complete" || r.Effects == "none") && r.OperationID != ""
 	case "failed":
 		return r.Effects == "none" || (r.Effects == "partial" && r.OperationID != "")
 	}
@@ -43,6 +43,7 @@ func validDeploymentStatus(r deploymentStatus) bool {
 
 type applyEndpoint struct {
 	previewEndpoint
+	broker           *brokerEndpoint
 	history          *deploymentHistory
 	down             func(context.Context, string, string) (preflight.Result, error)
 	apply            func(context.Context, string, string, string, string, string, operation.ManagedExpectation) (deploymentStatus, []operation.ManagedResource)
@@ -74,7 +75,11 @@ func (h *applyEndpoint) review(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "invalid preview request", 400)
 		return
 	}
-	previous, mode := h.history.managed(stack)
+	previous, mode, plain := h.history.managedPlain(stack)
+	if !plain {
+		http.Error(w, "broker review required", 409)
+		return
+	}
 	stage, manifest, preview := fields["stageId"], fields["manifestSha256"], h.preview
 	if remove {
 		if mode != "update" || h.down == nil {
@@ -117,6 +122,14 @@ const (
 )
 
 func (h *applyEndpoint) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	if strings.HasPrefix(r.URL.Path, "/v1/broker-secrets/") {
+		if h.broker == nil {
+			http.NotFound(w, r)
+		} else {
+			h.broker.ServeHTTP(w, r)
+		}
+		return
+	}
 	journal := r.Header.Values(journalHeader)
 	checked := r.URL.Path == "/v1/deploy/checked-apply"
 	fence := r.URL.Path == "/v1/deploy/fence"
@@ -209,11 +222,15 @@ func (h *applyEndpoint) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	id, stack := fields["requestId"], fields["stack"]
+	previous, mode, plain := h.history.managedPlain(stack)
+	if !plain {
+		http.Error(w, "broker deployment required", 409)
+		return
+	}
 	if _, exists := h.history.status(id); exists {
 		http.Error(w, "request already recorded; check operation status", http.StatusConflict)
 		return
 	}
-	previous, mode := h.history.managed(stack)
 	stage, manifest, preview := fields["stageId"], fields["manifestSha256"], h.preview
 	if remove && mode == "update" && previous.RequestID == fields["priorRequestId"] {
 		mode, stage, manifest, preview = "remove", previous.StageID, previous.Manifest, h.down

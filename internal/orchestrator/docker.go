@@ -24,6 +24,7 @@ import (
 	"github.com/docker/docker/pkg/stdcopy"
 	"github.com/docker/go-connections/nat"
 	"github.com/umayr/dill/internal/config"
+	"github.com/umayr/dill/internal/coordination"
 	"github.com/umayr/dill/internal/log"
 	"github.com/umayr/dill/internal/secretfile"
 )
@@ -31,16 +32,25 @@ import (
 type DockerEngine struct {
 	cli            *client.Client
 	disposable     bool
+	broker         bool
+	brokerEndpoint string
+	brokerTarget   *coordination.Target
 	preparedImages preparedImageConstraint
 }
 
 func (d *DockerEngine) EngineName() string { return "docker" }
 
 // EnforceDisposableVolumes is configured before concurrent deployment begins.
-func (d *DockerEngine) EnforceDisposableVolumes() error { d.disposable = true; return nil }
+func (d *DockerEngine) EnforceDisposableVolumes() error {
+	if d.broker {
+		return ErrDisposableUnsupported
+	}
+	d.disposable = true
+	return nil
+}
 
 func (d *DockerEngine) EnforcePreparedImages(images map[string]PreparedImage) error {
-	if !d.disposable {
+	if !d.disposable && !d.broker {
 		return ErrDisposableUnavailable
 	}
 	return d.preparedImages.install(images)
@@ -236,11 +246,17 @@ func (d *DockerEngine) startService(ctx context.Context, name string, svc *confi
 		return "", ErrPrivilegeDenied
 	}
 	image, constrained, err := d.preparedImages.resolve(name, svc.Image)
-	if err != nil || (constrained && !d.disposable) {
+	if err != nil || (constrained && !d.disposable && !d.broker) {
 		return "", ErrDisposableUnavailable
 	}
-	if d.disposable {
-		if err := ValidateDisposableConfig(&config.DillConfig{Services: map[string]*config.Service{name: svc}}); err != nil {
+	if d.disposable || d.broker {
+		var profileErr error
+		if d.broker {
+			profileErr = validateBrokerService(svc)
+		} else {
+			profileErr = ValidateDisposableConfig(&config.DillConfig{Services: map[string]*config.Service{name: svc}})
+		}
+		if err := profileErr; err != nil {
 			return "", err
 		}
 		id, volumes, err := d.DisposableImage(ctx, image)
@@ -353,6 +369,7 @@ func (d *DockerEngine) startService(ctx context.Context, name string, svc *confi
 	if len(secrets) > 0 {
 		labels[SecretEnabledLabel] = "true"
 	}
+	applyBrokerLabels(ctx, labels)
 	for k, v := range svc.Labels {
 		labels[k] = v
 	}
@@ -785,12 +802,12 @@ func (d *DockerEngine) RemoveImage(ctx context.Context, image string, force bool
 // EnsureVolume creates a stack-owned volume with dill labels if it does not
 // exist. Existing volumes (including Compose-created ones) are left untouched.
 func (d *DockerEngine) EnsureVolume(ctx context.Context, name, stackName string) error {
-	if d.disposable && (stackName == "" || name == "") {
+	if (d.disposable || d.broker) && (stackName == "" || name == "") {
 		return ErrDisposableOwnership
 	}
 	live, err := d.cli.VolumeInspect(ctx, name)
 	if err == nil {
-		if d.disposable {
+		if d.disposable || d.broker {
 			if live.Name != name {
 				return ErrDisposableUnavailable
 			}
@@ -799,7 +816,7 @@ func (d *DockerEngine) EnsureVolume(ctx context.Context, name, stackName string)
 		return nil
 	}
 	if !client.IsErrNotFound(err) {
-		if d.disposable {
+		if d.disposable || d.broker {
 			return ErrDisposableUnavailable
 		}
 		return err
@@ -812,12 +829,12 @@ func (d *DockerEngine) EnsureVolume(ctx context.Context, name, stackName string)
 		},
 	})
 	if err != nil {
-		if d.disposable {
+		if d.disposable || d.broker {
 			return ErrDisposableUnavailable
 		}
 		return fmt.Errorf("creating volume %s: %w", name, err)
 	}
-	if d.disposable {
+	if d.disposable || d.broker {
 		if live.Name != name {
 			return ErrDisposableUnavailable
 		}

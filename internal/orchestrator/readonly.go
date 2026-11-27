@@ -5,6 +5,7 @@ import (
 	"errors"
 	"io"
 
+	"github.com/umayr/dill/internal/brokersecret"
 	"github.com/umayr/dill/internal/config"
 )
 
@@ -17,6 +18,16 @@ var ErrReadOnlyEngine = errors.New("engine mutation unavailable during read-only
 func DenyMutations(engine Engine) Engine { return &readOnlyEngine{Engine: engine} }
 
 type readOnlyEngine struct{ Engine }
+
+func (e *readOnlyEngine) EnforceBrokerResources(cfg *config.DillConfig, m *brokersecret.Materialized) error {
+	if p, ok := e.Engine.(BrokerResourceEnforcer); ok {
+		return p.EnforceBrokerResources(cfg, m)
+	}
+	return brokersecret.ErrUnsupported
+}
+func (*readOnlyEngine) StartServiceBroker(context.Context, string, *config.Service, string, *config.DillConfig, *brokersecret.Materialized) (string, error) {
+	return "", ErrReadOnlyEngine
+}
 
 func (*readOnlyEngine) PullImage(context.Context, string, io.Writer) error { return ErrReadOnlyEngine }
 func (*readOnlyEngine) StartService(context.Context, string, *config.Service, string) (string, error) {

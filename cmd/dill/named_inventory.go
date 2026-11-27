@@ -8,6 +8,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/umayr/dill/internal/brokersecret"
 	"github.com/umayr/dill/internal/config"
 	"github.com/umayr/dill/internal/orchestrator"
 	"github.com/umayr/dill/internal/preflight"
@@ -44,6 +45,18 @@ func cloneNamedLive(live *orchestrator.LiveConfig) *orchestrator.LiveConfig {
 // qualified connection. No engine mutator is called. A missing capability,
 // contradictory list/inspect pair, or incomplete SDK projection fails closed.
 func (n *namedInventory) complete(ctx context.Context, engine orchestrator.Engine, cfg *config.DillConfig) error {
+	return n.completeMode(ctx, engine, cfg, nil)
+}
+func (n *namedInventory) completeBroker(ctx context.Context, engine orchestrator.Engine, cfg *config.DillConfig, m *brokersecret.Materialized) error {
+	if m == nil {
+		return brokersecret.ErrUnavailable
+	}
+	if _, _, err := m.References(cfg, false); err != nil {
+		return err
+	}
+	return n.completeMode(ctx, engine, cfg, m)
+}
+func (n *namedInventory) completeMode(ctx context.Context, engine orchestrator.Engine, cfg *config.DillConfig, broker *brokersecret.Materialized) error {
 	bad := errNamedCaptureUnavailable
 	if n == nil || cfg == nil || !preflight.ValidName(n.stack) || len(n.containers) != len(cfg.Services) {
 		return bad
@@ -71,7 +84,13 @@ func (n *namedInventory) complete(ctx context.Context, engine orchestrator.Engin
 		}
 		delete(listed, name)
 		if live != nil {
-			if _, err := preflight.ContainerDigest(n.stack, service, name, live); err != nil {
+			var err error
+			if broker == nil {
+				_, err = preflight.ContainerDigest(n.stack, service, name, live)
+			} else {
+				_, err = preflight.BrokerContainerDigest(n.stack, service, name, live, cfg, broker)
+			}
+			if err != nil {
 				return err
 			}
 		}
@@ -126,7 +145,9 @@ func (n *namedInventory) complete(ctx context.Context, engine orchestrator.Engin
 		}
 		delete(want, key)
 		if fact.Exists {
-			if fact.Kind == "network" {
+			if broker != nil {
+				_, err = preflight.BrokerResourceDigest(cfg.Engine, n.stack, fact)
+			} else if fact.Kind == "network" {
 				_, err = preflight.NetworkDigest(n.stack, fact)
 			} else {
 				_, err = preflight.VolumeDigest(n.stack, fact)
@@ -155,6 +176,9 @@ func (n *namedInventory) complete(ctx context.Context, engine orchestrator.Engin
 			return bad
 		}
 		for _, mount := range live.Volumes {
+			if broker != nil && mount.Type == "bind" {
+				continue
+			} // Exact active secret binds were checked in BrokerContainerDigest.
 			volume, exists := n.resources["volume\x00"+mount.Source]
 			if !exists || !volume.Exists {
 				return bad

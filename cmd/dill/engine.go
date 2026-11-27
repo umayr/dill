@@ -26,10 +26,16 @@ func newEngine(ctx context.Context, engineName string, opts commandOptions) (orc
 	var engine orchestrator.Engine
 	if opts.operation != nil && opts.operation.coordination != nil {
 		coord := opts.operation.coordination
-		if engineName != "docker" || coord.target == nil || coord.guard == nil {
+		if coord.target == nil || coord.guard == nil || engineName != coord.target.Engine() || (coord.broker == nil && engineName != "docker") {
 			return nil, usageError{"qualified target is not initialized"}
 		}
-		engine, err = orchestrator.NewDockerEngineWithClient(coordination.Endpoint, coord.target.Client())
+		if coord.broker == nil {
+			engine, err = orchestrator.NewDockerEngineWithClient(coordination.Endpoint, coord.target.Client())
+		} else if engineName == "podman" {
+			engine, err = orchestrator.NewBrokerPodmanEngine(ctx, coord.podman, opts.operation.config, coord.broker)
+		} else {
+			engine, err = orchestrator.NewBrokerDockerEngine(coord.target, opts.operation.config, coord.broker)
+		}
 		if err == nil {
 			if coord.namedReadOnly {
 				engine = orchestrator.DenyMutations(engine)

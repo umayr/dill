@@ -77,7 +77,20 @@ func runUp(ctx context.Context, opts commandOptions, args []string) (retErr erro
 }
 
 func runUpConfig(ctx context.Context, opts commandOptions, cfg *config.DillConfig, names []string, noDeps bool, pullPolicy string, open func(context.Context, *config.DillConfig) (orchestrator.Engine, error)) (retErr error) {
-	if requiresSecretPreflight(opts, cfg) || opts.secretMode() {
+	// Broker evidence is supplied only by the new private qualified dispatcher;
+	// ordinary and retired invocations never obtain this in-process capability.
+	var brokerAllowed bool
+	if opts.operation != nil && opts.operation.coordination != nil && opts.operation.coordination.broker != nil {
+		c := opts.operation.coordination
+		if c.session == nil || opts.operation.named == nil || !opts.operation.named.compared {
+			return errNamedCaptureUnavailable
+		}
+		if _, _, err := c.broker.References(cfg, true); err != nil {
+			return err
+		}
+		brokerAllowed = true
+	}
+	if opts.secretMode() || (requiresSecretPreflight(opts, cfg) && !brokerAllowed) {
 		return config.ErrSecretUnavailable
 	}
 	if opts.AlphaDisposable {

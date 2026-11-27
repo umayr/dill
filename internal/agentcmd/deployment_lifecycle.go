@@ -40,7 +40,11 @@ func (h *applyEndpoint) serveLifecycle(w http.ResponseWriter, r *http.Request, a
 		return
 	}
 	stack := fields["stack"]
-	previous, mode := h.history.managed(stack)
+	previous, mode, plain := h.history.managedPlain(stack)
+	if !plain {
+		http.Error(w, "broker review required", http.StatusConflict)
+		return
+	}
 	if mode != "update" || previous.RequestID == "" {
 		http.Error(w, "managed deployment unavailable or uncertain", 409)
 		return

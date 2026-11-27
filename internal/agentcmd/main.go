@@ -19,6 +19,8 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/umayr/dill/internal/brokersecret"
+	"github.com/umayr/dill/internal/coordination"
 	"github.com/umayr/dill/internal/hostagent"
 	"github.com/umayr/dill/internal/operation"
 	"github.com/umayr/dill/internal/preflight"
@@ -184,6 +186,8 @@ func serveAgent(args []string, out, diagnostics io.Writer, combined bool) error 
 	previewState := fs.String("https-preview-state", "", "opt-in trusted-project deployment preview with this shared native Docker coordination state")
 	previewPkl := fs.String("https-preview-pkl", "", "absolute operator-managed Pkl executable for deployment preview")
 	applyState := fs.String("https-apply-state", "", "opt-in checked stack creation; separate private operation history directory")
+	brokerProfile := fs.String("https-broker-profile", "", "private broker operator profile bound to the existing Docker monitor enrollment")
+	brokerStore := fs.String("https-broker-store", "", "opt-in existing qualified Linux broker generation store; requires checked apply and explicit broker deploy grants")
 	engine := fs.String("engine-socket", "", "absolute Docker Unix socket path")
 	engineID := fs.String("engine-id", "", "enrolled engine UUID")
 	daemon := fs.String("daemon-id", "", "enrolled Docker daemon ID")
@@ -199,8 +203,14 @@ func serveAgent(args []string, out, diagnostics io.Writer, combined bool) error 
 	if len(deployGrants) != 0 && *stagingRoot == "" {
 		return errors.New("HTTPS deploy grants require HTTPS staging configuration")
 	}
-	if err := checkDeployGrantBackends(deployGrants, *stagingRoot != "", *previewState != "" && *previewPkl != "", *applyState != "" && *previewState != "" && *previewPkl != ""); err != nil {
-		return err
+	hasBrokerGrant := false
+	for name := range deployGrants {
+		if strings.HasPrefix(name, "broker-") {
+			hasBrokerGrant = true
+		}
+	}
+	if hasBrokerGrant && *brokerStore == "" {
+		return errors.New("broker grants require --https-broker-store")
 	}
 	var previewExecutable string
 	if *previewState != "" || *previewPkl != "" {
@@ -222,6 +232,40 @@ func serveAgent(args []string, out, diagnostics io.Writer, combined bool) error 
 	if *applyState != "" && (previewExecutable == "" || !filepath.IsAbs(*applyState) || filepath.Clean(*applyState) != *applyState ||
 		!separateDeploymentHistory(*applyState, historyPeers...)) {
 		return errors.New("deployment apply requires preview and a separate absolute private operation history directory")
+	}
+	var brokerProfileTarget, brokerProfileEndpoint string
+	if *brokerProfile != "" {
+		if *brokerStore == "" {
+			return errors.New("broker profile requires --https-broker-store")
+		}
+		target, endpoint, err := httpsBrokerProfile(*brokerProfile, *engine, *daemon)
+		if err != nil {
+			return err
+		}
+		brokerProfileTarget, brokerProfileEndpoint = target, endpoint
+	}
+	if *brokerStore != "" {
+		if *applyState == "" || previewExecutable == "" || !filepath.IsAbs(*brokerStore) || filepath.Clean(*brokerStore) != *brokerStore {
+			return errors.New("broker delivery requires Linux combined Dill, checked apply and an absolute existing broker store")
+		}
+		for _, p := range []string{*applyState, *previewState, *stagingRoot, *stagingCatalog, *httpsDir} {
+			if p != "" && (*brokerStore == p || strings.HasPrefix(*brokerStore, p+string(os.PathSeparator)) || strings.HasPrefix(p, *brokerStore+string(os.PathSeparator))) {
+				return errors.New("broker runtime store must be separate from other agent state")
+			}
+		}
+		if _, err := readPrivateHTTPSFile(filepath.Join(*applyState, "operations.json"), historyByteLimit); err != nil {
+			return errors.New("broker delivery requires an existing deployment journal; missing state cannot be recreated")
+		}
+		store, err := brokersecret.Open(*brokerStore)
+		if err != nil {
+			return errors.New("broker runtime store unavailable; provision explicitly, never reset used state")
+		}
+		if store.Close() != nil {
+			return errors.New("broker runtime store release failed")
+		}
+	}
+	if err := checkDeployGrantBackends(deployGrants, *stagingRoot != "", *previewState != "" && *previewPkl != "", *applyState != "" && *previewState != "" && *previewPkl != ""); err != nil {
+		return err
 	}
 	if *httpsDir != "" {
 		if *httpsListen == "" || *httpsCert != "" || *httpsKey != "" || *httpsToken != "" || *key != "" {
@@ -309,7 +353,7 @@ func serveAgent(args []string, out, diagnostics io.Writer, combined bool) error 
 				backend := previewEndpoint{stager, cliPreview(previewExecutable, *previewPkl, socket, *daemon, *previewState)}
 				preview = backend
 				if *applyState != "" {
-					history, err := openDeploymentHistory(*applyState, operation.Digest("dill-agent-deployment/1\x00"+socket+"\x00"+*daemon+"\x00"+*engineID))
+					history, err := openDeploymentHistory(*applyState, operation.Digest("dill-agent-deployment/1\x00"+socket+"\x00"+*daemon+"\x00"+*engineID), *brokerStore != "")
 					if err != nil {
 						return err
 					}
@@ -322,6 +366,19 @@ func serveAgent(args []string, out, diagnostics io.Writer, combined bool) error 
 					for _, action := range []string{"start", "stop", "restart"} {
 						endpoint.lifecyclePreview[action] = cliPreviewFor(action, previewExecutable, *previewPkl, socket, *daemon, *previewState)
 						endpoint.lifecycleApply[action] = cliApplyFor(action, previewExecutable, *previewPkl, socket, *daemon, *previewState)
+					}
+					if *brokerStore != "" {
+						id, err := coordination.DockerIdentity(*daemon)
+						if err != nil {
+							return err
+						}
+						cli := brokerCLI{exe: previewExecutable, pkl: *previewPkl, socket: *engine, daemon: *daemon, state: *previewState, store: *brokerStore, profile: *brokerProfile, engine: "docker"}
+						endpoint.broker = &brokerEndpoint{stages: stager, history: history, slot: endpoint.slot, target: "sha256:" + id, endpoint: brokersecret.Digest([]byte(socket)), requirements: cli.requirements, prepare: cli.prepare, retire: cli.retire, review: cli.review, apply: cli.apply}
+						if *brokerProfile != "" {
+							endpoint.broker.target = brokerProfileTarget
+							endpoint.broker.endpoint = brokerProfileEndpoint
+							endpoint.broker.engine = "docker"
+						}
 					}
 					apply = endpoint
 				}

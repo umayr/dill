@@ -167,8 +167,8 @@ func parseOfflineDeploymentJournal(raw []byte) (deploymentHistoryFile, error) {
 	dec := json.NewDecoder(bytes.NewReader(raw))
 	dec.DisallowUnknownFields()
 	if dec.Decode(&file) != nil || dec.Decode(new(any)) != io.EOF || file.Rows == nil || !preflight.ValidDigest(file.Target) ||
-		(file.Version != 1 && file.Version != 2) || (file.Version == 1 && len(file.Rows) > legacyHistoryLimit) ||
-		((file.Version == 2 || file.Journal != "") && !validApplyID(file.Journal)) {
+		(file.Version != 1 && file.Version != 2 && file.Version != 3) || (file.Version == 1 && len(file.Rows) > legacyHistoryLimit) ||
+		((file.Version >= 2 || file.Journal != "") && !validApplyID(file.Journal)) {
 		return deploymentHistoryFile{}, errJournalStatusInvalid
 	}
 	canonical, err := canonicalHistory(file)
@@ -179,7 +179,7 @@ func parseOfflineDeploymentJournal(raw []byte) (deploymentHistoryFile, error) {
 	seen := make(map[string]bool, len(file.Rows))
 	latest := make(map[string]deploymentRecord)
 	for _, r := range file.Rows {
-		if seen[r.RequestID] || !(validDeploymentRecord(r) || file.Version == 2 && validCompactRecord(r)) ||
+		if (r.Broker != nil && file.Version < 3) || seen[r.RequestID] || !(validDeploymentRecord(r) || file.Version >= 2 && validCompactRecord(r)) ||
 			(r.Mode != "fence" && !allowedDeploymentMode(recordNextMode(latest[r.Stack]), r.Mode)) {
 			return deploymentHistoryFile{}, errJournalStatusInvalid
 		}

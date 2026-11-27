@@ -265,10 +265,17 @@ func (r Resource) validate(operation, stack string) error {
 // Validate checks producer-side invariants. It is not a permissive JSON decoder:
 // consumers must separately reject missing/null/duplicate/unknown wire keys.
 func (r Result) Validate(exit int) error {
+	return r.validateMode(exit, false)
+}
+
+// ValidateBroker is only for the separately authorized broker envelope.
+func (r Result) ValidateBroker(exit int) error { return r.validateMode(exit, true) }
+func (r Result) validateMode(exit int, broker bool) error {
+	targetOK := r.Target.Valid() || (broker && r.Target != nil && r.Target.Engine == "podman" && ValidDigest(r.Target.EndpointDigest) && ValidDigest(r.Target.QualifiedIdentityDigest))
 	if r.Version != Version || !operationIDPattern.MatchString(r.OperationID) || r.EngineEffects != "none" {
 		return errors.New("invalid preflight envelope")
 	}
-	if r.Target != nil && !r.Target.Valid() {
+	if r.Target != nil && !targetOK {
 		return errors.New("unqualified preflight target")
 	}
 	if r.Operation != "" && !SupportedOperation(r.Operation) {
@@ -299,7 +306,7 @@ func (r Result) Validate(exit int) error {
 		return errors.New("invalid preflight overflow marker")
 	}
 	if r.Outcome == "succeeded" {
-		if exit != 0 || !SupportedOperation(r.Operation) || !r.Target.Valid() || !ValidName(r.Stack) || r.CoordinationEffects != "written" || r.ResourcesTruncated || len(r.Errors) != 0 || r.InputDigest == nil || r.SelectionDigest == nil || !ValidDigest(*r.InputDigest) || !ValidDigest(*r.SelectionDigest) {
+		if exit != 0 || !SupportedOperation(r.Operation) || !targetOK || !ValidName(r.Stack) || r.CoordinationEffects != "written" || r.ResourcesTruncated || len(r.Errors) != 0 || r.InputDigest == nil || r.SelectionDigest == nil || !ValidDigest(*r.InputDigest) || !ValidDigest(*r.SelectionDigest) {
 			return errors.New("incomplete preflight success")
 		}
 		for _, resource := range r.Resources {
@@ -335,8 +342,13 @@ func (r Result) Validate(exit int) error {
 // the byte-limit decision before durable terminal publication. Only emit these
 // bytes after all required finalization succeeds; otherwise withdraw and emit
 // a separately bounded fixed failure, preserving any durable terminal fact.
-func (r Result) Buffer(exit int) ([]byte, error) {
-	if err := r.Validate(exit); err != nil {
+func (r Result) Buffer(exit int) ([]byte, error) { return r.bufferMode(exit, false) }
+
+// BufferBroker preserves the same bounded serialization with broker-only target
+// validation. Ordinary stdout cannot authorize Podman by calling Buffer.
+func (r Result) BufferBroker(exit int) ([]byte, error) { return r.bufferMode(exit, true) }
+func (r Result) bufferMode(exit int, broker bool) ([]byte, error) {
+	if err := r.validateMode(exit, broker); err != nil {
 		return nil, err
 	}
 	b, err := json.Marshal(r)

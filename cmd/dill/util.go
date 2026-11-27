@@ -199,7 +199,14 @@ func resolveStackNameWithOptions(cfg *config.DillConfig, opts commandOptions) st
 
 func loadConfig(ctx context.Context, opts commandOptions) (result *config.DillConfig, retErr error) {
 	if opts.operation != nil && opts.operation.config != nil {
-		if opts.secretMode() || hasSecretGrants(opts.operation.config) {
+		if opts.secretMode() {
+			return nil, config.ErrSecretUnavailable
+		}
+		if opts.operation.broker != nil {
+			if _, _, err := opts.operation.broker.References(opts.operation.config, false); err != nil {
+				return nil, err
+			}
+		} else if hasSecretGrants(opts.operation.config) {
 			return nil, config.ErrSecretUnavailable
 		}
 		return opts.operation.config, nil

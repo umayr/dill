@@ -42,18 +42,31 @@ func bindNamedOperation(ctx context.Context, opts commandOptions, cfg *config.Di
 	if err != nil {
 		return errNamedCaptureUnavailable
 	}
-	target := preflight.Target{Engine: "docker", EndpointDigest: operation.Digest(inv.Socket), QualifiedIdentityDigest: "sha256:" + c.target.Identity()}
-	capture, selection, err := produceNamedCapture(ctx, inv, &effective, c.namedInventory, target, scope)
+	target := preflight.Target{Engine: c.target.Engine(), EndpointDigest: operation.Digest(inv.Socket), QualifiedIdentityDigest: "sha256:" + c.target.Identity()}
+	var capture *namedCapture
+	var selection preflight.Selection
+	var digest string
+	if c.broker == nil {
+		capture, selection, err = produceNamedCapture(ctx, inv, &effective, c.namedInventory, target, scope)
+		if err == nil {
+			digest, err = selection.Digest()
+		}
+	} else {
+		target.EndpointDigest = c.broker.Scope().EndpointDigest
+		var brokerSelection preflight.BrokerSelection
+		capture, brokerSelection, err = produceBrokerCapture(ctx, inv, &effective, c.namedInventory, target, scope, c.broker)
+		selection = brokerSelection.Named
+		if err == nil {
+			digest, err = brokerSelection.Digest()
+		}
+	}
 	if errors.Is(err, config.ErrSecretUnavailable) {
 		return err
 	}
 	if err != nil {
 		return errNamedCaptureUnavailable
 	}
-	digest, err := selection.Digest()
-	if err != nil {
-		return errNamedCaptureUnavailable
-	}
+
 	if subtle.ConstantTimeCompare([]byte(digest), []byte(inv.ExpectedPreflight)) != 1 {
 		return errNamedMismatch
 	}
@@ -76,6 +89,16 @@ func bindNamedOperation(ctx context.Context, opts commandOptions, cfg *config.Di
 	}
 	if err = enforcer.EnforcePreparedImages(images); err != nil {
 		return errNamedCaptureUnavailable
+	}
+	if c.broker != nil {
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
+		active, err := c.broker.Activate()
+		if err != nil {
+			return err
+		}
+		c.broker = active
 	}
 	capture.compared = true
 	state.named = capture
