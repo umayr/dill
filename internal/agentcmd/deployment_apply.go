@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"os/exec"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"time"
 
@@ -307,6 +308,9 @@ func cliApplyFor(lifecycle, exe, pkl, socket, daemon, state string) func(context
 			return unknown, nil
 		}
 		var result operation.Result
+		if exactManagedReceiptFields(out.buf.Bytes(), reflect.TypeOf(result)) != nil {
+			return unknown, nil
+		}
 		dec := json.NewDecoder(&out.buf)
 		dec.DisallowUnknownFields()
 		if dec.Decode(&result) != nil || dec.Decode(new(any)) != io.EOF || result.Version != operation.Version || result.Operation != action || result.Stack != stack || result.Target == nil ||
@@ -319,6 +323,9 @@ func cliApplyFor(lifecycle, exe, pkl, socket, daemon, state string) func(context
 		case err == nil && result.Outcome == "succeeded" && (result.Effects == "complete" || (validLifecycleAction(action) && result.Effects == "none")) && len(result.Errors) == 0 && (len(result.Resources) > 0 || (validLifecycleAction(action) && result.Effects == "none")) && result.ManagedResources != nil:
 			owned := *result.ManagedResources
 			if (action == "down" && len(owned) != 0) || (action != "down" && !(operation.ManagedExpectation{Mode: "update", Resources: owned}).Valid()) {
+				return unknown, nil
+			}
+			if lifecycle != "" && !sameManagedOwnership(expected.Resources, owned) {
 				return unknown, nil
 			}
 			done.State = "succeeded"
