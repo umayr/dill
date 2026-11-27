@@ -1,10 +1,14 @@
 # Direct HTTPS host agent (experimental, read-only by default)
 
-Run one agent per Docker target. The standard `dill` binary includes `dill agent`, which accepts the same arguments as the standalone `dill-agent` shown below. This mode is an alternative to the private Unix agent listener. The default HTTPS routes serve only session, inventory, inspect and logs. Staging, preview, deployment, removal, manifest and operation status require host-local opt-ins, explicit operation grants and a separate deploy bearer. Environment reveal is not available over HTTPS. Docker still uses an explicitly enrolled local Unix socket. Treat log and inspection output as potentially sensitive.
+Run one agent per Docker target. The standard `dill` binary includes `dill agent`, which accepts the same arguments as the standalone `dill-agent` shown below. This mode is an alternative to the private Unix agent listener. The default HTTPS routes serve only session, inventory, inspect, logs and capability metadata. Staging, preview, deployment, removal, manifest and operation status require host-local opt-ins, explicit operation grants and a separate deploy bearer. Environment reveal is not available over HTTPS. Docker still uses an explicitly enrolled local Unix socket. Treat log and inspection output as potentially sensitive.
 
 1. As the service account, run `dill-agent init-https --dir /absolute/new/credentials` under a trusted parent. This creates an owner-only directory with a TLS certificate/key, session signing seed, and unique bearer credential. Existing directories are never changed. If creation is interrupted, inspect the partial directory rather than reusing it blindly.
 2. Start the agent with `--https-dir /absolute/new/credentials --https-listen <private-ip>:<port>` and the normal `--engine-socket`, `--engine-id`, `--daemon-id` and `--generation` enrollment flags. Supply a literal private address; apply host firewall rules for your network and keep the credential directory and all ancestors protected. Do not run a public listener or forward the Docker socket.
 3. From a private local terminal, invoke the same command with `--print-https-pairing` appended. This prints one JSON bundle to stdout and exits without listening; **the output is a reusable secret**, not an expiring code. Copy it only through trusted local means, with the listener address entered separately in Brine. Do not log, paste into public support messages, or store the bundle in ordinary temporary files. The export records the configured engine binding; the signed session checks the actual daemon before Brine accepts it. The exact v1 bundle remains monitor-only, including when deployment is configured. The deploy credential is never part of this export.
+
+## Capability metadata
+
+`GET /v1/capabilities` requires the monitor bearer over HTTPS and returns `schema: dill.agent.capabilities.v1`, a `monitor` operation-name array and a separate `deployment_grants` array. Deployment entries require both an active configured backend and an explicit host grant; disabled backends are never advertised. Entries are metadata, not authorization: this route does not enable staging, invoke an engine, expose credentials, or let a monitor bearer use deployment routes. A deploy bearer cannot read the monitor document. The report describes configured routes, not successful workload execution or independent daemon capabilities. No endpoint is probed by executing an operation.
 
 ## Separate deployment authority
 
@@ -12,14 +16,18 @@ Provision an independent random 32-byte deploy credential out of band. Never rep
 
 | Credential | Grant | HTTPS method and route |
 | --- | --- | --- |
-| Monitor | built-in monitor | `POST /v1/session`, `/v1/inventory`, `/v1/inspect`, `/v1/logs` |
+| Monitor | built-in monitor | `POST /v1/session`, `/v1/inventory`, `/v1/inspect`, `/v1/logs`; `GET /v1/capabilities` |
 | Deploy | `stage` | `POST /v1/snapshots` |
 | Deploy | `manifest` | `GET /v1/snapshots/{id}` |
 | Deploy | `preview` | `POST /v1/deploy/preview` |
 | Deploy | `apply` | `POST /v1/deploy/apply` |
 | Deploy | `journal-apply` | `POST /v1/deploy/journal-apply` |
+| Deploy | `checked-apply` | `POST /v1/deploy/checked-apply` (journal-bound exact-predecessor update only) |
 | Deploy | `remove-preview` | `POST /v1/deploy/remove-preview` |
 | Deploy | `remove` | `POST /v1/deploy/remove` |
+| Deploy | `start-preview`, `stop-preview`, `restart-preview` (separate grants) | `POST /v1/deploy/{action}-preview` |
+| Deploy | `start`, `stop`, `restart` (separate grants) | `POST /v1/deploy/{action}` |
+| Deploy | `journal` | `GET /v1/deploy/journal` (read-only current opaque journal ID) |
 | Deploy | `status` | `GET /v1/deploy/operations/{requestId}` |
 | Deploy | `fence` | `POST /v1/deploy/fence` |
 
@@ -46,6 +54,30 @@ Authenticated `POST /v1/deploy/preview` accepts exactly `stageId`, `manifestSha2
 Configure `--https-apply-state /absolute/private/operations` on the combined agent to make the journal-backed routes available for explicit grants. It must be a separate existing owner-only directory, with trusted stable ancestors. Keep it, the staging roots, and the shared CLI coordination state durable. Never remove or recreate state to clear an uncertain outcome. One agent process owns the history directory. The journal retains every request ID and result. It compacts superseded snapshot references and resource IDs without dropping live ownership, removal tombstones or unresolved intent. Existing compatible histories upgrade in place; do not downgrade or replace the upgraded journal with an older copy. At 90% of the 16 MiB journal limit, deployment responses advertise `X-Dill-Journal-Capacity: low`; admission and fencing fail closed with HTTP 507 when space is exhausted. Existing status remains readable. Keep disk headroom for the atomic replacement and do not delete history to make room. The earlier experimental create-only history did not record exact ownership and cannot be used with this format; it is not an adoption path.
 
 `POST /v1/deploy/apply` accepts the exact preview's `stageId`, `manifestSha256`, `stack`, and `selectionDigest`, a 32-character lowercase hexadecimal `requestId`, and `confirm: "create"` or `"update"` as advertised by the preview. The agent checks the snapshot and preview, saves intent, and runs checked `dill operation up` with the same coordination state as cooperating CLI callers. Creation requires all selected resources to be absent. An update requires exact recorded immutable container and network IDs. It may add containers but cannot omit managed containers or attach existing volumes (Docker volume names can be reused). No operation falls back to the legacy executor or adopts resources.
+
+### Managed lifecycle (new paired protocol; not in 0.11.0)
+
+`POST /v1/deploy/checked-apply` requires a separate `checked-apply` grant, the exact journal header, and the standard apply fields plus `priorRequestId`. Only `confirm: "update"` is valid. The canonical prior request must differ from the new request and match the current managed head; existing history reservation atomically compares that same head again after preview. A changed predecessor or duplicate request never executes and never falls back to create or the unbound/ordinary apply routes. This is a source-owner fence, not a new approval mechanism.
+
+Qualified update previews also include `X-Dill-Prior-Request`, identifying the exact managed predecessor inspected by the preview. This is planning evidence, not a submission fence or automatic approval; consumers must preserve their source/review gates.
+
+`GET /v1/deploy/journal` requires its own `journal` deployment grant and an empty body. It returns only `{"journalId":"..."}` with the same exact `X-Dill-Journal-Id`; it never exposes rows, source, credentials or execution authority. A monitor session cannot discover it. Callers must still match the reviewed deployment predecessor; discovering a journal is not ownership proof.
+
+On the qualified native Linux Docker backend, each lifecycle preview accepts only `stack`, with the exact current `X-Dill-Journal-Id`. It uses the last successful managed deployment's retained stage and immutable network/container ownership. An unowned, removed, or uncertain stack is rejected, never adopted. Its response includes the action-specific named preflight, `X-Dill-Prior-Request`, and `X-Dill-Deployment-Mode: start|stop|restart`.
+
+The corresponding action endpoint accepts `stack`, `selectionDigest`, a fresh `requestId`, `priorRequestId`, and `confirm` equal to that action, with the same journal header. It rechecks the selection, source and predecessor; persists pending intent before the existing coordinated `_managed-operation` child; and records terminal facts without retrying an uncertain child. No source override or automatic review approval is supported. Status replies for these requests include `action`; a genuinely reported successful no-op retains `effects: none`, not `complete`. Crashed pending requests remain unknown and block further mutation. These routes do not establish a qualified Podman agent contract.
+
+For the private managed-child runtime check, run on Linux with pinned Pkl 0.31.1, the newly built binary, a cached `docker.io/library/busybox:1.36` image, and an explicitly disposable Docker Unix endpoint:
+
+```sh
+export DILL_PKL_PATH=/absolute/path/to/pkl-0.31.1
+export DILL_BINARY="$PWD/bin/dill" DILL_TEST_ENGINE=docker
+export DOCKER_HOST=unix:///absolute/path/to/disposable-docker.sock
+make build
+make integration-test DILL_TEST_RUN='^TestDillRealEngineManagedLifecycle$'
+```
+
+The check uses the Docker API rather than requiring a separate Docker CLI, asserts retained immutable IDs across stop/stop/start/restart, and cleans only creation-receipt IDs with an independent bounded cleanup context. It skips on macOS; a skip is not Linux execution evidence. The consumer's opt-in `TestHTTPSRealManagedLifecycle` separately qualifies staging, journal creation, signed HTTPS lifecycle, monitor denial, actual pinned-container state, fence results and duplicate denial on this contract.
 
 `POST /v1/deploy/remove-preview` accepts `stack`, uses the last successfully deployed stage, and returns a qualified `down` preview plus `X-Dill-Prior-Request`. `POST /v1/deploy/remove` accepts `stack`, `selectionDigest`, a new `requestId`, `priorRequestId` from that header, and `confirm: "remove"`. Removal only stops and deletes the matched containers. It retains volumes, the network, images, and snapshots. A removed stack is recorded, not silently recreated or adopted. The deploy bearer can submit only explicitly granted operations; a deploy credential is not itself an attended or Git approval.
 

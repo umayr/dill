@@ -1,6 +1,6 @@
 # Install the combined Dill agent on private HTTPS (Linux/systemd)
 
-This example is for a **clean install** with the combined `dill agent` command, a systemd-managed rootful Docker daemon on the same Linux host, and a trusted Brine instance. The [example unit](../packaging/systemd/dill-agent.service) serves only session, inventory, inspection and logs. It does not enable environment reveal, staging, preview, or deployment. This is an experimental example, not a qualified installation on any particular Linux distribution. Do not use these steps to overwrite an existing agent installation or its state.
+This example is for a **clean install** with the combined `dill agent` command, a systemd-managed rootful Docker daemon on the same Linux host, and a trusted Brine instance. The [example unit](../packaging/systemd/dill-agent.service) serves only session, inventory, inspection, logs and capability metadata. It does not enable environment reveal, staging, preview, or deployment. This is an experimental example, not a qualified installation on any particular Linux distribution. Do not use these steps to overwrite an existing agent installation or its state.
 
 ## 1. Choose the access boundary
 

@@ -43,6 +43,7 @@ var httpsRoutes = [...]struct {
 	{http.MethodPost, "/v1/broker-secrets/apply/", "broker-apply", httpsApply},
 	{http.MethodGet, "/v1/broker-secrets/operations/", "broker-status", httpsApply},
 	{http.MethodPost, "/v1/session", monitorGrant, httpsMonitor},
+	{http.MethodGet, "/v1/capabilities", monitorGrant, httpsMonitor},
 	{http.MethodPost, "/v1/inventory", monitorGrant, httpsMonitor},
 	{http.MethodPost, "/v1/inspect", monitorGrant, httpsMonitor},
 	{http.MethodPost, "/v1/logs", monitorGrant, httpsMonitor},
@@ -51,9 +52,17 @@ var httpsRoutes = [...]struct {
 	{http.MethodPost, "/v1/deploy/preview", "preview", httpsPreview},
 	{http.MethodPost, "/v1/deploy/apply", "apply", httpsApply},
 	{http.MethodPost, "/v1/deploy/journal-apply", "journal-apply", httpsApply},
+	{http.MethodPost, "/v1/deploy/checked-apply", "checked-apply", httpsApply},
 	{http.MethodPost, "/v1/deploy/fence", "fence", httpsApply},
+	{http.MethodGet, "/v1/deploy/journal", "journal", httpsApply},
 	{http.MethodPost, "/v1/deploy/remove-preview", "remove-preview", httpsApply},
 	{http.MethodPost, "/v1/deploy/remove", "remove", httpsApply},
+	{http.MethodPost, "/v1/deploy/start-preview", "start-preview", httpsApply},
+	{http.MethodPost, "/v1/deploy/start", "start", httpsApply},
+	{http.MethodPost, "/v1/deploy/stop-preview", "stop-preview", httpsApply},
+	{http.MethodPost, "/v1/deploy/stop", "stop", httpsApply},
+	{http.MethodPost, "/v1/deploy/restart-preview", "restart-preview", httpsApply},
+	{http.MethodPost, "/v1/deploy/restart", "restart", httpsApply},
 	{http.MethodGet, "/v1/deploy/operations/", "status", httpsApply},
 }
 
@@ -112,6 +121,10 @@ func authenticatedHTTPS(monitor, staging, preview, apply http.Handler, monitorTo
 				}
 				if !allowed {
 					http.Error(w, "forbidden", http.StatusForbidden)
+					return
+				}
+				if route.path == "/v1/capabilities" {
+					writeHTTPSCapabilities(w, backends[:], deployEnabled, deployGrants)
 					return
 				}
 				handler.ServeHTTP(w, r)
